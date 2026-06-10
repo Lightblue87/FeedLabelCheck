@@ -166,7 +166,10 @@ struct IngredientScanView: View {
                     Task { await runAnalysis() }
                 } label: {
                     Label("Etikett analysieren", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(session.mergedOCRText.count < 10)
             }
 

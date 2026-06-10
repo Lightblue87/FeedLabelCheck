@@ -103,6 +103,7 @@ struct DataStatusView: View {
         }
         if let p = coordinator.progress {
             ProgressView(value: p)
+                .tint(Color.feedLabelTeal)
             Text("\(Int(p * 100)) %")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -120,7 +121,6 @@ struct DataStatusView: View {
                     Label("Aktualisierung läuft…", systemImage: "arrow.down.circle")
                 } else if coordinator.updateAvailable {
                     Label("Alles aktualisieren", systemImage: "arrow.down.circle.fill")
-                        .foregroundStyle(.blue)
                 } else {
                     Label("Auf Aktualisierungen prüfen", systemImage: "arrow.clockwise")
                 }
@@ -131,7 +131,10 @@ struct DataStatusView: View {
                         .imageScale(.small)
                 }
             }
+            .frame(maxWidth: .infinity)
         }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
         .disabled(coordinator.isUpdating)
     }
 

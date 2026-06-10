@@ -49,7 +49,7 @@ struct LabelingCheckView: View {
                             Task { await labelingStore.updateFromRemote() }
                         } label: {
                             Image(systemName: "arrow.down.circle.fill")
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(Color.feedLabelTeal)
                         }
                     }
                     if let dbInfo = labelingStore.dbInfo {
@@ -165,7 +165,7 @@ struct LabelingCheckView: View {
                         Spacer()
                         Image(systemName: labelingStore.updateAvailable
                               ? "arrow.down.circle.fill" : "arrow.down.circle")
-                            .foregroundStyle(labelingStore.updateAvailable ? Color.blue : Color.secondary.opacity(0.4))
+                            .foregroundStyle(labelingStore.updateAvailable ? Color.feedLabelTeal : Color.secondary.opacity(0.4))
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -228,12 +228,17 @@ struct LabelingCheckView: View {
             Button {
                 Task { await runCheck() }
             } label: {
-                if isChecking {
-                    HStack { ProgressView(); Text("Prüfung läuft…") }
-                } else {
-                    Label("Kennzeichnung prüfen", systemImage: "checkmark.shield")
+                Group {
+                    if isChecking {
+                        HStack { ProgressView(); Text("Prüfung läuft…") }
+                    } else {
+                        Label("Kennzeichnung prüfen", systemImage: "checkmark.shield")
+                    }
                 }
+                .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             .disabled(!canCheck || isChecking)
         }
 
@@ -685,7 +690,7 @@ private struct RequirementSuggestionRow: View {
 
     private var statusColor: Color {
         switch suggestion.status {
-        case .mustDeclare:      return .blue
+        case .mustDeclare:      return .feedLabelTeal
         case .shouldReview:     return .orange
         case .notLabelRelevant: return .secondary
         case .unclear:          return .orange
@@ -819,7 +824,7 @@ private struct DlgFeedMaterialDetailRow: View {
                     .font(.caption2)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.blue.opacity(0.12))
+                    .background(Color.feedLabelTeal.opacity(0.12))
                     .clipShape(Capsule())
             }
 

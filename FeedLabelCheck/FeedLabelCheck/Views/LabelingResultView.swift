@@ -139,7 +139,7 @@ struct LabelingResultView: View {
                 // Materialname-Zeile
                 HStack(spacing: 10) {
                     Image(systemName: "list.bullet.clipboard")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.feedLabelTeal)
                         .frame(width: 20)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(dlg.material.nameDe)
