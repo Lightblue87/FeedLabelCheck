@@ -124,9 +124,14 @@ struct SingleCheckView: View {
                 }
 
                 Section {
-                    Button("Prüfen") {
+                    Button {
                         runCheck()
+                    } label: {
+                        Label("Prüfen", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(Double(value.replacingOccurrences(of: ",", with: ".")) == nil)
                 }
 

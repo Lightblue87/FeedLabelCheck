@@ -74,7 +74,7 @@ private struct SearchableSelectionSheet: View {
                             Spacer()
                             if value == selection {
                                 Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
+                                    .foregroundStyle(Color.feedLabelTeal)
                             }
                         }
                     }

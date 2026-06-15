@@ -84,9 +84,14 @@ struct BatchCheckView: View {
                 }
 
                 Section {
-                    Button("Prüfen") {
+                    Button {
                         runCheck()
+                    } label: {
+                        Label("Prüfen", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(!inputIsValid)
                 }
 

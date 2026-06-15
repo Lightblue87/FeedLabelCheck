@@ -41,6 +41,7 @@ struct ContentView: View {
                 mainTabs
             }
         }
+        .tint(Color.feedLabelTeal)
         .task {
             await initializeAppIfNeeded()
         }
@@ -126,6 +127,15 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Brand colour
+
+extension Color {
+    /// FeedLabel Check brand teal — hex #176254
+    static let feedLabelTeal = Color(red: 23 / 255, green: 98 / 255, blue: 84 / 255)
+}
+
+// MARK: - AppInitializationView
+
 private struct AppInitializationView: View {
     let progress: Double
     let detail: String
@@ -141,7 +151,7 @@ private struct AppInitializationView: View {
                 VStack(spacing: 14) {
                     Image(systemName: "checkmark.shield.fill")
                         .font(.system(size: 54, weight: .semibold))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.feedLabelTeal)
 
                     Text("FeedLabelCheck")
                         .font(.largeTitle.bold())
@@ -154,6 +164,7 @@ private struct AppInitializationView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ProgressView(value: progress)
                         .progressViewStyle(.linear)
+                        .tint(Color.feedLabelTeal)
 
                     HStack {
                         Text(detail)
@@ -166,8 +177,13 @@ private struct AppInitializationView: View {
                     }
                 }
                 .padding(20)
-                .background(Color(.secondarySystemGroupedBackground))
+                .background(.ultraThinMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(.white.opacity(0.35), lineWidth: 0.5)
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: Color.feedLabelTeal.opacity(0.12), radius: 18, y: 8)
                 .padding(.horizontal, 32)
 
                 Text("Beim ersten Start kann das Laden der lokalen Datenbank einen Moment dauern.")
