@@ -127,12 +127,14 @@
     if ("serviceWorker" in navigator) {
       // Übernimmt eine neue SW-Version die Kontrolle (skipWaiting/claim),
       // läuft die sichtbare Seite noch mit dem alten Stand – einmal neu
-      // laden, damit das Update sofort aktiv wird. Beim allerersten
-      // Installieren (vorher kein Controller) nicht neu laden.
-      const hadController = !!navigator.serviceWorker.controller;
+      // laden, damit das Update sofort aktiv wird. Nur der allererste
+      // Wechsel (Erst-Installation übernimmt die Seite) löst keinen
+      // Reload aus; jeder spätere ist ein echtes Update.
+      let hadController = !!navigator.serviceWorker.controller;
       let reloaded = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (reloaded || !hadController) return;
+        if (!hadController) { hadController = true; return; }
+        if (reloaded) return;
         reloaded = true;
         location.reload();
       });
