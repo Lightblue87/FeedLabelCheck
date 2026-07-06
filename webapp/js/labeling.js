@@ -12,10 +12,12 @@ const Labeling = (() => {
   // ── SQLite-Zugriff ────────────────────────────────────────────
   let db = null;
 
-  async function openDatabase(url, sqlJsConfig) {
-    const SQL = await initSqlJs(sqlJsConfig);
-    const buf = await (await fetch(url)).arrayBuffer();
-    db = new SQL.Database(new Uint8Array(buf));
+  let sqlModule = null;
+
+  async function openDatabase(buffer, sqlJsConfig) {
+    if (!sqlModule) sqlModule = await initSqlJs(sqlJsConfig);
+    if (db) db.close();
+    db = new sqlModule.Database(new Uint8Array(buffer));
     return db;
   }
 

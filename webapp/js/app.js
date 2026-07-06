@@ -8,6 +8,7 @@
   let idx = null;
   let feedTypes = [];
   let dbInfo = null;
+  let dataState = null;   // { source, lastUpdate, hashes, updateNote }
 
   // ── Tabs ──────────────────────────────────────────────────────
   document.querySelectorAll(".tab").forEach(btn => {
@@ -23,23 +24,27 @@
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   // ── Initialisierung ───────────────────────────────────────────
+  const SQLJS_CONFIG = {
+    locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${f}`,
+  };
+
+  /** Baut alle Datenstrukturen aus den geladenen Datei-Puffern auf. */
+  async function applyBuffers(buffers) {
+    const rawAdditives = JSON.parse(new TextDecoder("utf-8").decode(buffers["zusatzstoffe.json"]));
+    await Labeling.openDatabase(buffers["labeling.sqlite"], SQLJS_CONFIG);
+    additives = LavesEval.loadAdditives(rawAdditives);
+    idx = LavesEval.buildIndexes(additives);
+    feedTypes = Labeling.loadFeedTypes();
+    dbInfo = Labeling.loadDatabaseInfo();
+  }
+
   async function init() {
     const loading = $("#loading");
     try {
-      const [rawAdditives] = await Promise.all([
-        fetch("data/zusatzstoffe.json").then(r => {
-          if (!r.ok) throw new Error(`zusatzstoffe.json: HTTP ${r.status}`);
-          return r.json();
-        }),
-        Labeling.openDatabase("data/labeling.sqlite", {
-          locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${f}`,
-        }),
-      ]);
-
-      additives = LavesEval.loadAdditives(rawAdditives);
-      idx = LavesEval.buildIndexes(additives);
-      feedTypes = Labeling.loadFeedTypes();
-      dbInfo = Labeling.loadDatabaseInfo();
+      // 1. Sofort mit lokalem Stand starten (IndexedDB, sonst Bundle)
+      const local = await DataUpdate.loadLocal();
+      dataState = { source: local.source, lastUpdate: local.lastUpdate, hashes: local.hashes, updateNote: null };
+      await applyBuffers(local.buffers);
 
       setupSingle();
       setupBatch();
@@ -47,10 +52,45 @@
       setupMaterials();
       renderStatus();
       loading.hidden = true;
+
+      // 2. Im Hintergrund auf neue Daten prüfen
+      backgroundUpdate();
     } catch (e) {
       loading.className = "banner error";
       loading.textContent = "Fehler beim Laden der Daten: " + e.message;
     }
+  }
+
+  async function backgroundUpdate() {
+    const loading = $("#loading");
+    try {
+      const res = await DataUpdate.checkForUpdates(dataState.hashes);
+      if (res.updated.length) {
+        const fresh = await DataUpdate.loadLocal();
+        await applyBuffers(fresh.buffers);
+        dataState = {
+          source: fresh.source, lastUpdate: fresh.lastUpdate, hashes: fresh.hashes,
+          updateNote: `Daten aktualisiert (Stand: ${formatDate(res.generatedAt) || "unbekannt"}).`,
+        };
+        populateSingleInputs();
+        loading.hidden = false;
+        loading.className = "banner ok";
+        loading.textContent = dataState.updateNote;
+      } else {
+        dataState.updateNote = "Daten sind auf dem aktuellen Stand.";
+      }
+    } catch (e) {
+      // Offline oder Manifest nicht erreichbar → lokaler Stand bleibt aktiv.
+      dataState.updateNote = "Update-Prüfung nicht möglich (offline?) – lokaler Stand wird verwendet.";
+    }
+    renderStatus();
+  }
+
+  function formatDate(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso
+      : d.toLocaleDateString("de-DE", { year: "numeric", month: "2-digit", day: "2-digit" });
   }
 
   // ── Einzelprüfung ─────────────────────────────────────────────
@@ -77,13 +117,23 @@
     fillSelect($("#s-species"), [...set].sort(new Intl.Collator("de").compare), "Alle Tierarten");
   }
 
-  function setupSingle() {
+  /** Befüllt alle datengetriebenen Eingabefelder (auch nach einem Daten-Update). */
+  function populateSingleInputs() {
     fillSelect($("#s-category"), ["Alle Kategorien", ...idx.allCategories], "Alle Kategorien");
     refreshSpeciesForCategory();
     fillSelect($("#s-age"), ["Kein Altersfilter", ...idx.ageOptions.map(m => `≤ ${m} Monate`)], "Kein Altersfilter");
     fillSelect($("#s-unit"), idx.allUnits.length ? idx.allUnits : ["mg/kg"], "mg/kg");
     $("#dl-enumbers").innerHTML = idx.allENumbers.map(e => `<option value="${escapeHtml(e)}">`).join("");
     $("#dl-substances").innerHTML = idx.allSubstances.map(s => `<option value="${escapeHtml(s)}">`).join("");
+
+    const sel = $("#l-feedtype");
+    sel.innerHTML = `<option value="auto">Automatisch erkennen</option>` +
+      feedTypes.filter(f => f.id !== "all" && f.id !== "unknown")
+        .map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.nameDe)}</option>`).join("");
+  }
+
+  function setupSingle() {
+    populateSingleInputs();
 
     $("#s-category").addEventListener("change", refreshSpeciesForCategory);
 
@@ -219,12 +269,6 @@
 
   function setupLabeling() {
     const sel = $("#l-feedtype");
-    for (const ft of feedTypes.filter(f => f.id !== "all" && f.id !== "unknown")) {
-      const opt = document.createElement("option");
-      opt.value = ft.id;
-      opt.textContent = ft.nameDe;
-      sel.appendChild(opt);
-    }
 
     $("#l-files").addEventListener("change", async (ev) => {
       const files = [...ev.target.files];
@@ -332,6 +376,15 @@
         <h4>Kennzeichnungs-Datenbank</h4>
         <p>Version ${escapeHtml(dbInfo.version)} · ${dbInfo.totalRuleCount} Regeln</p>
         <p>Rechtsgrundlage: ${escapeHtml(dbInfo.regulation)} (Stand ${escapeHtml(dbInfo.versionDate)})</p>
+      </div>
+      <div class="material-card">
+        <h4>Automatische Updates</h4>
+        <p>Datenquelle: ${escapeHtml(dataState.source)}</p>
+        ${dataState.lastUpdate ? `<p>Letztes Update: ${escapeHtml(formatDate(dataState.lastUpdate))}</p>` : ""}
+        ${dataState.updateNote ? `<p>${escapeHtml(dataState.updateNote)}</p>` : "<p>Update-Prüfung läuft …</p>"}
+        <p class="meta" style="color:var(--gray);font-size:0.8rem">Beim Start wird das Manifest aus dem
+          FeedLabelCheck-Data-Repo geprüft; geänderte Dateien werden per SHA256 verifiziert und lokal
+          (IndexedDB) gespeichert. Ohne Internet läuft die App mit dem letzten Stand weiter.</p>
       </div>`;
   }
 
