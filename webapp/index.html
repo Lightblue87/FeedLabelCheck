@@ -125,7 +125,25 @@
   <script src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("sw.js").catch(() => {
+      // Übernimmt eine neue SW-Version die Kontrolle (skipWaiting/claim),
+      // läuft die sichtbare Seite noch mit dem alten Stand – einmal neu
+      // laden, damit das Update sofort aktiv wird. Beim allerersten
+      // Installieren (vorher kein Controller) nicht neu laden.
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloaded || !hadController) return;
+        reloaded = true;
+        location.reload();
+      });
+      navigator.serviceWorker.register("sw.js").then(reg => {
+        // iOS-PWAs kommen meist aus dem Speicher zurück statt neu zu
+        // starten – beim Sichtbarwerden explizit nach Updates suchen.
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "visible") reg.update();
+        });
+        window.addEventListener("pageshow", e => { if (e.persisted) reg.update(); });
+      }).catch(() => {
         /* z. B. file:// oder unsicherer Kontext – App läuft auch ohne SW */
       });
     }
