@@ -47,12 +47,10 @@
           <select id="s-age"></select>
         </label>
         <label>Kennnummer / E-Nummer
-          <input id="s-enumber" list="dl-enumbers" placeholder="z. B. 3b605" autocomplete="off">
-          <datalist id="dl-enumbers"></datalist>
+          <input id="s-enumber" placeholder="z. B. 3b605" autocomplete="off">
         </label>
         <label>Stoff
-          <input id="s-substance" list="dl-substances" placeholder="z. B. Zinkoxid" autocomplete="off">
-          <datalist id="dl-substances"></datalist>
+          <input id="s-substance" placeholder="z. B. Zinkoxid" autocomplete="off">
         </label>
         <label>Laborergebnis
           <span class="row">
@@ -123,6 +121,7 @@
   <script src="js/eval.js"></script>
   <script src="js/labeling.js"></script>
   <script src="js/ocr.js"></script>
+  <script src="js/autocomplete.js"></script>
   <script src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
