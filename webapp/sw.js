@@ -11,7 +11,7 @@
  */
 "use strict";
 
-const CACHE_VERSION = "flc-v1";
+const CACHE_VERSION = "flc-v3";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
 const SHELL_ASSETS = [
@@ -22,6 +22,8 @@ const SHELL_ASSETS = [
   "js/data-update.js",
   "js/eval.js",
   "js/labeling.js",
+  "js/ocr.js",
+  "js/autocomplete.js",
   "js/app.js",
   "vendor/sql.js/sql-wasm.js",
   "vendor/sql.js/sql-wasm.wasm",

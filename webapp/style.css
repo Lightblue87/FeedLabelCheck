@@ -73,6 +73,49 @@ input, select, textarea {
 textarea { resize: vertical; margin: 10px 0; }
 .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
 
+/* Autocomplete-Dropdown (js/autocomplete.js) */
+.ac-wrap { position: relative; }
+.ac-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  /* Darf breiter sein als das Feld (schmale Batch-Spalte), aber nie
+     über den Bildschirmrand hinaus. */
+  min-width: 100%;
+  width: max-content;
+  max-width: min(480px, calc(100vw - 32px));
+  z-index: 40;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+  max-height: 260px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ac-list li {
+  padding: 9px 10px;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ac-list li + li { border-top: 1px solid var(--bg); }
+.ac-list li.active, .ac-list li:hover { background: #e8f4f4; }
+
+/* Batch-Tabelle darf das Dropdown nicht abschneiden (table hat sonst
+   overflow:hidden für runde Ecken – die Rundung übernehmen die Eckzellen). */
+#b-table { overflow: visible; background: transparent; }
+#b-table th, #b-table td { background: var(--card); }
+#b-table thead th:first-child { border-top-left-radius: 10px; }
+#b-table thead th:last-child { border-top-right-radius: 10px; }
+#b-table tbody tr:last-child td:first-child { border-bottom-left-radius: 10px; }
+#b-table tbody tr:last-child td:last-child { border-bottom-right-radius: 10px; }
+
 button {
   font: inherit;
   padding: 10px 18px;

@@ -9,7 +9,7 @@ clientseitig – es wird kein Server benötigt und keine Daten verlassen den Bro
 |---|---|---|
 | **Einzelprüfung** | `EinzelpruefungWidget` / `SingleCheckView` | Port von `laves_eval.py` nach JavaScript (`js/eval.js`): Tierart-/Alters-/Kategorie-Filter, Synonym-Deduplizierung, Grenzwert-Bewertung |
 | **Batch-Prüfung** | `BatchCheckView` | Mehrere Laborwerte gleichzeitig gegen die Grenzwerte |
-| **Kennzeichnungs-Check** | `LabelingCheckService` + `LabelingFeedTypeDetector` | 1:1-Port der Regel-/Mustersuche und Futtermitteltyp-Erkennung (`js/labeling.js`); OCR lokal per [tesseract.js](https://github.com/naptha/tesseract.js) (Deutsch) |
+| **Kennzeichnungs-Check** | `LabelingCheckService` + `LabelingFeedTypeDetector` | 1:1-Port der Regel-/Mustersuche und Futtermitteltyp-Erkennung (`js/labeling.js`); OCR lokal per [tesseract.js](https://github.com/naptha/tesseract.js) (Deutsch) mit Nachbearbeitung (`js/ocr.js`): Konfidenz-Filter gegen Hintergrund-Rauschen, Zusammenführen von Silbentrennungen, Korrektur typischer Fehllesungen von Zusatzstoff-Codes wie `(33671)` → `(3a671)` |
 | **Futtermittel-Suche** | `FeedMaterialLookupService` | Volltextsuche im EU-Katalog (VO 68/2013) und der DLG-Positivliste |
 | **Datenstatus** | `DataStatusView` | Versions- und Regelübersicht, Update-Status |
 | **Auto-Update** | `DataDownloadService` + `AppUpdateCoordinator` | `js/data-update.js`: prüft beim Start `manifest-v2.json` aus dem Data-Repo, lädt nur geänderte Dateien, verifiziert SHA256 + Größe (Web Crypto API) und speichert sie in IndexedDB; offline läuft die App mit dem letzten Stand weiter |

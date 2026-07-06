@@ -129,8 +129,10 @@
     refreshSpeciesForCategory();
     fillSelect($("#s-age"), ["Kein Altersfilter", ...idx.ageOptions.map(m => `≤ ${m} Monate`)], "Kein Altersfilter");
     fillSelect($("#s-unit"), idx.allUnits.length ? idx.allUnits : ["mg/kg"], "mg/kg");
-    $("#dl-enumbers").innerHTML = idx.allENumbers.map(e => `<option value="${escapeHtml(e)}">`).join("");
-    $("#dl-substances").innerHTML = idx.allSubstances.map(s => `<option value="${escapeHtml(s)}">`).join("");
+    // Eigenes Dropdown statt <datalist> – iOS Safari zeigt datalist-
+    // Vorschläge nicht an. getOptions liest idx bei jedem Öffnen frisch.
+    Autocomplete.attach($("#s-enumber"), () => idx.allENumbers);
+    Autocomplete.attach($("#s-substance"), () => idx.allSubstances);
 
     const sel = $("#l-feedtype");
     sel.innerHTML = `<option value="auto">Automatisch erkennen</option>` +
@@ -224,7 +226,7 @@
   function addBatchRow() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="b-id" list="dl-enumbers" placeholder="Kennnummer oder Stoff"></td>
+      <td><input class="b-id" placeholder="Kennnummer oder Stoff"></td>
       <td><input class="b-value" inputmode="decimal" placeholder="Wert" style="max-width:110px"></td>
       <td><select class="b-unit">${(idx.allUnits.length ? idx.allUnits : ["mg/kg"])
         .map(u => `<option${u === "mg/kg" ? " selected" : ""}>${escapeHtml(u)}</option>`).join("")}</select></td>
@@ -232,6 +234,9 @@
       <td><button class="b-del" title="Zeile entfernen">✕</button></td>`;
     tr.querySelector(".b-del").addEventListener("click", () => tr.remove());
     $("#b-rows").appendChild(tr);
+    // Kennnummer ODER Stoffname – beide Listen anbieten
+    Autocomplete.attach(tr.querySelector(".b-id"),
+      () => [...idx.allENumbers, ...idx.allSubstances]);
   }
 
   function setupBatch() {
@@ -282,11 +287,14 @@
       const status = $("#l-ocr-status");
       try {
         const worker = await Tesseract.createWorker("deu", 1, TESSERACT_CONFIG);
+        // Canvas-Eingaben haben keine DPI-Information – fester Wert
+        // verhindert, dass Tesseract die Auflösung falsch schätzt.
+        await worker.setParameters({ user_defined_dpi: "300" });
         let allText = "";
         for (let i = 0; i < files.length; i++) {
           status.textContent = `OCR läuft … Bild ${i + 1}/${files.length}`;
-          const { data } = await worker.recognize(files[i]);
-          allText += (allText ? "\n\n" : "") + data.text;
+          const { data } = await worker.recognize(files[i], {}, { text: true, blocks: true });
+          allText += (allText ? "\n\n" : "") + Ocr.textFromResult(data);
         }
         await worker.terminate();
         $("#l-text").value = ($("#l-text").value.trim() ? $("#l-text").value + "\n\n" : "") + allText;
