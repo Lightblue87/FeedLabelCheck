@@ -55,7 +55,7 @@ def main():
 
     # Analyze source file references
     source_files = Counter(r.get('source_file') for r in data if r.get('source_file'))
-    print(f"\n📋 Source file references in database:")
+    print("\n📋 Source file references in database:")
 
     if not source_files:
         print("   No source_file references found in database")

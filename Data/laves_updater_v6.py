@@ -1030,7 +1030,6 @@ def _parse_silier_pdf(
     records = []
     seen: set = set()
     counter = 0
-    cols = get_cols_for_schema("A")  # Näherung für Freitext-Spalten
 
     for pd in pages:
         sorted_tok = sorted(pd.tokens, key=lambda t: (-t[0], t[1]))
@@ -1305,7 +1304,7 @@ def check_quality(data: List[Dict[str, Any]]) -> None:
         if cat:
             categories[cat] = categories.get(cat, 0) + 1
     if categories:
-        print(f"\n  Kategorien:")
+        print("\n  Kategorien:")
         for cat, count in sorted(categories.items(), key=lambda x: -x[1]):
             print(f"    {cat:20s}: {count:3d}")
 

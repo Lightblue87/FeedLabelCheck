@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import sys
 import os
-import json
 import re
 import html as _html
-import io
 import contextlib
 import subprocess
 import traceback
