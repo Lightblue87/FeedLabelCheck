@@ -154,7 +154,7 @@ const Labeling = (() => {
   // werden" tragen (VO (EG) Nr. 767/2009). Das Wort "Alleinfuttermittel"
   // in diesem Vergleich ist KEINE Produktbezeichnung und darf die
   // Typ-Erkennung nicht als mehrdeutig kippen.
-  const COMPARISON_MARKERS = ["gegenuber", "im vergleich zu", "verglichen mit"];
+  const COMPARISON_MARKERS = ["gegenuber", "gegenueber", "im vergleich zu", "verglichen mit"];
 
   function containsPhraseOutsideComparison(phrase, text) {
     const re = new RegExp(`(^|[^a-z0-9])${escapeRegex(phrase)}([^a-z0-9]|$)`, "gi");

@@ -134,6 +134,16 @@ test("Echte Alleinfuttermittel werden weiterhin erkannt", () => {
   assert.equal(det.feedType.id, "complete_feed");
 });
 
+test("ASCII-Schreibweise 'gegenueber' wird ebenfalls als Vergleich erkannt", () => {
+  const det = Labeling.detectFeedType(
+    `Ergaenzungsfuttermittel fuer Pferde
+Dieses Ergaenzungsfuttermittel darf wegen der gegenueber Alleinfuttermittel
+hoeheren Gehalte an Vitaminen nur begrenzt verfuettert werden.`,
+    FEED_TYPES);
+  assert.ok(det, "Futtermitteltyp muss erkannt werden");
+  assert.equal(det.feedType.id, "complementary_feed");
+});
+
 test("Beide Typen als Produktbezeichnung bleiben mehrdeutig", () => {
   const det = Labeling.detectFeedType(
     "Alleinfuttermittel oder Ergänzungsfuttermittel je nach Fütterung", FEED_TYPES);
