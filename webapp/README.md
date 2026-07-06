@@ -17,6 +17,19 @@ clientseitig – es wird kein Server benötigt und keine Daten verlassen den Bro
 Die Kennzeichnungsregeln kommen unverändert aus `labeling.sqlite` und werden im
 Browser per [sql.js](https://github.com/sql-js/sql.js) (SQLite als WebAssembly) gelesen.
 
+## Installation als App (PWA)
+
+Die Web-App ist eine installierbare PWA (Manifest + Service Worker, App-Shell
+und CDN-Bibliotheken werden gecacht → läuft nach dem ersten Besuch komplett offline):
+
+- **iPhone/iPad**: Seite in Safari öffnen → Teilen-Menü → „Zum Home-Bildschirm".
+  Die App startet dann im Vollbild mit eigenem Icon.
+- **Laptop/Desktop**: In Chrome/Edge über das Install-Symbol in der Adressleiste
+  („App installieren"); in jedem anderen Browser einfach als Website nutzen.
+
+Voraussetzung ist HTTPS-Hosting (z. B. GitHub Pages) — Service Worker laufen
+nur in sicheren Kontexten (oder auf `localhost`).
+
 ## Starten
 
 Statisches Hosting genügt (wegen `fetch` der Datendateien nicht per `file://` öffnen):
