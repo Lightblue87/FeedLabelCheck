@@ -149,9 +149,23 @@ const Labeling = (() => {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  function containsPhrase(phrase, text) {
-    const re = new RegExp(`(^|[^a-z0-9])${escapeRegex(phrase)}([^a-z0-9]|$)`, "i");
-    return re.test(text);
+  // Ergänzungsfuttermittel müssen den Pflichthinweis "… darf wegen der
+  // gegenüber Alleinfuttermitteln höheren Gehalte … nur an … verfüttert
+  // werden" tragen (VO (EG) Nr. 767/2009). Das Wort "Alleinfuttermittel"
+  // in diesem Vergleich ist KEINE Produktbezeichnung und darf die
+  // Typ-Erkennung nicht als mehrdeutig kippen.
+  const COMPARISON_MARKERS = ["gegenuber", "im vergleich zu", "verglichen mit"];
+
+  function containsPhraseOutsideComparison(phrase, text) {
+    const re = new RegExp(`(^|[^a-z0-9])${escapeRegex(phrase)}([^a-z0-9]|$)`, "gi");
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const start = m.index + m[1].length;
+      const before = text.slice(Math.max(0, start - 30), start);
+      if (!COMPARISON_MARKERS.some(marker => before.includes(marker))) return true;
+      re.lastIndex = start + phrase.length;   // Überlappungen weiter prüfen
+    }
+    return false;
   }
 
   function feedTypePriority(id) {
@@ -176,7 +190,7 @@ const Labeling = (() => {
         const matched = ft.keywordsDe.filter(kw => {
           const nk = normalizeText(kw);
           if (!nk) return false;
-          if (DIRECT_LEGAL_TERMS.has(nk)) return containsPhrase(nk, normalized);
+          if (DIRECT_LEGAL_TERMS.has(nk)) return containsPhraseOutsideComparison(nk, normalized);
           return normalized.includes(nk);
         });
         if (!matched.length) return null;
@@ -322,3 +336,6 @@ const Labeling = (() => {
     searchFeedMaterials, detectFeedType, check, MIN_OCR_LENGTH,
   };
 })();
+
+// Für Unit-Tests unter Node (im Browser ohne Wirkung).
+if (typeof module !== "undefined" && module.exports) module.exports = Labeling;

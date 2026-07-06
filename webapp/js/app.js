@@ -282,11 +282,14 @@
       const status = $("#l-ocr-status");
       try {
         const worker = await Tesseract.createWorker("deu", 1, TESSERACT_CONFIG);
+        // Canvas-Eingaben haben keine DPI-Information – fester Wert
+        // verhindert, dass Tesseract die Auflösung falsch schätzt.
+        await worker.setParameters({ user_defined_dpi: "300" });
         let allText = "";
         for (let i = 0; i < files.length; i++) {
           status.textContent = `OCR läuft … Bild ${i + 1}/${files.length}`;
-          const { data } = await worker.recognize(files[i]);
-          allText += (allText ? "\n\n" : "") + data.text;
+          const { data } = await worker.recognize(files[i], {}, { text: true, blocks: true });
+          allText += (allText ? "\n\n" : "") + Ocr.textFromResult(data);
         }
         await worker.terminate();
         $("#l-text").value = ($("#l-text").value.trim() ? $("#l-text").value + "\n\n" : "") + allText;
