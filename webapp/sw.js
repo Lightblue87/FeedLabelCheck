@@ -4,8 +4,8 @@
  * Strategie:
  *   - App-Shell (HTML/CSS/JS, Icons, Fallback-Daten) wird bei der
  *     Installation vorab gecacht → App startet komplett offline.
- *   - CDN-Bibliotheken (sql.js, tesseract.js inkl. WASM/Sprachdaten) werden
- *     beim ersten Gebrauch gecacht (cache-first) → OCR und SQLite auch offline.
+ *   - Drittanbieter-Bibliotheken (sql.js, tesseract.js inkl. WASM/Sprachdaten)
+ *     liegen lokal unter vendor/ und werden ebenfalls vorab gecacht.
  *   - Daten-Updates (raw.githubusercontent.com) laufen bewusst am Cache
  *     vorbei – die Versionierung übernimmt data-update.js über IndexedDB.
  */
@@ -13,7 +13,6 @@
 
 const CACHE_VERSION = "flc-v1";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
-const CDN_CACHE = `${CACHE_VERSION}-cdn`;
 
 const SHELL_ASSETS = [
   "./",
@@ -24,14 +23,25 @@ const SHELL_ASSETS = [
   "js/eval.js",
   "js/labeling.js",
   "js/app.js",
+  "vendor/sql.js/sql-wasm.js",
+  "vendor/sql.js/sql-wasm.wasm",
+  "vendor/tesseract/tesseract.min.js",
+  "vendor/tesseract/worker.min.js",
+  "vendor/tesseract/core/tesseract-core.wasm.js",
+  "vendor/tesseract/core/tesseract-core.wasm",
+  "vendor/tesseract/core/tesseract-core-simd.wasm.js",
+  "vendor/tesseract/core/tesseract-core-simd.wasm",
+  "vendor/tesseract/core/tesseract-core-lstm.wasm.js",
+  "vendor/tesseract/core/tesseract-core-lstm.wasm",
+  "vendor/tesseract/core/tesseract-core-simd-lstm.wasm.js",
+  "vendor/tesseract/core/tesseract-core-simd-lstm.wasm",
+  "vendor/tesseract/lang/deu.traineddata.gz",
   "data/zusatzstoffe.json",
   "data/labeling.sqlite",
   "icons/icon-192.png",
   "icons/icon-512.png",
   "icons/apple-touch-icon.png",
 ];
-
-const CDN_HOSTS = ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -55,20 +65,6 @@ self.addEventListener("fetch", (event) => {
 
   // Daten-Updates nie cachen – Frische garantiert data-update.js selbst.
   if (url.hostname === "raw.githubusercontent.com") return;
-
-  // CDN-Bibliotheken: cache-first, beim ersten Gebrauch ablegen.
-  if (CDN_HOSTS.includes(url.hostname)) {
-    event.respondWith(
-      caches.open(CDN_CACHE).then(async (cache) => {
-        const hit = await cache.match(event.request);
-        if (hit) return hit;
-        const resp = await fetch(event.request);
-        if (resp.ok) cache.put(event.request, resp.clone());
-        return resp;
-      })
-    );
-    return;
-  }
 
   // App-Shell: cache-first mit Netz-Fallback (und Nach-Cachen).
   if (url.origin === self.location.origin) {

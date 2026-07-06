@@ -20,7 +20,8 @@ Browser per [sql.js](https://github.com/sql-js/sql.js) (SQLite als WebAssembly) 
 ## Installation als App (PWA)
 
 Die Web-App ist eine installierbare PWA (Manifest + Service Worker, App-Shell
-und CDN-Bibliotheken werden gecacht → läuft nach dem ersten Besuch komplett offline):
+und lokal mitgelieferte Bibliotheken inkl. WASM/OCR-Sprachdaten werden gecacht
+→ läuft nach dem ersten Besuch komplett offline):
 
 - **iPhone/iPad**: Seite in Safari öffnen → Teilen-Menü → „Zum Home-Bildschirm".
   Die App startet dann im Vollbild mit eigenem Icon.

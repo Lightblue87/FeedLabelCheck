@@ -25,7 +25,13 @@
 
   // ── Initialisierung ───────────────────────────────────────────
   const SQLJS_CONFIG = {
-    locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${f}`,
+    locateFile: f => `vendor/sql.js/${f}`,
+  };
+  const TESSERACT_CONFIG = {
+    workerPath: "vendor/tesseract/worker.min.js",
+    corePath: "vendor/tesseract/core",
+    langPath: "vendor/tesseract/lang",
+    workerBlobURL: false,
   };
 
   /** Baut alle Datenstrukturen aus den geladenen Datei-Puffern auf. */
@@ -275,7 +281,7 @@
       if (!files.length) return;
       const status = $("#l-ocr-status");
       try {
-        const worker = await Tesseract.createWorker("deu");
+        const worker = await Tesseract.createWorker("deu", 1, TESSERACT_CONFIG);
         let allText = "";
         for (let i = 0; i < files.length; i++) {
           status.textContent = `OCR läuft … Bild ${i + 1}/${files.length}`;
