@@ -10,6 +10,10 @@ protocol LabelingRuleRepository {
     func loadAdditiveParserConfig(from url: URL) throws -> AdditiveParserConfig
 }
 
+// SQLite muss den gebundenen Text kopieren, da die NSString-Puffer
+// (utf8String) nur temporär gültig sind.
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
 struct SQLiteLabelingRuleRepository: LabelingRuleRepository {
 
     func loadFeedTypes(from url: URL) throws -> [LabelingFeedType] {
@@ -53,10 +57,10 @@ struct SQLiteLabelingRuleRepository: LabelingRuleRepository {
             throw LabelingRepositoryError.queryFailed(errorMessage(db))
         }
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, (feedTypeId as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 1, (feedTypeId as NSString).utf8String, -1, SQLITE_TRANSIENT)
 
         var ruleIds: [String] = []
-        var ruleMap: [String: (String, String, String, String, String, String, String, String, Bool, Int)] = [:]
+        var ruleMap: [String: (String, String, String, String, String, String, String, Bool, Int)] = [:]
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             let id = text(stmt, 0) ?? ""
@@ -69,7 +73,6 @@ struct SQLiteLabelingRuleRepository: LabelingRuleRepository {
                 text(stmt, 5) ?? "",
                 text(stmt, 6) ?? "",
                 text(stmt, 7) ?? "info",
-                text(stmt, 7) ?? "info",
                 sqlite3_column_int(stmt, 8) != 0,
                 Int(sqlite3_column_int(stmt, 9))
             )
@@ -80,12 +83,12 @@ struct SQLiteLabelingRuleRepository: LabelingRuleRepository {
 
         return ruleIds.compactMap { id in
             guard let t = ruleMap[id] else { return nil }
-            let severity = LabelingRuleSeverity(rawValue: t.7) ?? .info
+            let severity = LabelingRuleSeverity(rawValue: t.6) ?? .info
             return LabelingRule(
                 id: id, regulationId: t.0, feedTypeId: t.1,
                 titleDe: t.2, descriptionDe: t.3, legalBasis: t.4,
                 requirementType: t.5, severity: severity,
-                isMandatory: t.8, displayOrder: t.9,
+                isMandatory: t.7, displayOrder: t.8,
                 patterns: patterns[id] ?? []
             )
         }
@@ -254,7 +257,7 @@ struct SQLiteLabelingRuleRepository: LabelingRuleRepository {
         defer { sqlite3_finalize(stmt) }
 
         for (i, id) in ruleIds.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, Int32(i + 1), (id as NSString).utf8String, -1, SQLITE_TRANSIENT)
         }
 
         var result: [String: [LabelingRulePattern]] = [:]

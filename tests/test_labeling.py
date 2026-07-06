@@ -398,7 +398,7 @@ class TestAdditiveDeclarationPatterns:
             for ptype, pvalue in patterns
             if ptype == "regex"
         )
-        assert matched, f"'Taurin 1.000 mg/kg' must match a ≥0.85 art15_006 pattern"
+        assert matched, "'Taurin 1.000 mg/kg' must match a ≥0.85 art15_006 pattern"
 
     def test_additive_heading_only_still_probablyfound(
         self, fresh_db: sqlite3.Connection
