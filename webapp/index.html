@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FeedLabelCheck – Web</title>
+  <meta name="theme-color" content="#005f5f">
+  <link rel="manifest" href="manifest.webmanifest">
+  <!-- iOS-Home-Screen-Installation -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FeedLabelCheck">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="vendor/sql.js/sql-wasm.js"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>FeedLabelCheck</h1>
+    <p class="subtitle">Futtermittel-Zusatzstoffe & Kennzeichnung – EG 1831/2003 / VO (EG) 767/2009</p>
+  </header>
+
+  <nav id="tabs">
+    <button class="tab active" data-tab="single">Einzelprüfung</button>
+    <button class="tab" data-tab="batch">Batch-Prüfung</button>
+    <button class="tab" data-tab="labeling">Kennzeichnungs-Check</button>
+    <button class="tab" data-tab="materials">Futtermittel-Suche</button>
+    <button class="tab" data-tab="status">Datenstatus</button>
+  </nav>
+
+  <main>
+    <div id="loading" class="banner info">Lade Datenbanken …</div>
+
+    <!-- ═══ Einzelprüfung ═══ -->
+    <section id="tab-single" class="tab-panel active">
+      <div class="form-grid">
+        <label>Tierart-Kategorie
+          <select id="s-category"></select>
+        </label>
+        <label>Tierart
+          <select id="s-species"></select>
+        </label>
+        <label>Alter
+          <select id="s-age"></select>
+        </label>
+        <label>Kennnummer / E-Nummer
+          <input id="s-enumber" list="dl-enumbers" placeholder="z. B. 3b605" autocomplete="off">
+          <datalist id="dl-enumbers"></datalist>
+        </label>
+        <label>Stoff
+          <input id="s-substance" list="dl-substances" placeholder="z. B. Zinkoxid" autocomplete="off">
+          <datalist id="dl-substances"></datalist>
+        </label>
+        <label>Laborergebnis
+          <span class="row">
+            <input id="s-value" type="text" inputmode="decimal" placeholder="Zahl">
+            <select id="s-unit"></select>
+          </span>
+        </label>
+      </div>
+      <button id="s-check" class="primary">Prüfen</button>
+      <div id="s-result" class="result" hidden></div>
+    </section>
+
+    <!-- ═══ Batch ═══ -->
+    <section id="tab-batch" class="tab-panel">
+      <p>Mehrere Laborwerte gleichzeitig gegen die Grenzwerte prüfen (Tierart/Alter aus der Einzelprüfung werden übernommen).</p>
+      <table id="b-table">
+        <thead>
+          <tr><th>Kennnummer / Stoff</th><th>Wert</th><th>Einheit</th><th>Ergebnis</th><th></th></tr>
+        </thead>
+        <tbody id="b-rows"></tbody>
+      </table>
+      <div class="row">
+        <button id="b-add">+ Zeile</button>
+        <button id="b-check" class="primary">Alle prüfen</button>
+      </div>
+    </section>
+
+    <!-- ═══ Kennzeichnung ═══ -->
+    <section id="tab-labeling" class="tab-panel">
+      <p>Etikett-Text einfügen oder Fotos hochladen (OCR läuft lokal im Browser, Sprache Deutsch).</p>
+      <div class="row">
+        <input type="file" id="l-files" accept="image/*" multiple>
+        <span id="l-ocr-status"></span>
+      </div>
+      <textarea id="l-text" rows="10" placeholder="Etikett-Text hier einfügen oder Fotos hochladen …"></textarea>
+      <div class="form-grid">
+        <label>Futtermitteltyp
+          <select id="l-feedtype"><option value="auto">Automatisch erkennen</option></select>
+        </label>
+      </div>
+      <button id="l-check" class="primary">Kennzeichnung prüfen</button>
+      <div id="l-result" hidden>
+        <div id="l-overall" class="banner"></div>
+        <div id="l-rules"></div>
+      </div>
+    </section>
+
+    <!-- ═══ Futtermittel ═══ -->
+    <section id="tab-materials" class="tab-panel">
+      <label>Suche (EU-Katalog 68/2013 & DLG-Positivliste)
+        <input id="m-query" type="search" placeholder="Name oder Nummer, z. B. Weizen">
+      </label>
+      <div id="m-results"></div>
+    </section>
+
+    <!-- ═══ Status ═══ -->
+    <section id="tab-status" class="tab-panel">
+      <div id="st-info"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Alle Prüfungen laufen vollständig lokal im Browser – es werden keine Daten übertragen.
+       Ergebnisse sind eine Hilfestellung und ersetzen keine rechtsverbindliche Prüfung.</p>
+  </footer>
+
+  <script src="js/data-update.js"></script>
+  <script src="js/eval.js"></script>
+  <script src="js/labeling.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").catch(() => {
+        /* z. B. file:// oder unsicherer Kontext – App läuft auch ohne SW */
+      });
+    }
+  </script>
+</body>
+</html>
