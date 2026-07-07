@@ -140,22 +140,39 @@
         .map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.nameDe)}</option>`).join("");
   }
 
+  /**
+   * Stoff-Feld → Kennnummer-Feld ableiten. Automatisch gesetzte Nummern
+   * werden wieder geleert, wenn zum geänderten Stoff keine eindeutige
+   * Nummer ableitbar ist – sonst prüft "Alle prüfen" gegen die veraltete
+   * Nummer statt gegen den neuen Stoff. Manuell eingegebene oder aus dem
+   * Dropdown gewählte Nummern bleiben unangetastet.
+   */
+  function bindSubstanceDerivation(substanceInput, eNumberInput) {
+    substanceInput.addEventListener("change", () => {
+      const sub = substanceInput.value.trim();
+      const e = sub ? LavesEval.deriveENumberForSubstance(idx, sub, {
+        species: $("#s-species").value,
+        ageMonths: currentAgeMonths(),
+        tierartKategorie: $("#s-category").value,
+      }) : null;
+      if (e) {
+        eNumberInput.value = e;
+        eNumberInput.dataset.derived = "1";
+      } else if (eNumberInput.dataset.derived) {
+        eNumberInput.value = "";
+        delete eNumberInput.dataset.derived;
+      }
+    });
+    // Jede Nutzereingabe im Kennnummer-Feld macht den Wert "manuell"
+    eNumberInput.addEventListener("input", () => { delete eNumberInput.dataset.derived; });
+  }
+
   function setupSingle() {
     populateSingleInputs();
 
     $("#s-category").addEventListener("change", refreshSpeciesForCategory);
 
-    // Stoff → E-Nummer ableiten
-    $("#s-substance").addEventListener("change", () => {
-      const sub = $("#s-substance").value.trim();
-      if (!sub) return;
-      const e = LavesEval.deriveENumberForSubstance(idx, sub, {
-        species: $("#s-species").value,
-        ageMonths: currentAgeMonths(),
-        tierartKategorie: $("#s-category").value,
-      });
-      if (e) $("#s-enumber").value = e;
-    });
+    bindSubstanceDerivation($("#s-substance"), $("#s-enumber"));
 
     $("#s-check").addEventListener("click", () => {
       const out = $("#s-result");
@@ -240,16 +257,7 @@
     Autocomplete.attach(tr.querySelector(".b-enumber"), () => idx.allENumbers);
     Autocomplete.attach(tr.querySelector(".b-substance"), () => idx.allSubstances);
     // Wie in der Einzelprüfung: gewählter Stoff leitet die Kennnummer ab
-    tr.querySelector(".b-substance").addEventListener("change", () => {
-      const sub = tr.querySelector(".b-substance").value.trim();
-      if (!sub) return;
-      const e = LavesEval.deriveENumberForSubstance(idx, sub, {
-        species: $("#s-species").value,
-        ageMonths: currentAgeMonths(),
-        tierartKategorie: $("#s-category").value,
-      });
-      if (e) tr.querySelector(".b-enumber").value = e;
-    });
+    bindSubstanceDerivation(tr.querySelector(".b-substance"), tr.querySelector(".b-enumber"));
   }
 
   function setupBatch() {
