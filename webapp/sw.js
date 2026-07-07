@@ -11,7 +11,7 @@
  */
 "use strict";
 
-const CACHE_VERSION = "flc-v3";
+const CACHE_VERSION = "flc-v4";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
 const SHELL_ASSETS = [
@@ -47,7 +47,12 @@ const SHELL_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_ASSETS)).then(() => self.skipWaiting())
+    caches.open(SHELL_CACHE)
+      // "no-cache": beim Vorab-Cachen am HTTP-Cache vorbei revalidieren,
+      // sonst kann eine neue SW-Version alte Dateien einsammeln
+      // (GitHub Pages liefert max-age=600).
+      .then(cache => cache.addAll(SHELL_ASSETS.map(u => new Request(u, { cache: "no-cache" }))))
+      .then(() => self.skipWaiting())
   );
 });
 
