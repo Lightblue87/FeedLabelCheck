@@ -140,22 +140,39 @@
         .map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.nameDe)}</option>`).join("");
   }
 
+  /**
+   * Stoff-Feld → Kennnummer-Feld ableiten. Automatisch gesetzte Nummern
+   * werden wieder geleert, wenn zum geänderten Stoff keine eindeutige
+   * Nummer ableitbar ist – sonst prüft "Alle prüfen" gegen die veraltete
+   * Nummer statt gegen den neuen Stoff. Manuell eingegebene oder aus dem
+   * Dropdown gewählte Nummern bleiben unangetastet.
+   */
+  function bindSubstanceDerivation(substanceInput, eNumberInput) {
+    substanceInput.addEventListener("change", () => {
+      const sub = substanceInput.value.trim();
+      const e = sub ? LavesEval.deriveENumberForSubstance(idx, sub, {
+        species: $("#s-species").value,
+        ageMonths: currentAgeMonths(),
+        tierartKategorie: $("#s-category").value,
+      }) : null;
+      if (e) {
+        eNumberInput.value = e;
+        eNumberInput.dataset.derived = "1";
+      } else if (eNumberInput.dataset.derived) {
+        eNumberInput.value = "";
+        delete eNumberInput.dataset.derived;
+      }
+    });
+    // Jede Nutzereingabe im Kennnummer-Feld macht den Wert "manuell"
+    eNumberInput.addEventListener("input", () => { delete eNumberInput.dataset.derived; });
+  }
+
   function setupSingle() {
     populateSingleInputs();
 
     $("#s-category").addEventListener("change", refreshSpeciesForCategory);
 
-    // Stoff → E-Nummer ableiten
-    $("#s-substance").addEventListener("change", () => {
-      const sub = $("#s-substance").value.trim();
-      if (!sub) return;
-      const e = LavesEval.deriveENumberForSubstance(idx, sub, {
-        species: $("#s-species").value,
-        ageMonths: currentAgeMonths(),
-        tierartKategorie: $("#s-category").value,
-      });
-      if (e) $("#s-enumber").value = e;
-    });
+    bindSubstanceDerivation($("#s-substance"), $("#s-enumber"));
 
     $("#s-check").addEventListener("click", () => {
       const out = $("#s-result");
@@ -226,7 +243,10 @@
   function addBatchRow() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="b-id" placeholder="Kennnummer oder Stoff"></td>
+      <td class="b-idcell">
+        <input class="b-enumber" placeholder="Kennnummer">
+        <input class="b-substance" placeholder="Stoffname">
+      </td>
       <td><input class="b-value" inputmode="decimal" placeholder="Wert" style="max-width:110px"></td>
       <td><select class="b-unit">${(idx.allUnits.length ? idx.allUnits : ["mg/kg"])
         .map(u => `<option${u === "mg/kg" ? " selected" : ""}>${escapeHtml(u)}</option>`).join("")}</select></td>
@@ -234,9 +254,10 @@
       <td><button class="b-del" title="Zeile entfernen">✕</button></td>`;
     tr.querySelector(".b-del").addEventListener("click", () => tr.remove());
     $("#b-rows").appendChild(tr);
-    // Kennnummer ODER Stoffname – beide Listen anbieten
-    Autocomplete.attach(tr.querySelector(".b-id"),
-      () => [...idx.allENumbers, ...idx.allSubstances]);
+    Autocomplete.attach(tr.querySelector(".b-enumber"), () => idx.allENumbers);
+    Autocomplete.attach(tr.querySelector(".b-substance"), () => idx.allSubstances);
+    // Wie in der Einzelprüfung: gewählter Stoff leitet die Kennnummer ab
+    bindSubstanceDerivation(tr.querySelector(".b-substance"), tr.querySelector(".b-enumber"));
   }
 
   function setupBatch() {
@@ -248,15 +269,13 @@
       const ageMonths = currentAgeMonths();
       const category = $("#s-category").value || "Alle Kategorien";
       document.querySelectorAll("#b-rows tr").forEach(tr => {
-        const id = tr.querySelector(".b-id").value.trim();
+        const eNumber = tr.querySelector(".b-enumber").value.trim();
+        const substance = tr.querySelector(".b-substance").value.trim();
         const valueText = tr.querySelector(".b-value").value;
         const cell = tr.querySelector(".b-result");
-        if (!id && !valueText) { cell.textContent = "–"; return; }
-        const isENumber = idx.allENumbers.includes(id.toUpperCase());
+        if (!eNumber && !substance && !valueText) { cell.textContent = "–"; return; }
         const res = runCheck({
-          eNumber: isENumber ? id : "",
-          substance: isENumber ? "" : id,
-          valueText, species, ageMonths, category,
+          eNumber, substance, valueText, species, ageMonths, category,
         });
         const pillClass = res.cls;
         const pillText = res.cls === "ok" ? "KONFORM" : res.cls === "bad" ? "NICHT KONFORM" : "PRÜFEN";

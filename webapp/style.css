@@ -63,6 +63,9 @@ main {
 label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; font-weight: 600; }
 input, select, textarea {
   font: inherit;
+  /* Mindestens 16px, sonst zoomt iOS Safari beim Fokussieren in die
+     Seite hinein (und zoomt nicht wieder heraus). */
+  font-size: 16px;
   font-weight: 400;
   padding: 9px 10px;
   border: 1px solid var(--border);
@@ -106,6 +109,22 @@ textarea { resize: vertical; margin: 10px 0; }
 }
 .ac-list li + li { border-top: 1px solid var(--bg); }
 .ac-list li.active, .ac-list li:hover { background: #e8f4f4; }
+
+/* Batch: Kennnummer- und Stoffname-Feld untereinander in einer Zelle */
+.b-idcell .ac-wrap + .ac-wrap { margin-top: 6px; }
+
+/* Festes Spaltenlayout, damit die Tabelle auf schmalen Bildschirmen
+   nicht breiter als der Viewport wird (Eingabefelder schrumpfen mit). */
+#b-table { table-layout: fixed; }
+#b-table th:nth-child(1) { width: 30%; }
+#b-table th:nth-child(2) { width: 14%; }
+#b-table th:nth-child(3) { width: 19%; }
+#b-table th:nth-child(4) { width: 27%; }
+#b-table th:nth-child(5) { width: 10%; }
+#b-table th, #b-table td { padding: 8px 6px; overflow-wrap: break-word; }
+#b-table .b-result { hyphens: auto; }
+#b-table input, #b-table select { min-width: 0; width: 100%; padding: 6px 6px; }
+#b-table .b-del { padding: 6px 8px; width: auto; }
 
 /* Batch-Tabelle darf das Dropdown nicht abschneiden (table hat sonst
    overflow:hidden für runde Ecken – die Rundung übernehmen die Eckzellen). */
