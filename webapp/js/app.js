@@ -226,7 +226,10 @@
   function addBatchRow() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><input class="b-id" placeholder="Kennnummer oder Stoff"></td>
+      <td class="b-idcell">
+        <input class="b-enumber" placeholder="Kennnummer">
+        <input class="b-substance" placeholder="Stoffname">
+      </td>
       <td><input class="b-value" inputmode="decimal" placeholder="Wert" style="max-width:110px"></td>
       <td><select class="b-unit">${(idx.allUnits.length ? idx.allUnits : ["mg/kg"])
         .map(u => `<option${u === "mg/kg" ? " selected" : ""}>${escapeHtml(u)}</option>`).join("")}</select></td>
@@ -234,17 +237,18 @@
       <td><button class="b-del" title="Zeile entfernen">✕</button></td>`;
     tr.querySelector(".b-del").addEventListener("click", () => tr.remove());
     $("#b-rows").appendChild(tr);
-    // Kennnummer ODER Stoffname – beide Listen abwechselnd mischen,
-    // damit auch bei leerem Feld beide Arten sichtbar sind (sonst füllen
-    // die alphabetisch vorn liegenden Kennnummern die ganze Liste).
-    Autocomplete.attach(tr.querySelector(".b-id"), () => {
-      const merged = [];
-      const max = Math.max(idx.allENumbers.length, idx.allSubstances.length);
-      for (let i = 0; i < max; i++) {
-        if (i < idx.allENumbers.length) merged.push(idx.allENumbers[i]);
-        if (i < idx.allSubstances.length) merged.push(idx.allSubstances[i]);
-      }
-      return merged;
+    Autocomplete.attach(tr.querySelector(".b-enumber"), () => idx.allENumbers);
+    Autocomplete.attach(tr.querySelector(".b-substance"), () => idx.allSubstances);
+    // Wie in der Einzelprüfung: gewählter Stoff leitet die Kennnummer ab
+    tr.querySelector(".b-substance").addEventListener("change", () => {
+      const sub = tr.querySelector(".b-substance").value.trim();
+      if (!sub) return;
+      const e = LavesEval.deriveENumberForSubstance(idx, sub, {
+        species: $("#s-species").value,
+        ageMonths: currentAgeMonths(),
+        tierartKategorie: $("#s-category").value,
+      });
+      if (e) tr.querySelector(".b-enumber").value = e;
     });
   }
 
@@ -257,15 +261,13 @@
       const ageMonths = currentAgeMonths();
       const category = $("#s-category").value || "Alle Kategorien";
       document.querySelectorAll("#b-rows tr").forEach(tr => {
-        const id = tr.querySelector(".b-id").value.trim();
+        const eNumber = tr.querySelector(".b-enumber").value.trim();
+        const substance = tr.querySelector(".b-substance").value.trim();
         const valueText = tr.querySelector(".b-value").value;
         const cell = tr.querySelector(".b-result");
-        if (!id && !valueText) { cell.textContent = "–"; return; }
-        const isENumber = idx.allENumbers.includes(id.toUpperCase());
+        if (!eNumber && !substance && !valueText) { cell.textContent = "–"; return; }
         const res = runCheck({
-          eNumber: isENumber ? id : "",
-          substance: isENumber ? "" : id,
-          valueText, species, ageMonths, category,
+          eNumber, substance, valueText, species, ageMonths, category,
         });
         const pillClass = res.cls;
         const pillText = res.cls === "ok" ? "KONFORM" : res.cls === "bad" ? "NICHT KONFORM" : "PRÜFEN";
