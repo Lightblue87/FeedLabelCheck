@@ -234,9 +234,18 @@
       <td><button class="b-del" title="Zeile entfernen">✕</button></td>`;
     tr.querySelector(".b-del").addEventListener("click", () => tr.remove());
     $("#b-rows").appendChild(tr);
-    // Kennnummer ODER Stoffname – beide Listen anbieten
-    Autocomplete.attach(tr.querySelector(".b-id"),
-      () => [...idx.allENumbers, ...idx.allSubstances]);
+    // Kennnummer ODER Stoffname – beide Listen abwechselnd mischen,
+    // damit auch bei leerem Feld beide Arten sichtbar sind (sonst füllen
+    // die alphabetisch vorn liegenden Kennnummern die ganze Liste).
+    Autocomplete.attach(tr.querySelector(".b-id"), () => {
+      const merged = [];
+      const max = Math.max(idx.allENumbers.length, idx.allSubstances.length);
+      for (let i = 0; i < max; i++) {
+        if (i < idx.allENumbers.length) merged.push(idx.allENumbers[i]);
+        if (i < idx.allSubstances.length) merged.push(idx.allSubstances[i]);
+      }
+      return merged;
+    });
   }
 
   function setupBatch() {

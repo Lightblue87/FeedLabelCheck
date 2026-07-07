@@ -63,6 +63,9 @@ main {
 label { display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem; font-weight: 600; }
 input, select, textarea {
   font: inherit;
+  /* Mindestens 16px, sonst zoomt iOS Safari beim Fokussieren in die
+     Seite hinein (und zoomt nicht wieder heraus). */
+  font-size: 16px;
   font-weight: 400;
   padding: 9px 10px;
   border: 1px solid var(--border);
