@@ -168,7 +168,9 @@ const Labeling = (() => {
   const COMPARISON_MARKERS = ["gegenuber", "gegenueber", "im vergleich zu", "verglichen mit"];
 
   function containsPhraseOutsideComparison(phrase, text) {
-    const re = new RegExp(`(^|[^a-z0-9])${escapeRegex(phrase)}([^a-z0-9]|$)`, "gi");
+    // „Kälbermilchaustauscher“, „Lämmermilchaustauscher“: Zusammensetzungen mit der Art als Grundwort zählen.
+    const prefix = /^milch-?austauscher$/.test(phrase) ? "(?:[a-z]{2,15}-?)?" : "";
+    const re = new RegExp(`(^|[^a-z0-9])${prefix}${escapeRegex(phrase)}([^a-z0-9]|$)`, "gi");
     let m;
     while ((m = re.exec(text)) !== null) {
       const start = m.index + m[1].length;
@@ -580,10 +582,18 @@ const Labeling = (() => {
     return null;
   }
 
-  // Kurzform der Bezeichnung als eigene Zeile („Mineralfutter für Rinder“): gilt nur für den gewählten Typ.
-  const COMPLEMENT_HEADING = /^[ \t]*Ergänzungsfutter(?:mittel)?[ \t]+für[ \t]+\p{L}{3,}/imu;
+  // Kurzformen der Bezeichnung als eigene Zeile („Mineralfutter für Rinder“, „Mischfutter“): gelten nur für den
+  // gewählten Typ und nur als Überschrift, nie im Fließtext. Die Datenbankmuster kennen nur die Langformen.
+  const DESIGNATION_TERMS = {
+    mineral_feed: "Mineral(?:futter|futtermittel|-Futtermittel)",
+    complementary_feed: "Ergänzungsfutter(?:mittel)?|Raufutterergänzung",
+    complete_feed: "Allein(?:futter|futtermittel|-Futtermittel)",
+    compound_feed: "Mischfutter(?:mittel)?",
+  };
+  const DESIGNATION_HEADINGS = Object.fromEntries(Object.entries(DESIGNATION_TERMS).map(([id, term]) =>
+    [id, new RegExp(String.raw`^[ \t]*(?:${term})(?:[ \t]+(?:für|zur|zum)[ \t]+\p{L}{3,}|[ \t]*$)`, "imu")]));
   function designationHeading(text, feedType) {
-    const heading = feedType?.id === "mineral_feed" ? MINERAL_HEADING : feedType?.id === "complementary_feed" ? COMPLEMENT_HEADING : null;
+    const heading = DESIGNATION_HEADINGS[feedType?.id];
     const match = heading ? heading.exec(text) : null;
     return match ? evidenceSnippet(text, match.index, match[0].length) : null;
   }

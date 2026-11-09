@@ -706,6 +706,35 @@ test("„mind. haltbar bis: Siehe Aufdruck“ ist ein Verweis auf den Aufdruck",
   assert.match(dated.matchedText, /12\/2027/);
 });
 
+test("Bezeichnungen der Futtermittelart in Kurz- und Langform werden als Typ und als Beleg erkannt", () => {
+  const types = [...FEED_TYPES.map(type => type.id === "complementary_feed" ? { ...type, keywordsDe: [...type.keywordsDe, "Raufutterergänzung"] } : type),
+    { id: "compound_feed", nameDe: "Mischfuttermittel", keywordsDe: ["Mischfuttermittel", "Mischfutter"] },
+    { id: "milk_replacer", nameDe: "Milchaustauscher", keywordsDe: ["Milchaustauscher", "Milch-Austauscher", "Aufzuchtmilch"] }];
+  const patterns = ["Alleinfuttermittel", "Ergänzungsfuttermittel", "Einzelfuttermittel", "Mischfuttermittel", "Mineralfuttermittel", "Milchaustauscher"]
+    .map(patternValue => ({ patternValue, patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }));
+  const rule = { id: "art15_001", severity: "critical", patterns };
+  const cases = [
+    ["Alleinfutter für Mastschweine", "complete_feed"], ["Allein-Futtermittel für Kälber", "complete_feed"],
+    ["Ergänzungsfutter", "complementary_feed"], ["Ergänzungsfutter für Pferde", "complementary_feed"], ["Raufutterergänzung für Pferde", "complementary_feed"],
+    ["Mineralfutter", "mineral_feed"], ["Mineralfutter für Rinder und Schafe", "mineral_feed"], ["Mineralfuttermittel für Schafe", "mineral_feed"],
+    ["Mischfutter für Schweine", "compound_feed"], ["Mischfuttermittel für Schweine", "compound_feed"],
+    ["Kälbermilchaustauscher", "milk_replacer"], ["Lämmermilchaustauscher für Lämmer", "milk_replacer"], ["Milchaustauscher für Kälber", "milk_replacer"],
+  ];
+  for (const [designation, expected] of cases) {
+    const text = `Produktname\n${designation}\nZusammensetzung: Weizen, Mais\nAnalytische Bestandteile: Rohprotein 18 %`;
+    const detected = Labeling.detectFeedType(text, types);
+    assert.equal(detected?.feedType.id, expected, designation);
+    const result = Labeling.check(text, detected.feedType, [rule]).ruleResults[0];
+    assert.equal(result.status, "found", designation);
+    assert.match(result.matchedText, new RegExp(designation.split(" ")[0].replace(/[-]/g, "\\-")), designation);
+  }
+  // Kurzform nur als Überschrift: im Fließtext, als Produktname oder als Zutat gibt es keine Art
+  for (const [text, type] of [["Zusammensetzung: Weizen. Man kann Mineralfutter anbieten.", "mineral_feed"],
+                              ["Zusammensetzung: Mischfutteranteil 20 %", "compound_feed"], ["Legehennenfutter\nZuchtfutter für Sauen", "complete_feed"]]) {
+    assert.equal(Labeling.check(`Futter\n${text}`, types.find(f => f.id === type), [rule]).ruleResults[0].status, "missing", text);
+  }
+});
+
 test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
   const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
   const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
