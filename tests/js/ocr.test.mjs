@@ -335,3 +335,25 @@ test("Zusatz-OCR wird bei einem Aufdruckverweis genutzt und verlangt übereinsti
   assert.equal(Labeling.matchingImprintLot("PO 157923", "PO 157924"), null);
   assert.equal(Labeling.matchingImprintLot("PO 157923\nPO 157924", "PO 157923"), null);
 });
+
+// ── Laufzeit: pathologische Texte dürfen die Oberfläche nicht einfrieren ──
+function timed(fn) { const t = process.hrtime.bigint(); fn(); return Number(process.hrtime.bigint() - t) / 1e6; }
+
+test("viele Zusammensetzungs-Überschriften brauchen keine quadratische Laufzeit", () => {
+  const text = "Ergänzungsfuttermittel für Wildvögel.\n" + "Zusammensetzung: a\n".repeat(10000);
+  assert.ok(timed(() => checkLabelEvidence(text)) < 1500);
+});
+
+test("viele KG hinter Zahlen brauchen keine quadratische Laufzeit und bleiben ohne Betrieb-Beleg", () => {
+  const text = "Ergänzungsfuttermittel für Pferde.\n" + "1 KG ".repeat(20000);
+  let result;
+  assert.ok(timed(() => { result = checkNumericLabelRule("art15_002", text, " KG", "keyword"); }) < 1500);
+  assert.equal(result.status, "missing");
+});
+
+test("KG nach Zahl mit Leerzeichen/Tab wird weiter als Menge, davor als Rechtsform erkannt", () => {
+  const check = text => checkNumericLabelRule("art15_002", `Ergänzungsfuttermittel für Pferde.\n${text}`, " KG", "keyword");
+  assert.equal(check("(10 x 1,5 \tKG)").status, "missing");
+  assert.equal(check("Beispiel GmbH & Co. KG").status, "found");
+  assert.equal(check("1,5 KG und danach Beispiel GmbH & Co. KG").status, "found");
+});

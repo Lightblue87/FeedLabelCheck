@@ -12,12 +12,29 @@ dem System.
 | Tab | Inhalt |
 |---|---|
 | **Grenzwerte** | Gemeinsamer *Prüfkontext* (Kategorie, Tierart, Alter) + Umschalter **Einzelwert** / **Mehrere Werte** (Batch als Karten statt Tabelle) |
-| **Etikett** | Foto aufnehmen oder Bilder wählen → OCR → Text prüfen → Kennzeichnung prüfen |
+| **Etikett** | Foto aufnehmen oder Bilder wählen → OCR → Text prüfen → Kennzeichnung prüfen. Jede Prüfung wird lokal im **Verlauf** gespeichert (siehe unten) |
 | **Futtermittel** | Suche im EU-Katalog und der DLG-Positivliste |
 | **Daten** | Datenstand, Update-Status, Hinweise |
 
 Direktsprünge per Hash (`#check`, `#labeling`, `#materials`, `#status`); das
 Manifest enthält dafür App-Shortcuts (Langdruck auf das Home-Bildschirm-Icon).
+
+## Prüfverlauf (Etikett)
+
+Jede Etikettprüfung wird automatisch als Entwurf lokal gespeichert (IndexedDB,
+`js/history.js`) und nach App-Neustart wiederhergestellt:
+
+- **Originalfotos** (Aufnahme und Upload) werden unverändert beim Eintrag abgelegt
+  und lassen sich auch offline öffnen: Betrachter mit Foto und korrigierbarem Text
+  nebeneinander, Blättern zwischen mehreren Fotos, Antippen zum Vergrößern.
+- **Aufbewahrung:** Einträge werden 14 Tage ab Erfassung aufbewahrt und beim Start
+  sowie beim Zurückkehren in die App samt Fotos gelöscht. **Behalten** schützt einen
+  Eintrag samt Fotos, bis die Markierung entfernt oder der Eintrag manuell gelöscht
+  wird; danach gilt wieder die Frist ab Erfassung.
+- **Neuer Check** startet einen leeren Eintrag, der bisherige bleibt im Verlauf.
+  Beim Öffnen eines Eintrags wird das Ergebnis mit den aktuellen Regeln neu berechnet.
+- Alles bleibt auf dem Gerät. Ist IndexedDB nicht verfügbar (z. B. manche private
+  Fenster), blendet die App den Verlauf aus und prüft wie bisher ohne Speicherung.
 
 ## Funktionen
 
@@ -79,5 +96,4 @@ cp FeedLabelCheck/FeedLabelCheck/Resources/labeling.sqlite webapp/data/
 
 ## Nicht portiert
 
-- Scan-Verlauf mit Foto-Speicherung (iOS-spezifisch, Fotos bleiben im Browser ohnehin lokal)
 - Live-Kamera-Erkennung (VisionKit); stattdessen Foto-Upload mit OCR

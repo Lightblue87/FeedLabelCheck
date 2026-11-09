@@ -241,8 +241,15 @@ const Labeling = (() => {
     const term = keyword.trim();
     let idx;
     if (term === "KG") {
-      const matches = [...text.matchAll(/\bKG\b/g)];
-      idx = matches.find(match => !/\d[ \t]*$/.test(text.slice(0, match.index)))?.index ?? -1;
+      // KG direkt hinter einer Zahl ist eine Mengeneinheit, keine Rechtsform. Rückwärts über
+      // Leerzeichen gehen statt den Text je Treffer zu kopieren (sonst quadratischer Aufwand;
+      // Look-behind vermeiden: ältere iOS-Versionen laden die Datei sonst gar nicht).
+      idx = -1;
+      for (const match of text.matchAll(/\bKG\b/g)) {
+        let i = match.index - 1;
+        while (i >= 0 && (text[i] === " " || text[i] === "\t")) i--;
+        if (!(i >= 0 && text[i] >= "0" && text[i] <= "9")) { idx = match.index; break; }
+      }
     } else if (/^(?:AG|OHG)$/.test(term)) {
       idx = text.search(new RegExp(`\\b${term}\\b`));
     } else if (/^(?:Weg|Platz)$/.test(term)) {
@@ -309,12 +316,15 @@ const Labeling = (() => {
     return text.match(pattern)?.[0] ?? null;
   }
 
+  // Obergrenze je Überschrift: ohne sie kopiert jede Überschrift den Resttext (quadratischer Aufwand).
+  const MAX_COMPOSITION_CHARS = 6000;
+
   function compositionEvidence(text) {
     const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*/giu;
-    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:Fütterungsempfehlung|Fütterungshinweise?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
+    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:|\b(?:Fütterungsempfehlung|Fütterungshinweise?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
       const start = match.index + match[0].length;
-      const body = text.slice(start).split(nextSection, 1)[0].trim();
+      const body = text.slice(start, start + MAX_COMPOSITION_CHARS).split(nextSection, 1)[0].trim();
       if (/^(?:siehe|keine|see)\b|^s\./i.test(body) || !/\p{L}{2,}/u.test(body)) continue;
       if (/\p{L}[^:,\n]{0,40},\s*\p{L}|\d[ \t]*%/u.test(body)) {
         return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
