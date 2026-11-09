@@ -238,7 +238,9 @@ const Labeling = (() => {
   }
 
   const SUPPLEMENT_NOTE = /Ergänzungsfutter(?:mittel)?(?=[ \t\n]+darf\b)/gi;
-  const MINERAL_HEADING = /^[ \t]*Mineral(?:futter|futtermittel|-Futtermittel)[ \t]+für[ \t]+\p{L}{3,}/imu;
+  // Eine Bezeichnung ist eine kurze Überschriftszeile. Anweisungssätze („… zusätzlich anbieten.“) sind keine.
+  const DESIGNATION_TAIL = String.raw`(?![^\n]*\b(?:anbieten|füttern|verfüttern|gefüttert|verfüttert|geben|gegeben|zusätzlich|ergänzen|einsetzen|verwenden|verwendet|darf|dürfen|werden|wird|ist|sind|kann|können|sollte|sollten|muss|müssen|empfohlen|empfehlen)\b)[^\n]{0,40}$`;
+  const MINERAL_HEADING = new RegExp(String.raw`^[ \t]*Mineral(?:futter|futtermittel|-Futtermittel)[ \t]+für[ \t]+\p{L}{3,}${DESIGNATION_TAIL}`, "imu");
 
   function detectFeedType(ocrText, feedTypes) {
     const diets = declaredDiet(ocrText, feedTypes);
@@ -591,7 +593,7 @@ const Labeling = (() => {
     compound_feed: "Mischfutter(?:mittel)?",
   };
   const DESIGNATION_HEADINGS = Object.fromEntries(Object.entries(DESIGNATION_TERMS).map(([id, term]) =>
-    [id, new RegExp(String.raw`^[ \t]*(?:${term})(?:[ \t]+(?:für|zur|zum)[ \t]+\p{L}{3,}|[ \t]*$)`, "imu")]));
+    [id, new RegExp(String.raw`^[ \t]*(?:${term})(?:[ \t]+für[ \t]+\p{L}{3,}${DESIGNATION_TAIL}|[ \t]*$)`, "imu")]));
   function designationHeading(text, feedType) {
     const heading = DESIGNATION_HEADINGS[feedType?.id];
     const match = heading ? heading.exec(text) : null;

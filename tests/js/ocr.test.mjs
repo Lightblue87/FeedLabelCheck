@@ -728,6 +728,15 @@ test("Bezeichnungen der Futtermittelart in Kurz- und Langform werden als Typ und
     assert.equal(result.status, "found", designation);
     assert.match(result.matchedText, new RegExp(designation.split(" ")[0].replace(/[-]/g, "\\-")), designation);
   }
+  // Anweisungssätze auf einer eigenen Zeile sind keine Bezeichnung, auch wenn sie mit der Kurzform beginnen
+  const mineral = types.find(f => f.id === "mineral_feed");
+  for (const text of ["Fütterungsempfehlung:\nMineralfutter zur freien Aufnahme zusätzlich anbieten.", "Fütterungsempfehlung:\nMineralfutter zum Rindviehfutter geben.",
+                      "Mineralfutter für Pferde zusätzlich anbieten.", "Mineralfutter für Rinder darf nur ergänzend gegeben werden.",
+                      "Mineralfutter für Rinder soll täglich 100 g, sollte aber nicht allein verfüttert werden"]) {
+    assert.equal(Labeling.check(`Futter\n${text}`, mineral, [rule]).ruleResults[0].status, "missing", text);
+  }
+  assert.equal(Labeling.detectFeedType("Ergänzungsfuttermittel für Pferde\nFütterungsempfehlung:\nMineralfutter für Pferde zusätzlich anbieten.", types)?.feedType.id, "complementary_feed");
+  assert.equal(Labeling.check("Futter\nMineralfutter für Rinder, Schafe und Ziegen", mineral, [rule]).ruleResults[0].status, "found");
   // Kurzform nur als Überschrift: im Fließtext, als Produktname oder als Zutat gibt es keine Art
   for (const [text, type] of [["Zusammensetzung: Weizen. Man kann Mineralfutter anbieten.", "mineral_feed"],
                               ["Zusammensetzung: Mischfutteranteil 20 %", "compound_feed"], ["Legehennenfutter\nZuchtfutter für Sauen", "complete_feed"]]) {
