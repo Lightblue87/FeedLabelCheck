@@ -420,6 +420,7 @@
 
     let current = null;         // Metadaten des geöffneten Eintrags (oder null)
     let viewEpoch = 0;          // zählt Wechsel des geöffneten Eintrags (Herkunft von OCR-Ergebnissen)
+    let navSeq = 0;             // zählt Navigationen (Eintrag öffnen, Neuer Check): eine ältere, noch wartende verfällt
     let currentPhotos = [];     // Fotodatensätze des geöffneten Eintrags
     let photoUrls = [];
     let listUrls = [];
@@ -548,7 +549,10 @@
       photoUrls.forEach(u => URL.revokeObjectURL(u));
       photoUrls = [];
       const box = $("#l-photos");
-      currentPhotos = history && current ? await history.photos(current.id) : [];
+      const id = history && current ? current.id : null;
+      const loaded = id ? await history.photos(id) : [];
+      if ((current?.id ?? null) !== id) return;     // Ansicht inzwischen gewechselt: das Neuere zeichnet
+      currentPhotos = loaded;
       box.hidden = currentPhotos.length === 0;
       box.innerHTML = currentPhotos.length
         ? `<span class="photos-label">Originalfotos (${currentPhotos.length}) – antippen zum Vergleichen</span>`
@@ -740,9 +744,12 @@
     }
 
     async function openEntry(id) {
+      const nav = ++navSeq;
       clearTimeout(textTimer);
       await saveText();                        // offene Eingabe des bisherigen Eintrags sichern
+      if (nav !== navSeq) return;              // inzwischen wurde etwas anderes angesteuert
       const e = await history.get(id);
+      if (nav !== navSeq) return;              // ... während der Eintrag geladen wurde
       if (!e) { toast("Eintrag nicht mehr vorhanden.", "warn", true); await renderHistory(); return; }
       viewEpoch++;
       current = e;
@@ -754,6 +761,7 @@
       $("#l-ocr-status").className = "ocr-status";
       $("#l-ocr-status").textContent = "Die Texterkennung (OCR, Deutsch) läuft lokal auf dem Gerät.";
       await refreshPhotos();
+      if (nav !== navSeq) return;
       renderEntryBar();
       setHistoryOpen(false);
       if (e.lastCheck) runLabelCheck({ scroll: false, save: false });   // aktuelle Regeln, gleicher Text
@@ -774,8 +782,10 @@
     }
 
     $("#l-new").addEventListener("click", async () => {
+      const nav = ++navSeq;
       clearTimeout(textTimer);
       await saveText();
+      if (nav !== navSeq) return;              // ein neueres Öffnen hat Vorrang
       resetCurrent();
       setHistoryOpen(false);
     });
