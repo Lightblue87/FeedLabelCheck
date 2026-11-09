@@ -871,3 +871,36 @@ test("Sensitive-Werbetext und bloße Verweise sind keine deklarierten Quellen", 
   assert.equal(result.ruleResults.find(r => r.rule.id === "art18_intolerance_protein").status, "unclear");
   assert.equal(result.ruleResults.find(r => r.rule.id === "art18_advice").status, "found");
 });
+
+test("Zutatennachsuche braucht eine Fütterungstabelle mit Gewichtsbezug und übernimmt nur konkrete Zutaten", () => {
+  const table = "FEEDING ADVICE PAVO WeightLift\nLichaamsgewicht / Körpergewicht / Body weight";
+  assert.equal(Labeling.needsCompositionCrop(table), true);
+  assert.equal(Labeling.needsCompositionCrop("Fütterungsempfehlung: täglich Futter anbieten."), false);
+  assert.equal(Labeling.needsCompositionCrop(table + "\nZusammensetzung: Luzerne, Reis."), false);
+  const multilingual = "Samenstelling / Komposition / Composition\nNL Luzerne, rijst\nDE Luzerne, Reiskleie, Leinsaat\nEN Alfalfa, rice";
+  const recovered = Labeling.compositionCropHint(multilingual);
+  assert.match(recovered, /DE Luzerne, Reiskleie, Leinsaat$/);
+  assert.doesNotMatch(recovered, /rijst|Alfalfa/);
+  assert.equal(Labeling.compositionCropHint("Zusammensetzung: siehe Rückseite"), "");
+});
+
+test("widersprüchliche Chargen aus mehreren Ansichten bleiben unklar", () => {
+  const rule = text => checkNumericLabelRule("art15_004", `Ergänzungsfuttermittel für Pferde.\n${text}`, "Charge", "keyword", 0.7);
+  const result = rule("Charge: 01102000040327\n\nChargennummer: 01102000040321");
+  assert.equal(result.status, "unclear");
+  assert.match(result.matchedText, /01102000040327.*01102000040321/);
+  assert.equal(rule("Charge: 01102000040327\n\nChargennummer: 01102000040327").status, "found");
+  assert.equal(rule("Charge: 001234\n\nCharge: 1234").status, "unclear");
+  assert.equal(rule("Lot Number: 05925").matchedText, "Lot Number: 05925");
+});
+
+test("Verweise auf unterschiedliche Stellen werden je nach Feld getrennt zugeordnet", () => {
+  const text = "Ergänzungsfuttermittel für Pferde.\nMHD: siehe Stempel.\nLot no.: see container base.";
+  const expiry = checkNumericLabelRule("art17_002_complementary", text, "MHD", "keyword", 0.7);
+  const lot = checkNumericLabelRule("art15_004", text, "Charge", "keyword", 0.7);
+  assert.equal(expiry.status, "probablyFound");
+  assert.match(expiry.note, /Stempel separat fotografieren/);
+  assert.equal(lot.status, "probablyFound");
+  assert.match(lot.note, /Behälterboden separat fotografieren/);
+  assert.equal(lot.matchedText, "Lot no.: see container base");
+});

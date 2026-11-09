@@ -1050,6 +1050,21 @@
       return Labeling.moistureCropHint(primary, firstRead, secondRead);
     }
 
+    async function readCompositionAboveFeeding(worker, input, data, output) {
+      const region = Ocr.findTextRegion(data, Labeling.matchFeedingTableHeading);
+      if (!region) return "";
+      const { first, last } = region;
+      const height = Math.max(1, first.y1 - first.y0);
+      if (first.y0 < height * 14) return "";
+      const text = await readLabelCrop(worker, input, output, {
+        x: Math.round(first.x0 - height * 2.6),
+        y: Math.round(first.y0 * 0.18),
+        right: Math.round(last.x1 + height * 18),
+        bottom: Math.round(first.y0 * 0.67),
+      }, Tesseract.PSM.SINGLE_BLOCK);
+      return Labeling.compositionCropHint(text);
+    }
+
     /**
      * Liest ein Foto; bei Hinweisen auf Packungsmenge oder Aufdruck folgen Zusatzläufe.
      * step(text) meldet den Fortschritt an die Statuszeile (die Zusatzläufe dauern am Handy spürbar),
@@ -1077,7 +1092,10 @@
       const checkDiet = Labeling.needsDietDeclaration(primary);
       const checkCalcium = Labeling.needsSplitCalcium(primary);
       const checkMoisture = rotated && Labeling.needsMoistureCrop(primary);
-      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture) return { text: primary, warnings };
+      const checkComposition = Labeling.needsCompositionCrop(primary);
+      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition) {
+        return { text: primary, warnings };
+      }
 
       let text = primary;
       try {
@@ -1112,6 +1130,11 @@
           step("Zusatzprüfung Feuchtegehalt");
           const moisture = await readMoistureCrop(worker, file, rotated, output, primary);
           if (moisture) text += `\n\n${moisture}`;
+        }
+        if (checkComposition) {
+          step("Zusatzprüfung Zusammensetzung");
+          const ingredients = await readCompositionAboveFeeding(worker, input, data, output);
+          if (ingredients) text += `\n\n${ingredients}`;
         }
       } catch (e) {
         warnings.push(`Zusatzprüfung fehlgeschlagen (${e?.message || e})`);
