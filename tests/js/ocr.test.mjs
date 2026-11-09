@@ -438,7 +438,9 @@ test("echte Codes, die wie ein Feldname beginnen oder ihn enthalten, bleiben Los
 test("eine Zusammensetzungs-Überschrift ohne Zutaten bestätigt keine Zutatenliste aus einem Nachbarfeld", () => {
   const check = text => checkNumericLabelRule("art17_003_complete", `Alleinfuttermittel für Hunde. ${text}`, "Zusammensetzung", "keyword", 0.7);
   for (const text of ["Zusammensetzung:\n\nHersteller: Muster GmbH, Berlin", "Zusammensetzung:\nVertrieb: Futter OHG, Hamburg",
-                      "Zusammensetzung:\nNettomasse: 10 kg, Chargen-Nr.: A12345", "Zusammensetzung:\nChargen-Nr.: A12345, MHD: 12/2027"]) {
+                      "Zusammensetzung:\nNettomasse: 10 kg, Chargen-Nr.: A12345", "Zusammensetzung:\nChargen-Nr.: A12345, MHD: 12/2027",
+                      "Zusammensetzung:\nFütterung: 2 % des Körpergewichts täglich.", "Zusammensetzung:\nFütterungsanleitung: 2 % täglich.",
+                      "Zusammensetzung:\nFeeding guide: 2 % of body weight daily."]) {
     assert.notEqual(check(text).status, "found", JSON.stringify(text));
   }
   // echte Liste, danach Nachbarfeld: nur die Liste zählt
