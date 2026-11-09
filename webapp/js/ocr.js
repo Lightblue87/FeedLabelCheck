@@ -102,7 +102,7 @@ const Ocr = (() => {
             start = null;
           }
         }
-        if (best && best.width >= height) return { x: from + best.start + best.width / 2, height };
+        if (best && best.width >= height) return { x: from + best.start + best.width / 2, height, width: best.width };
       }
     }
     return null;
@@ -127,6 +127,12 @@ const Ocr = (() => {
       if (crossing) { flush(); result.push(words); continue; }
       const side = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 < gutter.x);
       const other = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 >= gutter.x);
+      // Eine Zeile über beide Hälften wird nur getrennt, wenn ihre Lücke so breit ist wie die Spaltenlücke.
+      // Eine mittig gesetzte Zeile („Charge: 4711“) fällt mit ihrer kleinen Wortlücke nicht darunter.
+      if (side.length && other.length) {
+        const gap = Math.min(...other.map(w => w.bbox.x0)) - Math.max(...side.map(w => w.bbox.x1));
+        if (gap < gutter.width * 0.5) { flush(); result.push(words); continue; }
+      }
       for (const part of [side, other]) if (part.length && part.length < words.length) fragmentOrigin.set(part, words);
       if (side.length) left.push(side);
       if (other.length) right.push(other);

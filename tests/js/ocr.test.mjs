@@ -785,6 +785,26 @@ test("getrennte Spaltenstücke behalten die Entscheidung der ursprünglichen Zei
   assert.equal(Ocr.textFromResult(noisy), "Zusammensetzung:\nWeizen\nAnalytische Bestandteile:\n4% Phosphor");
 });
 
+test("zweispaltiges Etikett: eine mittig gesetzte Zeile ohne Spaltenlücke bleibt ganz", () => {
+  const rows = Array.from({ length: 16 }, (_, i) => boxed(69 + i * 28, [`Zutat${i}`, 47, 200], [`${i}%`, 410, 440], [`Wert${i}`, 450, 520]));
+  const lines = [
+    boxed(40, ["Zusammensetzung:", 47, 250], ["Analytische", 403, 520], ["Bestandteile:", 525, 690]),
+    ...rows,
+    // Fußzeilen über die ganze Breite: die Wortlücke liegt zwar bei der Spaltenlücke, ist aber klein
+    boxed(600, ["Charge:", 250, 318], ["4711", 334, 380], ["MHD", 410, 450], ["12/2027", 455, 520]),
+    boxed(630, ["Charge:", 250, 318], ["4711", 334, 380]),
+  ];
+  const result = lineText(Ocr.reorderColumns(lines));
+  assert.ok(result.includes("Charge: 4711 MHD 12/2027"), result.join(" | "));
+  assert.ok(result.includes("Charge: 4711"), result.join(" | "));
+  // die Spalten darüber bleiben getrennt: erst alle Zutaten, dann die Analytik
+  assert.equal(result[0], "Zusammensetzung:");
+  assert.equal(result[1], "Zutat0");
+  assert.equal(result[16], "Zutat15");
+  assert.equal(result[17], "Analytische Bestandteile:");
+  assert.equal(result[18], "0% Wert0");
+});
+
 test("Spaltenreihenfolge ändert einspaltige Etiketten, Tabellen und Zeilen ohne Überschriftenkollision nicht", () => {
   // Tabelle in einer Spalte: Zellen derselben Zeile bleiben zusammen
   const table = [
