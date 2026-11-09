@@ -46,6 +46,24 @@ const LabelHistory = (() => {
         entries.set(entry.id, copyEntry(entry));
         for (const p of newPhotos) photos.set(p.id, { ...p });
       },
+      /** Atomar: frisch lesen, mutate(entry) anwenden, schreiben. null, wenn der Eintrag fehlt. */
+      async update(id, mutate, newPhotos = []) {
+        const cur = entries.get(id);
+        if (!cur) return null;
+        const entry = copyEntry(cur);
+        mutate(entry);
+        entries.set(id, copyEntry(entry));
+        for (const p of newPhotos) photos.set(p.id, { ...p });
+        return entry;
+      },
+      /** Löscht Eintrag samt Fotos nur, wenn predicate(frischer Eintrag) wahr ist. */
+      async deleteEntryIf(id, predicate) {
+        const cur = entries.get(id);
+        if (!cur || !predicate(copyEntry(cur))) return false;
+        entries.delete(id);
+        for (const [pid, p] of photos) if (p.entryId === id) photos.delete(pid);
+        return true;
+      },
       async getEntry(id) { const e = entries.get(id); return e ? copyEntry(e) : null; },
       async listEntries() { return [...entries.values()].map(copyEntry); },
       async getPhotos(entryId) {
@@ -103,6 +121,52 @@ const LabelHistory = (() => {
           throw e;
         }
         await finished;
+      },
+      /**
+       * Atomar in EINER Transaktion: frisch lesen, mutate(entry) anwenden, schreiben.
+       * Transaktionen über Tabs/Fenster hinweg werden von IndexedDB serialisiert, so
+       * überschreibt ein langsamer Vorgang keine inzwischen anderswo gespeicherten Änderungen.
+       */
+      async update(id, mutate, photos = []) {
+        const db = await open();
+        const tx = db.transaction(["entries", "photos"], "readwrite");
+        const finished = done(tx);
+        let result = null;
+        let failure = null;
+        const req = tx.objectStore("entries").get(id);
+        req.onsuccess = () => {
+          const entry = req.result;
+          if (!entry) return;                      // gelöscht: keine verwaisten Fotos anlegen
+          try {
+            mutate(entry);
+            tx.objectStore("entries").put(entry);
+            for (const p of photos) tx.objectStore("photos").put(p);
+            result = entry;
+          } catch (e) {
+            failure = e;
+            try { tx.abort(); } catch { /* bereits beendet */ }
+          }
+        };
+        try { await finished; } catch (e) { throw failure || e; }
+        return result;
+      },
+      /** Löscht Eintrag samt Fotos nur, wenn predicate(frischer Eintrag) wahr ist. */
+      async deleteEntryIf(id, predicate) {
+        const db = await open();
+        const tx = db.transaction(["entries", "photos"], "readwrite");
+        const finished = done(tx);
+        let deleted = false;
+        const req = tx.objectStore("entries").get(id);
+        req.onsuccess = () => {
+          const entry = req.result;
+          if (!entry || !predicate(entry)) return;
+          deleted = true;
+          tx.objectStore("entries").delete(id);
+          const keys = tx.objectStore("photos").index("entryId").getAllKeys(id);
+          keys.onsuccess = () => keys.result.forEach(k => tx.objectStore("photos").delete(k));
+        };
+        await finished;
+        return deleted;
       },
       async getEntry(id) {
         const db = await open();
@@ -162,24 +226,20 @@ const LabelHistory = (() => {
      * oder Futtermitteltyp, ohne dass ein neues Ergebnis mitgegeben wird, wird es verworfen.
      */
     async function update(id, patch) {
-      const entry = await store.getEntry(id);
-      if (!entry) return null;
-      const inputsChanged = ("text" in patch && patch.text !== entry.text)
-        || ("feedType" in patch && patch.feedType !== entry.feedType);
-      for (const k of ["text", "feedType", "lastCheck"]) if (k in patch) entry[k] = patch[k];
-      if (inputsChanged && !("lastCheck" in patch)) entry.lastCheck = null;
-      entry.updatedAt = now();
-      await store.save({ entry });
-      return entry;
+      return store.update(id, (entry) => {
+        const inputsChanged = ("text" in patch && patch.text !== entry.text)
+          || ("feedType" in patch && patch.feedType !== entry.feedType);
+        for (const k of ["text", "feedType", "lastCheck"]) if (k in patch) entry[k] = patch[k];
+        if (inputsChanged && !("lastCheck" in patch)) entry.lastCheck = null;
+        entry.updatedAt = now();
+      });
     }
 
     async function setKeep(id, keep) {
-      const entry = await store.getEntry(id);
-      if (!entry) return null;
-      entry.keep = !!keep;
-      entry.updatedAt = now();
-      await store.save({ entry });
-      return entry;
+      return store.update(id, (entry) => {
+        entry.keep = !!keep;
+        entry.updatedAt = now();
+      });
     }
 
     /**
@@ -187,23 +247,24 @@ const LabelHistory = (() => {
      * makeThumb(file) darf eine kleine Vorschau liefern (oder null).
      */
     async function addPhotos(id, files, { makeThumb } = {}) {
-      const entry = await store.getEntry(id);
-      if (!entry) return null;
+      // Langsames (Vorschaubilder) zuerst und ohne Eintrag in der Hand; der Eintrag wird erst
+      // im atomaren Schritt frisch gelesen, damit parallele Änderungen (Text, "Behalten",
+      // andere Tabs) nicht überschrieben werden.
       const records = [];
       for (const file of files) {
         const thumb = makeThumb ? await makeThumb(file).catch(() => null) : null;
-        const t = now();
-        const rec = {
+        records.push({
           id: newId(), entryId: id, blob: file, thumb: thumb || null,
-          name: file.name || "Foto", type: file.type || "", size: file.size ?? 0, addedAt: t,
-        };
-        records.push(rec);
-        entry.photos.push({ id: rec.id, name: rec.name, type: rec.type, size: rec.size, addedAt: t });
-        if (!entry.thumb && thumb) entry.thumb = thumb;
+          name: file.name || "Foto", type: file.type || "", size: file.size ?? 0, addedAt: now(),
+        });
       }
-      entry.updatedAt = now();
-      await store.save({ entry, photos: records });
-      return entry;
+      return store.update(id, (entry) => {
+        for (const rec of records) {
+          entry.photos.push({ id: rec.id, name: rec.name, type: rec.type, size: rec.size, addedAt: rec.addedAt });
+          if (!entry.thumb && rec.thumb) entry.thumb = rec.thumb;
+        }
+        entry.updatedAt = now();
+      }, records);
     }
 
     const get = (id) => store.getEntry(id);
@@ -225,7 +286,8 @@ const LabelHistory = (() => {
       const t = now();
       const removed = [];
       for (const e of await store.listEntries()) {
-        if (isExpired(e, t)) { await store.deleteEntry(e.id); removed.push(e.id); }
+        // erneut gegen den frischen Stand prüfen: "Behalten" in einem anderen Tab gewinnt
+        if (await store.deleteEntryIf(e.id, (fresh) => isExpired(fresh, t))) removed.push(e.id);
       }
       await store.deleteOrphanPhotos();
       return removed;

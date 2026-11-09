@@ -222,3 +222,68 @@ test("neues Ergebnis zusammen mit geändertem Text bleibt erhalten", async () =>
   assert.equal(entry.text, "neu");
   assert.equal(entry.lastCheck.overall, "unklar");
 });
+
+// ── Zwei Tabs/Instanzen auf demselben Speicher ───────────────────
+function twoTabs() {
+  const clock = { t: T0 };
+  const store = LabelHistory.createMemoryStore();
+  let n = 0;
+  const opts = { now: () => clock.t, newId: () => `id${++n}` };
+  return { clock, store, a: LabelHistory.create(store, opts), b: LabelHistory.create(store, opts) };
+}
+
+test("langsame Fotospeicherung überschreibt keine parallelen Änderungen aus einem anderen Tab", async () => {
+  const { a, b } = twoTabs();
+  const e = await a.startEntry({ text: "alt" });
+
+  let release;
+  const slowThumb = () => new Promise(res => { release = () => res(new Blob(["t"])); });
+  const pending = a.addPhotos(e.id, [photoFile("x.jpg", [1, 2])], { makeThumb: slowThumb });
+  await new Promise(r => setTimeout(r, 0));             // Tab A wartet auf die Vorschau
+
+  await b.update(e.id, { text: "Korrektur aus Tab B" }); // Tab B ändert inzwischen
+  await b.setKeep(e.id, true);
+  release();
+  await pending;
+
+  const entry = await a.get(e.id);
+  assert.equal(entry.text, "Korrektur aus Tab B", "Textkorrektur bleibt erhalten");
+  assert.equal(entry.keep, true, "\"Behalten\" bleibt erhalten");
+  assert.equal(entry.photos.length, 1, "Foto ist trotzdem hinzugekommen");
+  assert.equal((await a.photos(e.id)).length, 1);
+});
+
+test("parallele Änderungen verschiedener Felder gehen nicht gegenseitig verloren", async () => {
+  const { a, b } = twoTabs();
+  const e = await a.startEntry();
+  await Promise.all([a.update(e.id, { text: "neuer Text" }), b.setKeep(e.id, true)]);
+  const entry = await a.get(e.id);
+  assert.equal(entry.text, "neuer Text");
+  assert.equal(entry.keep, true);
+});
+
+test("Fotos zu einem inzwischen gelöschten Eintrag werden nicht verwaist gespeichert", async () => {
+  const { a, b, store } = twoTabs();
+  const e = await a.startEntry();
+  let release;
+  const pending = a.addPhotos(e.id, [photoFile("x.jpg", [1])], { makeThumb: () => new Promise(res => { release = () => res(null); }) });
+  await new Promise(r => setTimeout(r, 0));
+  await b.remove(e.id);
+  release();
+  assert.equal(await pending, null);
+  assert.equal(store._countPhotos(), 0);
+});
+
+test("Bereinigung berücksichtigt \"Behalten\" aus einem anderen Tab (frischer Stand)", async () => {
+  const { a, b, clock, store } = twoTabs();
+  const e = await a.startEntry();
+  await a.addPhotos(e.id, [photoFile("x.jpg", [1])]);
+  clock.t = T0 + 20 * DAY;
+
+  // Tab B markiert, nachdem Tab A die Liste gelesen hat, aber bevor es löscht
+  const realList = store.listEntries.bind(store);
+  store.listEntries = async () => { const l = await realList(); await b.setKeep(e.id, true); return l; };
+  assert.deepEqual(await a.purgeExpired(), []);
+  assert.ok(await a.get(e.id));
+  assert.equal(store._countPhotos(), 1);
+});
