@@ -682,6 +682,68 @@ test("Mineralfutter-Überschrift gewinnt gegen den vorgeschriebenen Hinweis „D
   assert.equal(detect(`Mineralfutter für Rinder\nFütterungsempfehlung: 100 g\n${note}`), "mineral_feed");
 });
 
+test("Kurzform „Mineralfutter für Rinder“ belegt die Futtermittelart nur für den passenden Typ", () => {
+  const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Mineralfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
+  const check = (text, type) => Labeling.check(text, FEED_TYPES.find(f => f.id === type), [rule]).ruleResults[0];
+  const label = "Carolina\nMineralfutter für Rinder\nDieses Ergänzungsfutter darf wegen der gegenüber Alleinfuttermitteln höheren Gehalte an Rinder gefüttert werden.";
+  const found = check(label, "mineral_feed");
+  assert.equal(found.status, "found");
+  assert.equal(found.matchedText, "Mineralfutter für Rinder");
+  assert.equal(check(label, "complete_feed").status, "missing");
+  assert.equal(check("Ergänzungsfutter für Pferde\nZusammensetzung: Hafer", "complementary_feed").status, "found");
+  // Fließtext und Anweisungen im Satz sind keine Bezeichnung
+  assert.equal(check("Zusammensetzung: Hafer. Man kann Mineralfutter für Rinder zusätzlich anbieten.", "mineral_feed").status, "missing");
+});
+
+test("„mind. haltbar bis: Siehe Aufdruck“ ist ein Verweis auf den Aufdruck", () => {
+  const rule = { id: "art17_002_complementary", severity: "critical", patterns: [{ patternValue: "MHD", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const result = Labeling.check("Mineralfutter für Rinder\nEinschließlich Vitamine mind.\nhaltbar bis: Siehe Aufdruck\nSechs Monate vor MHD hergestellt.", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(result.status, "probablyFound");
+  assert.match(result.matchedText, /mind\. haltbar bis: Siehe Aufdruck/);
+  assert.match(result.note, /Verweis auf Aufdruck erkannt/);
+  const dated = Labeling.check("Mineralfutter\nmind. haltbar bis: 12/2027", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(dated.status, "found");
+  assert.match(dated.matchedText, /12\/2027/);
+});
+
+test("Bezeichnungen der Futtermittelart in Kurz- und Langform werden als Typ und als Beleg erkannt", () => {
+  const types = [...FEED_TYPES.map(type => type.id === "complementary_feed" ? { ...type, keywordsDe: [...type.keywordsDe, "Raufutterergänzung"] } : type),
+    { id: "compound_feed", nameDe: "Mischfuttermittel", keywordsDe: ["Mischfuttermittel", "Mischfutter"] },
+    { id: "milk_replacer", nameDe: "Milchaustauscher", keywordsDe: ["Milchaustauscher", "Milch-Austauscher", "Aufzuchtmilch"] }];
+  const patterns = ["Alleinfuttermittel", "Ergänzungsfuttermittel", "Einzelfuttermittel", "Mischfuttermittel", "Mineralfuttermittel", "Milchaustauscher"]
+    .map(patternValue => ({ patternValue, patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }));
+  const rule = { id: "art15_001", severity: "critical", patterns };
+  const cases = [
+    ["Alleinfutter für Mastschweine", "complete_feed"], ["Allein-Futtermittel für Kälber", "complete_feed"],
+    ["Ergänzungsfutter", "complementary_feed"], ["Ergänzungsfutter für Pferde", "complementary_feed"], ["Raufutterergänzung für Pferde", "complementary_feed"],
+    ["Mineralfutter", "mineral_feed"], ["Mineralfutter für Rinder und Schafe", "mineral_feed"], ["Mineralfuttermittel für Schafe", "mineral_feed"],
+    ["Mischfutter für Schweine", "compound_feed"], ["Mischfuttermittel für Schweine", "compound_feed"],
+    ["Kälbermilchaustauscher", "milk_replacer"], ["Lämmermilchaustauscher für Lämmer", "milk_replacer"], ["Milchaustauscher für Kälber", "milk_replacer"],
+  ];
+  for (const [designation, expected] of cases) {
+    const text = `Produktname\n${designation}\nZusammensetzung: Weizen, Mais\nAnalytische Bestandteile: Rohprotein 18 %`;
+    const detected = Labeling.detectFeedType(text, types);
+    assert.equal(detected?.feedType.id, expected, designation);
+    const result = Labeling.check(text, detected.feedType, [rule]).ruleResults[0];
+    assert.equal(result.status, "found", designation);
+    assert.match(result.matchedText, new RegExp(designation.split(" ")[0].replace(/[-]/g, "\\-")), designation);
+  }
+  // Anweisungssätze auf einer eigenen Zeile sind keine Bezeichnung, auch wenn sie mit der Kurzform beginnen
+  const mineral = types.find(f => f.id === "mineral_feed");
+  for (const text of ["Fütterungsempfehlung:\nMineralfutter zur freien Aufnahme zusätzlich anbieten.", "Fütterungsempfehlung:\nMineralfutter zum Rindviehfutter geben.",
+                      "Mineralfutter für Pferde zusätzlich anbieten.", "Mineralfutter für Rinder darf nur ergänzend gegeben werden.",
+                      "Mineralfutter für Rinder soll täglich 100 g, sollte aber nicht allein verfüttert werden"]) {
+    assert.equal(Labeling.check(`Futter\n${text}`, mineral, [rule]).ruleResults[0].status, "missing", text);
+  }
+  assert.equal(Labeling.detectFeedType("Ergänzungsfuttermittel für Pferde\nFütterungsempfehlung:\nMineralfutter für Pferde zusätzlich anbieten.", types)?.feedType.id, "complementary_feed");
+  assert.equal(Labeling.check("Futter\nMineralfutter für Rinder, Schafe und Ziegen", mineral, [rule]).ruleResults[0].status, "found");
+  // Kurzform nur als Überschrift: im Fließtext, als Produktname oder als Zutat gibt es keine Art
+  for (const [text, type] of [["Zusammensetzung: Weizen. Man kann Mineralfutter anbieten.", "mineral_feed"],
+                              ["Zusammensetzung: Mischfutteranteil 20 %", "compound_feed"], ["Legehennenfutter\nZuchtfutter für Sauen", "complete_feed"]]) {
+    assert.equal(Labeling.check(`Futter\n${text}`, types.find(f => f.id === type), [rule]).ruleResults[0].status, "missing", text);
+  }
+});
+
 test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
   const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
   const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
