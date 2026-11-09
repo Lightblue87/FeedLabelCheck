@@ -544,12 +544,27 @@ const Labeling = (() => {
   // eigenen Abschnitt. Eine leere Überschrift oder eine Menge aus dem Nachbarabschnitt genügt nicht.
   const ADDITIVES_HEADING = /\b(?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)[ \t]+)?Zusatzstoffe(?:[ \t]+(?:je|pro)[ \t]*kg)?[ \t]*(?:\([^)\n]{0,20}\))?[ \t]*:/giu;
   const ADDITIVE_AMOUNT = /\d[\d.,]*[ \t]*(?:mg|µg|μg|mcg|g|I\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}])/u;
-  const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer|Vertrieb|Netto\w*|Inhalt|Füllmenge|Packungsinhalt|Gewicht|net[ \t]+(?:weight|contents|quantity)|Chargen?|Losnummer|Dosierung|Anwendung|Lagerung\w*)\b/i;
+  const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer|Vertrieb|Netto\w*|Inhalt|Füllmenge|Packungsinhalt|Gewicht|net[ \t]+(?:weight|contents|quantity)|Chargen?|Losnummer|Dosierung|Anwendung|Lagerung\w*|Tagesration|Futtermenge|Ration|täglich)\b/i;
+  const ADDITIVE_AMOUNT_ALL = new RegExp(ADDITIVE_AMOUNT.source, "gu");
+  const ADDITIVES_END_AT_START = new RegExp(`^[ \\t]*(?:${ADDITIVES_END.source})`, "i");
+  // Eine Menge zählt nur mit einem benannten Stoff davor oder dahinter. Bezugsmengen („je 100 g“, „pro kg“)
+  // und Mengen ohne Stoffnamen gehören nicht zu einer Zusatzstoffangabe.
+  function namedAdditiveAmount(section) {
+    for (const amount of section.matchAll(ADDITIVE_AMOUNT_ALL)) {
+      const before = section.slice(Math.max(0, amount.index - 60), amount.index).split("\n").pop();
+      if (/\b(?:je|pro|per|bei|ab|bis|je\s+\d+)[ \t]*$/i.test(before)) continue;
+      const after = section.slice(amount.index + amount[0].length, amount.index + amount[0].length + 40).split("\n")[0];
+      const nameBefore = /\p{L}{3,}/u.test(before);
+      const nameAfter = /^[ \t.]*\p{L}{3,}/u.test(after) && !ADDITIVES_END_AT_START.test(after);
+      if (nameBefore || nameAfter) return amount;
+    }
+    return null;
+  }
   function additivesEvidence(text) {
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;
       const section = text.slice(start, start + 400).split(ADDITIVES_END, 1)[0];
-      const amount = ADDITIVE_AMOUNT.exec(section);
+      const amount = namedAdditiveAmount(section);
       if (!amount) continue;
       const head = evidenceSnippet(text, heading.index, heading[0].length);
       const line = evidenceSnippet(text, start + amount.index, amount[0].length);
