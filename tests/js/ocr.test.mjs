@@ -948,6 +948,9 @@ test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, 
   const colon = check("Zusatzstoffe:\nVitamin E: 100 mg (3a700)");
   assert.equal(colon.status, "found");
   assert.ok(colon.matchedText.split("\n").includes("Vitamin E: 100 mg (3a700)"));
+  const sameLine = check("Zusatzstoffe: Kupfer als Kupfersulfat (3b405)\n10 mg Vitamin E");
+  assert.equal(sameLine.status, "found");
+  assert.match(sameLine.matchedText, /^Zusatzstoffe: Kupfer als Kupfersulfat \(3b405\)/);
   const named = check("Zusatzstoffe:\n10 mg Vitamin E\nKupfer als Kupfersulfat (3b405)");
   assert.equal(named.status, "found");
   assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
