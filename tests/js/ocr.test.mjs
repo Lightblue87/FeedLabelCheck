@@ -509,3 +509,61 @@ test("englischer Hinweis auf eine spätere Milchfütterung belegt die Futtermitt
   assert.equal(check("Feed the colostrum product first, then begin feeding calf\nmilk replacer at the next feeding.").status, "missing");
   assert.equal(check("Calf milk replacer for calves\nFollow the directions on this label.").status, "found");
 });
+
+test("schwacher OCR-Text erlaubt eine Drehung, eine bessere Drehung braucht zwölf sichere Wörter mehr", () => {
+  const word = ["Futtermittel", 85];
+  const makeResult = (count, confidence) => ({
+    ...fakeResult([Array.from({ length: count }, () => word)]), confidence,
+  });
+  const sideways = makeResult(1, 28);
+  assert.equal(Ocr.needsOrientationCheck(sideways), true);
+  assert.equal(Ocr.needsOrientationCheck(makeResult(25, 35)), false);
+  assert.equal(Ocr.needsOrientationCheck(makeResult(5, 62)), false);
+  assert.equal(Ocr.isBetterOrientation(makeResult(12, 37), sideways), false);
+  assert.equal(Ocr.isBetterOrientation(makeResult(13, 45), sideways), true);
+});
+
+test("eigenständige Zutatenüberschriften funktionieren ohne Doppelpunkt und auf Englisch", () => {
+  const check = text => checkNumericLabelRule("art17_003_complementary", text, "Zusammensetzung", "keyword", 0.7);
+  const mash = check("Ergänzungsfuttermittel für Pferde\nZusammensetzung\nWiesengräser, Leinkuchen,\nApfeltrester, Leinöl.\nFütterungsempfehlung: 80 g pro 100 kg.");
+  assert.equal(mash.status, "found");
+  assert.equal(mash.matchedText, "Zusammensetzung Wiesengräser, Leinkuchen, Apfeltrester, Leinöl.");
+  const lick = check("Supplementary feed for horses\nINGREDIENTS:\nSugar, glucose syrup, herbal mixture (nettle, thyme).\nCrude protein < 0.5%, crude fiber 0.6%");
+  assert.equal(lick.status, "found");
+  assert.equal(lick.matchedText, "INGREDIENTS: Sugar, glucose syrup, herbal mixture (nettle, thyme).");
+});
+
+test("Mehrfachpackung belegt nur eine ausdrücklich gedruckte und stimmige Gesamtnettomenge", () => {
+  const check = text => checkNumericLabelRule("art15_003", text, "Nettogewicht", "keyword", 0.7);
+  const text = "Alleinfuttermittel für Katzen.\nNETTOGEWICHT / POIDS NET:\n2 x 57 g ℮ = 114 g";
+  assert.equal(check(text).status, "found");
+  assert.equal(check(text).matchedText, "114 g");
+  assert.notEqual(check(text.replace("114 g", "119 g")).status, "found");
+  assert.notEqual(check(text.replace(" = 114 g", "")).status, "found");
+  assert.notEqual(check("Fütterung pro Tag: 2 x 57 g = 114 g").status, "found");
+  assert.notEqual(check("Nettogewicht\n0,5 kg/Tag").status, "found");
+  assert.notEqual(check("Nettogewicht: 2 x 1.000 g = 2 g").status, "found");
+});
+
+test("MHD mit Monat und Jahr per Punkt gilt nur mit einem zugehörigen Feldnamen", () => {
+  const check = text => checkNumericLabelRule("art17_002_complementary", text, "MHD", "keyword", 0.7);
+  assert.equal(check("Ergänzungsfuttermittel für Pferde.\nMHD:08.2028").matchedText, "MHD:08.2028");
+  assert.notEqual(check("Ergänzungsfuttermittel für Hunde.\n09.2027 C06A\n12:33").status, "found");
+  assert.notEqual(check("Ergänzungsfuttermittel für Pferde.\nMHD: 99.2028").status, "found");
+});
+
+test("mehrsprachige Zusammensetzung trennt die deutsche Zutatenzeile von weiteren Sprachen", () => {
+  const text = "Ergänzungsfuttermittel für Pferde.\nSamenstelling / Komposition / Composition\nNL Luzerne, Rijstebloem\nDE Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid\nEN Alfalfa, Rice bran, Linseed";
+  const result = checkNumericLabelRule("art17_003_complementary", text, "Zusammensetzung", "keyword", 0.7);
+  assert.equal(result.status, "found");
+  assert.match(result.matchedText, /Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid$/);
+  assert.doesNotMatch(result.matchedText, /Rijstebloem|Alfalfa/);
+});
+
+test("abweichende Feuchtewerte auf mehrsprachigen Ansichten bleiben unklar", () => {
+  const check = text => checkNumericLabelRule("art15_005", text, "Feuchtigkeit", "keyword", 0.7);
+  const result = check("Alleinfuttermittel für Katzen. Feuchtigkeit: 63,0%.\nConstituants analytiques: Humidit6; 83,0% Proteine");
+  assert.equal(result.status, "unclear");
+  assert.match(result.matchedText, /63,0%.*83,0%/);
+  assert.equal(check("Alleinfuttermittel für Katzen. Feuchtigkeit: 83,0%.\nHumidité: 83 %").status, "found");
+});

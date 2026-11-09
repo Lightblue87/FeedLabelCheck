@@ -48,7 +48,8 @@ const Ocr = (() => {
           const words = (line.words || [])
             .filter(w => (w.text || "").trim())
             .map(w => ({ text: w.text.trim(),
-                         confidence: typeof w.confidence === "number" ? w.confidence : 0 }));
+                         confidence: typeof w.confidence === "number" ? w.confidence : 0,
+                         bbox: w.bbox }));
           if (words.length) lines.push(words);
         }
       }
@@ -77,6 +78,20 @@ const Ocr = (() => {
       if (kept.length) return cleanText(kept.join("\n"));
     }
     return cleanText(data && data.text ? data.text : "");
+  }
+
+  function orientationScore(data) {
+    return flattenLines(data.blocks).flat().filter(word =>
+      word.confidence >= 70 && /\p{L}{3}/u.test(word.text)
+    ).length;
+  }
+
+  function needsOrientationCheck(data) {
+    return data.confidence < 50 && orientationScore(data) < 12;
+  }
+
+  function isBetterOrientation(candidate, original) {
+    return orientationScore(candidate) >= orientationScore(original) + 12;
   }
 
   // Zusatzstoff-Codes wie (3a671) liest die OCR oft falsch:
@@ -113,7 +128,7 @@ const Ocr = (() => {
     return cleaned;
   }
 
-  return { textFromResult, cleanText, flattenLines, filterLine };
+  return { textFromResult, cleanText, flattenLines, filterLine, orientationScore, needsOrientationCheck, isBetterOrientation };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).

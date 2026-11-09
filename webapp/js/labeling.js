@@ -298,30 +298,45 @@ const Labeling = (() => {
   const DECIMAL = String.raw`\d+(?:[,.]\d+)?`;
   const PACKAGE_AMOUNT = String.raw`(${DECIMAL})[ \t]*(kg|g|t|ml|l|Liter|Kilogramm|Gramm)\b`;
   const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Nettoinhalt|Nettovolumen|Packungsinhalt|Füllmenge|Inhalt|Netto|net weight|net contents|net volume|net quantity|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
-  const NET_AMOUNT = new RegExp(String.raw`\b(?:${NET_LABEL})\b[ \t:)]*\n?[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}`, "i");
+  const NET_PREFIX = String.raw`\b(?:${NET_LABEL})\b[ \t:)]*\n?[ \t]*`;
+  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*[/=×])`, "i");
+  const PACK_TOTAL = new RegExp(String.raw`${NET_PREFIX}(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*=[ \t]*${PACKAGE_AMOUNT}`, "i");
+  const amountNumber = value => Number(value.replace(",", "."));
   const AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*$`, "im");
   const AMOUNT_LINE_ALL = new RegExp(AMOUNT_LINE.source, "gim");
   const PACK_COUNT = new RegExp(String.raw`\([ \t]*(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*\)`, "i");
   const NET_HEADING = new RegExp(String.raw`\b(?:${NET_LABEL})\b`, "i");
   const OCR_AMOUNT_HINT = "OCR-Kandidat Packungsmenge: ";
-  const MOISTURE_NAME = "Feuchtegehalt|Feuchtigkeitsgehalt|Feuchtigkeit|Feuchte|Wassergehalt|moisture(?: content)?";
-  const ANALYTICAL_NAME = `Rohprotein|Rohfett|Rohfaser|Rohasche|Fettgehalt|Calcium|Phosphor|crude protein|crude fat|crude fib(?:re|er)|crude ash|${MOISTURE_NAME}`;
+  const MOISTURE_NAME = "Feuchtegehalt|Feuchtigkeitsgehalt|Feuchtigkeit|Feuchte|Wassergehalt|moisture(?: content)?|humidit[ée6]";
+  const ANALYTICAL_NAME = "Rohprotein|Rohfett|Rohfaser|Rohasche|Fettgehalt|Calcium|Phosphor|crude protein|crude fat|crude fib(?:re|er)|crude ash";
+
+  function declaredNetAmount(text) {
+    const pack = text.match(PACK_TOTAL);
+    if (pack) {
+      const [, count, perPack, unit, total, totalUnit] = pack;
+      if (unit.toLowerCase() === totalUnit.toLowerCase()
+          && !/\.\d{3}$/.test(perPack) && !/\.\d{3}$/.test(total)
+          && Math.abs(amountNumber(total) - Number(count) * amountNumber(perPack)) < 1e-8) {
+        return `${total} ${totalUnit}`;
+      }
+    }
+    return text.match(NET_AMOUNT)?.[0].trim() ?? null;
+  }
 
   function needsPackageAmount(text) {
-    return !NET_AMOUNT.test(text) && !AMOUNT_LINE.test(text) && (NET_HEADING.test(text) || PACK_COUNT.test(text));
+    return !declaredNetAmount(text) && !AMOUNT_LINE.test(text) && (NET_HEADING.test(text) || PACK_COUNT.test(text));
   }
 
   function packageAmountHint(primaryText, sparseText) {
     const amounts = new Map();
     const pack = primaryText.match(PACK_COUNT);
-    const number = value => Number(value.replace(",", "."));
     for (const line of sparseText.split("\n")) {
       const match = line.match(AMOUNT_LINE);
       if (!match) continue;
       const [, amount, unit] = match;
-      const value = number(amount);
+      const value = amountNumber(amount);
       if (pack && (unit.toLowerCase() !== pack[3].toLowerCase()
-          || Math.abs(value - Number(pack[1]) * number(pack[2])) > 1e-8)) continue;
+          || Math.abs(value - Number(pack[1]) * amountNumber(pack[2])) > 1e-8)) continue;
       amounts.set(`${value} ${unit.toLowerCase()}`, `${amount} ${unit}`);
     }
     return amounts.size === 1 ? OCR_AMOUNT_HINT + amounts.values().next().value : "";
@@ -334,12 +349,26 @@ const Labeling = (() => {
     return text.match(pattern)?.[0] ?? null;
   }
 
+  function declaredMoisture(text) {
+    const pattern = new RegExp(String.raw`\b(?:${MOISTURE_NAME})(?![\p{L}\p{N}])[ \t:.;·|]*(${DECIMAL})[ \t|]*%`, "giu");
+    const matches = new Map();
+    for (const [evidence, amount] of text.matchAll(pattern)) {
+      const key = amountNumber(amount);
+      if (!matches.has(key)) matches.set(key, evidence);
+    }
+    return [...matches.values()];
+  }
+
   // Obergrenze je Überschrift: ohne sie kopiert jede Überschrift den Resttext (quadratischer Aufwand).
   const MAX_COMPOSITION_CHARS = 6000;
 
   function compositionEvidence(text) {
-    const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*/giu;
-    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
+    // Mehrsprachige Tabellen führen die Zutaten sprachweise in eigenen Zeilen auf.
+    const multilingual = /^((?:Samenstelling|Komposition|Composition|Zusammensetzung)[ \t]*\/[ \t]*[^\n]{1,240})\n(?:(?:NL|EN|FR|IT|ES|DA|SE|PL|PT|CZ)[ \t]+[^\n]+\n){0,10}DE[ \t]+([^\n]+)/im;
+    const listed = text.match(multilingual);
+    if (listed && /,\s*\p{L}/u.test(listed[2])) return `${listed[1]}: ${listed[2]}`;
+    const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*|^(?:(?:[zt]usammensetzung|composition)[ \t]*|ingredients[ \t]*:?[ \t]*)\n/gimu;
+    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition|ingredients)\b[^:\n]{0,65}:|\n[ \t]*(?:[zt]usammensetzung|composition|ingredients)[ \t]*\n|\n[ \t]*crude protein[ \t:]*[<>]?[ \t]*\d|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
       const start = match.index + match[0].length;
       const body = text.slice(start, start + MAX_COMPOSITION_CHARS).split(nextSection, 1)[0].trim();
@@ -355,7 +384,7 @@ const Labeling = (() => {
     if (ruleId === "art15_003") {
       // Eine ℮/e-markierte Menge gilt auch dann, wenn davor andere Mengenzeilen stehen (Fütterungstabelle).
       const markedLine = [...text.matchAll(AMOUNT_LINE_ALL)].map(m => m[0].trim()).find(l => /^[℮e]|[℮e]$/i.test(l));
-      return text.match(NET_AMOUNT)?.[0].trim() ?? markedLine ?? null;
+      return declaredNetAmount(text) ?? markedLine ?? null;
     }
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? null;
@@ -363,8 +392,14 @@ const Labeling = (() => {
     if (ruleId === "art15_001") {
       return text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? null;
     }
+    if (ruleId.startsWith("art17_002_")) {
+      return text.match(/\b(?:MHD|mindestens[ \t]+haltbar[ \t]+bis)[ \t:]*\n?[ \t]*(?:0?[1-9]|1[0-2])\.\d{4}\b(?![./-]\d)/i)?.[0] ?? null;
+    }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
-    if (ruleId.startsWith("art17_004_")) return percentageEvidence(text, ANALYTICAL_NAME);
+    if (ruleId.startsWith("art17_004_")) {
+      const fields = declaredMoisture(text).length > 1 ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
+      return percentageEvidence(text, fields);
+    }
     if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {
       return text.match(/\bfür\s+(?:alle\s+)?(?:Wildvögel|Legehennen|Aufzuchtkälber)\b/i)?.[0] ?? null;
     }
@@ -430,7 +465,12 @@ const Labeling = (() => {
     const hasNegativeMatch = negative.some(p => matchPattern(p, text, normText) !== null);
 
     const lotRule = rule.id === "art15_004";
-    const evidence = lotRule ? declaredLot(text) : structuredEvidence(rule.id, text);
+    const moisture = rule.id === "art15_005" ? declaredMoisture(text) : [];
+    if (moisture.length > 1) {
+      return { rule, status: "unclear", matchedText: moisture.join(" / "), matchedLanguage: null,
+               confidence: 0.3, note: "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
+    }
+    const evidence = lotRule ? declaredLot(text) : moisture[0] ?? structuredEvidence(rule.id, text);
     const po = lotRule && !evidence ? possibleLotCode(text) : null;
     const netQuantity = rule.id === "art15_003";
     const hasNumericEvidence = netQuantity || rule.id.startsWith("art17_004_");
@@ -511,7 +551,8 @@ const Labeling = (() => {
 
   return {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
-    searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint,
+    searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, declaredNetAmount,
+    matchNetHeading: text => text.match(NET_HEADING),
     needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
   };
 })();

@@ -884,6 +884,82 @@
       return Labeling.matchingImprintLot(Ocr.textFromResult(first.data), Ocr.textFromResult(second.data));
     }
 
+    async function readRotatedLabel(worker, file, original, output) {
+      const image = await createImageBitmap(file);
+      try {
+        const canvas = document.createElement("canvas");
+        const draw = (turn, scale) => {
+          const width = Math.max(1, Math.round(image.width * scale));
+          const height = Math.max(1, Math.round(image.height * scale));
+          canvas.width = height;
+          canvas.height = width;
+          const ctx = canvas.getContext("2d");
+          ctx.translate(height / 2, width / 2);
+          ctx.rotate(turn * Math.PI / 2);
+          ctx.drawImage(image, -width / 2, -height / 2, width, height);
+        };
+
+        // Drehungen verkleinert vergleichen. Nur die beste Drehung in Originalauflösung lesen.
+        const scale = Math.min(1, 2100 / Math.max(image.width, image.height));
+        let best = original;
+        let turn = 0;
+        for (const direction of [-1, 1]) {
+          draw(direction, scale);
+          const { data } = await worker.recognize(canvas, {}, output);
+          if (Ocr.orientationScore(data) > Ocr.orientationScore(best)) {
+            best = data;
+            turn = direction;
+          }
+        }
+        if (!turn || !Ocr.isBetterOrientation(best, original)) return null;
+        draw(turn, 1);
+        if (scale < 1) {
+          const { data } = await worker.recognize(canvas, {}, output);
+          if (Ocr.orientationScore(data) >= Ocr.orientationScore(best)) best = data;
+          else draw(turn, scale);
+        }
+        return { input: canvas, data: best };
+      } finally {
+        image.close();
+      }
+    }
+
+    async function readAmountNearHeading(worker, input, data, output) {
+      for (const words of Ocr.flattenLines(data.blocks)) {
+        const heading = Labeling.matchNetHeading(words.map(w => w.text).join(" "));
+        if (!heading) continue;
+        let offset = 0;
+        const positions = words.filter(word => {
+          const start = offset;
+          offset += word.text.length + 1;
+          return word.bbox && start < heading.index + heading[0].length && offset > heading.index;
+        }).map(word => word.bbox);
+        if (!positions.length) continue;
+        const image = await createImageBitmap(input);
+        try {
+          const first = positions[0];
+          const last = positions[positions.length - 1];
+          const height = Math.max(1, first.y1 - first.y0);
+          const x = Math.max(0, first.x0 - height * 0.5);
+          const y = Math.max(0, first.y0 - height * 0.5);
+          const width = Math.min(image.width - x, last.x1 - x + height * 6);
+          const cropHeight = Math.min(image.height - y, height * 4);
+          if (width < 1 || cropHeight < 1) continue;
+          const crop = document.createElement("canvas");
+          crop.width = Math.ceil(width);
+          crop.height = Math.ceil(cropHeight);
+          crop.getContext("2d").drawImage(image, x, y, width, cropHeight, 0, 0, crop.width, crop.height);
+          await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+          const result = await worker.recognize(crop, {}, output);
+          const text = Ocr.textFromResult(result.data);
+          return Labeling.declaredNetAmount(text) ? text : "";
+        } finally {
+          image.close();
+        }
+      }
+      return "";
+    }
+
     /**
      * Liest ein Foto; bei Hinweisen auf Packungsmenge oder Aufdruck folgen Zusatzläufe.
      * step(text) meldet den Fortschritt an die Statuszeile (die Zusatzläufe dauern am Handy spürbar),
@@ -892,25 +968,40 @@
      */
     async function readLabelPhoto(worker, file, step) {
       const output = { text: true, blocks: true };
-      const { data } = await worker.recognize(file, {}, output);
+      let { data } = await worker.recognize(file, {}, output);
+      let input = file;
+      const warnings = [];
+      if (Ocr.needsOrientationCheck(data)) {
+        step("Ausrichtung wird geprüft");
+        try {
+          const rotated = await readRotatedLabel(worker, file, data, output);
+          if (rotated) ({ input, data } = rotated);
+        } catch (e) {
+          warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${e?.message || e})`);
+        }
+      }
       const primary = Ocr.textFromResult(data);
       const checkWeight = Labeling.needsPackageAmount(primary);
       const checkImprint = Labeling.needsImprintLot(primary);
-      const warnings = [];
       if (!checkWeight && !checkImprint) return { text: primary, warnings };
 
       let text = primary;
       try {
         if (checkWeight) {
           step("Zusatzprüfung Packungsmenge");
-          await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
-          const retry = await worker.recognize(file, {}, output);
-          const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
-          if (hint) text += `\n${hint}`;
+          const nearby = await readAmountNearHeading(worker, input, data, output);
+          if (nearby) {
+            text += `\n\n${nearby}`;
+          } else {
+            await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+            const retry = await worker.recognize(input, {}, output);
+            const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
+            if (hint) text += `\n${hint}`;
+          }
         }
         if (checkImprint) {
           step("Zusatzprüfung Aufdruck");
-          const lot = await readImprintLot(worker, file, output);
+          const lot = await readImprintLot(worker, input, output);
           if (lot) text += `\n${lot}`;
         }
       } catch (e) {
