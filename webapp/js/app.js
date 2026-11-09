@@ -10,18 +10,66 @@
   let dbInfo = null;
   let dataState = null;   // { source, lastUpdate, hashes, updateNote }
 
-  // ── Tabs ──────────────────────────────────────────────────────
-  document.querySelectorAll(".tab").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
-      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-      btn.classList.add("active");
-      $(`#tab-${btn.dataset.tab}`).classList.add("active");
-    });
-  });
+  // ── Navigation ────────────────────────────────────────────────
+  const VIEWS = ["check", "labeling", "materials", "status"];
+
+  function showView(name, { push = true } = {}) {
+    if (!VIEWS.includes(name)) name = "check";
+    document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === `view-${name}`));
+    document.querySelectorAll("#tabs .tab").forEach(b =>
+      b.setAttribute("aria-selected", String(b.dataset.view === name)));
+    const view = $(`#view-${name}`);
+    $("#view-title").textContent = view.dataset.title;
+    $("#view-sub").textContent = view.dataset.sub;
+    if (push && location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+    window.scrollTo(0, 0);
+  }
+
+  document.querySelectorAll("#tabs .tab").forEach(btn =>
+    btn.addEventListener("click", () => showView(btn.dataset.view)));
+  window.addEventListener("hashchange", () => showView(location.hash.slice(1), { push: false }));
+
+  // Einzelwert / Mehrere Werte
+  function showSub(name) {
+    const seg = $("#check-seg");
+    seg.dataset.active = name;
+    seg.querySelectorAll("button").forEach(b =>
+      b.setAttribute("aria-selected", String(b.dataset.sub === name)));
+    $("#tab-single").classList.toggle("active", name === "single");
+    $("#tab-batch").classList.toggle("active", name === "batch");
+  }
+  document.querySelectorAll("#check-seg button").forEach(btn =>
+    btn.addEventListener("click", () => showSub(btn.dataset.sub)));
+
+  // Tab-Leiste ausblenden, solange die Bildschirmtastatur sichtbar ist:
+  // Textfeld fokussiert UND der sichtbare Bereich deutlich kleiner als das
+  // Fenster (Tastatur), nicht gezoomt. Rein fokusbasiert bliebe die Leiste
+  // auf Android weg, wenn die Tastatur per Zurück-Geste geschlossen wird.
+  const vv = window.visualViewport;
+  function updateKeyboardState() {
+    const typing = document.activeElement?.matches("input:not([type=file]), textarea");
+    const shrunk = vv && vv.scale <= 1.01 && vv.height < window.innerHeight * 0.75;
+    document.body.classList.toggle("kb", !!(typing && shrunk));
+  }
+  if (vv) vv.addEventListener("resize", updateKeyboardState);
+  document.addEventListener("focusin", updateKeyboardState);
+  document.addEventListener("focusout", () => setTimeout(updateKeyboardState, 0));
+
+  showView(location.hash.slice(1), { push: false });
 
   const escapeHtml = (s) => String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  /** Kurzer Hinweis unten im Bild; "ok"-Meldungen blenden sich aus. */
+  let toastTimer = null;
+  function toast(text, cls = "info", autoHide = false) {
+    const el = $("#loading");
+    clearTimeout(toastTimer);
+    el.className = "toast " + cls;
+    el.textContent = text;
+    el.hidden = false;
+    if (autoHide) toastTimer = setTimeout(() => { el.hidden = true; }, 4500);
+  }
 
   // ── Initialisierung ───────────────────────────────────────────
   const SQLJS_CONFIG = {
@@ -62,13 +110,11 @@
       // 2. Im Hintergrund auf neue Daten prüfen
       backgroundUpdate();
     } catch (e) {
-      loading.className = "banner error";
-      loading.textContent = "Fehler beim Laden der Daten: " + e.message;
+      toast("Fehler beim Laden der Daten: " + e.message, "error");
     }
   }
 
   async function backgroundUpdate() {
-    const loading = $("#loading");
     try {
       const res = await DataUpdate.checkForUpdates(dataState.hashes);
       if (res.updated.length) {
@@ -79,9 +125,7 @@
           updateNote: `Daten aktualisiert (Stand: ${formatDate(res.generatedAt) || "unbekannt"}).`,
         };
         populateSingleInputs();
-        loading.hidden = false;
-        loading.className = "banner ok";
-        loading.textContent = dataState.updateNote;
+        toast(dataState.updateNote, "ok", true);
       } else {
         dataState.updateNote = "Daten sind auf dem aktuellen Stand.";
       }
@@ -111,6 +155,12 @@
     return m ? parseInt(m[1], 10) : 0;
   }
 
+  /** Zeigt die aktuelle Auswahl auch im zugeklappten Prüfkontext. */
+  function updateContextSummary() {
+    $("#ctx-sum").textContent = ["#s-category", "#s-species", "#s-age"]
+      .map(s => $(s).value).filter(Boolean).join(" · ");
+  }
+
   function refreshSpeciesForCategory() {
     const category = $("#s-category").value;
     const set = new Set(["Alle Tierarten"]);
@@ -121,6 +171,7 @@
       }
     }
     fillSelect($("#s-species"), [...set].sort(new Intl.Collator("de").compare), "Alle Tierarten");
+    updateContextSummary();
   }
 
   /** Befüllt alle datengetriebenen Eingabefelder (auch nach einem Daten-Update). */
@@ -129,6 +180,7 @@
     refreshSpeciesForCategory();
     fillSelect($("#s-age"), ["Kein Altersfilter", ...idx.ageOptions.map(m => `≤ ${m} Monate`)], "Kein Altersfilter");
     fillSelect($("#s-unit"), idx.allUnits.length ? idx.allUnits : ["mg/kg"], "mg/kg");
+    updateContextSummary();
     // Eigenes Dropdown statt <datalist> – iOS Safari zeigt datalist-
     // Vorschläge nicht an. getOptions liest idx bei jedem Öffnen frisch.
     Autocomplete.attach($("#s-enumber"), () => idx.allENumbers);
@@ -167,16 +219,24 @@
     eNumberInput.addEventListener("input", () => { delete eNumberInput.dataset.derived; });
   }
 
+  const RESULT_GLYPH = { ok: "✓", bad: "✕", warn: "!" };
+
   function setupSingle() {
     populateSingleInputs();
 
     $("#s-category").addEventListener("change", refreshSpeciesForCategory);
+    $("#s-species").addEventListener("change", updateContextSummary);
+    $("#s-age").addEventListener("change", updateContextSummary);
 
     bindSubstanceDerivation($("#s-substance"), $("#s-enumber"));
+
+    // Form-Submit: "Los"/Enter auf der Tastatur löst die Prüfung aus
+    $("#tab-single").addEventListener("submit", (e) => e.preventDefault());
 
     $("#s-check").addEventListener("click", () => {
       const out = $("#s-result");
       out.hidden = false;
+      document.activeElement?.blur?.();
       const res = runCheck({
         eNumber: $("#s-enumber").value.trim(),
         substance: $("#s-substance").value.trim(),
@@ -186,8 +246,10 @@
         category: $("#s-category").value,
       });
       out.className = "result " + res.cls;
-      out.innerHTML = `<div class="headline">${escapeHtml(res.lines[0])}</div>` +
-        res.lines.slice(1).map(l => `<div>${escapeHtml(l)}</div>`).join("");
+      out.innerHTML = `<div class="res-ic" aria-hidden="true">${RESULT_GLYPH[res.cls] || "!"}</div>
+        <div class="res-body"><div class="headline">${escapeHtml(res.lines[0])}</div>` +
+        res.lines.slice(1).map(l => `<div>${escapeHtml(l)}</div>`).join("") + `</div>`;
+      out.scrollIntoView({ block: "nearest", behavior: "smooth" });
     });
   }
 
@@ -240,48 +302,87 @@
   }
 
   // ── Batch ─────────────────────────────────────────────────────
-  function addBatchRow() {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="b-idcell">
-        <input class="b-enumber" placeholder="Kennnummer">
-        <input class="b-substance" placeholder="Stoffname">
-      </td>
-      <td><input class="b-value" inputmode="decimal" placeholder="Wert" style="max-width:110px"></td>
-      <td><select class="b-unit">${(idx.allUnits.length ? idx.allUnits : ["mg/kg"])
-        .map(u => `<option${u === "mg/kg" ? " selected" : ""}>${escapeHtml(u)}</option>`).join("")}</select></td>
-      <td class="b-result">–</td>
-      <td><button class="b-del" title="Zeile entfernen">✕</button></td>`;
-    tr.querySelector(".b-del").addEventListener("click", () => tr.remove());
-    $("#b-rows").appendChild(tr);
-    Autocomplete.attach(tr.querySelector(".b-enumber"), () => idx.allENumbers);
-    Autocomplete.attach(tr.querySelector(".b-substance"), () => idx.allSubstances);
+  function renumberBatchRows() {
+    document.querySelectorAll("#b-rows .b-row").forEach((row, i) => {
+      row.querySelector(".b-num").textContent = `Wert ${i + 1}`;
+    });
+  }
+
+  function addBatchRow({ focus = false } = {}) {
+    const row = document.createElement("div");
+    row.className = "b-row";
+    row.innerHTML = `
+      <div class="b-head">
+        <span class="b-num"></span>
+        <button type="button" class="b-del" aria-label="Zeile entfernen">✕</button>
+      </div>
+      <div class="b-fields">
+        <label class="f">Kennnummer
+          <input class="b-enumber" placeholder="z. B. 3b605" enterkeyhint="next">
+        </label>
+        <label class="f">Stoff
+          <input class="b-substance" placeholder="z. B. Zinkoxid" enterkeyhint="next">
+        </label>
+        <label class="f f-val">Laborergebnis
+          <span class="inline">
+            <input class="b-value" inputmode="decimal" placeholder="Zahl" enterkeyhint="done">
+            <select class="b-unit" aria-label="Einheit">${(idx.allUnits.length ? idx.allUnits : ["mg/kg"])
+              .map(u => `<option${u === "mg/kg" ? " selected" : ""}>${escapeHtml(u)}</option>`).join("")}</select>
+          </span>
+        </label>
+      </div>
+      <div class="b-result" hidden></div>`;
+    row.querySelector(".b-del").addEventListener("click", () => {
+      row.remove();
+      if (!document.querySelector("#b-rows .b-row")) addBatchRow();
+      renumberBatchRows();
+      $("#b-summary").hidden = true;
+    });
+    $("#b-rows").appendChild(row);
+    renumberBatchRows();
+    Autocomplete.attach(row.querySelector(".b-enumber"), () => idx.allENumbers);
+    Autocomplete.attach(row.querySelector(".b-substance"), () => idx.allSubstances);
     // Wie in der Einzelprüfung: gewählter Stoff leitet die Kennnummer ab
-    bindSubstanceDerivation(tr.querySelector(".b-substance"), tr.querySelector(".b-enumber"));
+    bindSubstanceDerivation(row.querySelector(".b-substance"), row.querySelector(".b-enumber"));
+    if (focus) {
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.querySelector(".b-enumber").focus({ preventScroll: true });
+    }
   }
 
   function setupBatch() {
     addBatchRow();
     addBatchRow();
-    $("#b-add").addEventListener("click", addBatchRow);
+    $("#b-add").addEventListener("click", () => addBatchRow({ focus: true }));
     $("#b-check").addEventListener("click", () => {
+      document.activeElement?.blur?.();
       const species = $("#s-species").value || "Alle Tierarten";
       const ageMonths = currentAgeMonths();
       const category = $("#s-category").value || "Alle Kategorien";
-      document.querySelectorAll("#b-rows tr").forEach(tr => {
-        const eNumber = tr.querySelector(".b-enumber").value.trim();
-        const substance = tr.querySelector(".b-substance").value.trim();
-        const valueText = tr.querySelector(".b-value").value;
-        const cell = tr.querySelector(".b-result");
-        if (!eNumber && !substance && !valueText) { cell.textContent = "–"; return; }
+      const counts = { ok: 0, bad: 0, warn: 0 };
+      document.querySelectorAll("#b-rows .b-row").forEach(row => {
+        const eNumber = row.querySelector(".b-enumber").value.trim();
+        const substance = row.querySelector(".b-substance").value.trim();
+        const valueText = row.querySelector(".b-value").value;
+        const cell = row.querySelector(".b-result");
+        row.classList.remove("ok", "bad", "warn");
+        if (!eNumber && !substance && !valueText) { cell.hidden = true; return; }
         const res = runCheck({
           eNumber, substance, valueText, species, ageMonths, category,
         });
-        const pillClass = res.cls;
+        counts[res.cls] = (counts[res.cls] || 0) + 1;
+        row.classList.add(res.cls);
         const pillText = res.cls === "ok" ? "KONFORM" : res.cls === "bad" ? "NICHT KONFORM" : "PRÜFEN";
-        cell.innerHTML = `<span class="status-pill ${pillClass}">${pillText}</span>
-          <div style="font-size:0.8rem;margin-top:4px">${escapeHtml(res.lines[0])}</div>`;
+        cell.hidden = false;
+        cell.innerHTML = `<span class="status-pill ${res.cls}">${pillText}</span>${
+          res.lines.map(l => `<div>${escapeHtml(l)}</div>`).join("")}`;
       });
+      const total = counts.ok + counts.bad + counts.warn;
+      const sum = $("#b-summary");
+      sum.hidden = total === 0;
+      sum.innerHTML = [
+        ["ok", counts.ok, "konform"], ["bad", counts.bad, "nicht konform"], ["warn", counts.warn, "zu prüfen"],
+      ].filter(([, n]) => n).map(([c, n, t]) => `<span class="chip ${c}">${n} ${t}</span>`).join("");
     });
   }
 
@@ -300,11 +401,12 @@
   function setupLabeling() {
     const sel = $("#l-feedtype");
 
-    $("#l-files").addEventListener("change", async (ev) => {
-      const files = [...ev.target.files];
+    async function runOcr(files) {
       if (!files.length) return;
       const status = $("#l-ocr-status");
+      status.className = "ocr-status busy";
       try {
+        status.textContent = "Texterkennung wird gestartet …";
         const worker = await Tesseract.createWorker("deu", 1, TESSERACT_CONFIG);
         // Canvas-Eingaben haben keine DPI-Information – fester Wert
         // verhindert, dass Tesseract die Auflösung falsch schätzt.
@@ -317,10 +419,26 @@
         }
         await worker.terminate();
         $("#l-text").value = ($("#l-text").value.trim() ? $("#l-text").value + "\n\n" : "") + allText;
-        status.textContent = `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}).`;
+        status.className = "ocr-status";
+        status.textContent = `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}) – Text bitte kurz prüfen.`;
       } catch (e) {
+        status.className = "ocr-status error";
         status.textContent = "OCR-Fehler: " + e.message;
       }
+    }
+
+    for (const id of ["#l-files", "#l-camera"]) {
+      $(id).addEventListener("change", async (ev) => {
+        const files = [...ev.target.files];
+        await runOcr(files);
+        ev.target.value = "";   // dasselbe Bild später erneut wählbar
+      });
+    }
+
+    $("#l-clear").addEventListener("click", () => {
+      $("#l-text").value = "";
+      $("#l-result").hidden = true;
+      $("#l-text").focus();
     });
 
     $("#l-check").addEventListener("click", () => {
@@ -338,6 +456,7 @@
           overall.className = "banner warn";
           overall.textContent = "Futtermitteltyp konnte nicht eindeutig erkannt werden – bitte manuell auswählen.";
           rulesBox.innerHTML = "";
+          $("#l-counts").innerHTML = "";
           return;
         }
         feedType = det.feedType;
@@ -352,26 +471,35 @@
       overall.className = "banner " + o.cls;
       overall.textContent = o.text + detectionNote;
 
+      const tally = {};
+      for (const r of result.ruleResults) tally[r.status] = (tally[r.status] || 0) + 1;
+      $("#l-counts").innerHTML = Object.keys(STATUS_LABELS).filter(k => tally[k])
+        .map(k => `<span class="chip ${k}">${tally[k]} ${STATUS_LABELS[k]}</span>`).join("");
+
       rulesBox.innerHTML = result.ruleResults.map(r => `
         <div class="rule-card ${r.status}">
           <h4>${escapeHtml(r.rule.titleDe)}
             <span class="status-pill ${r.status}">${STATUS_LABELS[r.status]}</span></h4>
           <div class="meta">${escapeHtml(r.rule.legalBasis)} · ${escapeHtml(r.rule.severity)}</div>
           ${r.matchedText ? `<div class="match">${escapeHtml(r.matchedText)}</div>` : ""}
-          ${r.note ? `<div class="meta" style="margin-top:4px">${escapeHtml(r.note)}</div>` : ""}
+          ${r.note ? `<div class="meta" style="margin-top:6px">${escapeHtml(r.note)}</div>` : ""}
         </div>`).join("");
+      resultBox.scrollIntoView({ block: "start", behavior: "smooth" });
     });
   }
 
   // ── Futtermittel-Suche ────────────────────────────────────────
+  const MATERIALS_HINT = `<div class="empty">Name oder Nummer eingeben – mindestens 2 Zeichen.</div>`;
+
   function setupMaterials() {
     let timer = null;
+    $("#m-results").innerHTML = MATERIALS_HINT;
     $("#m-query").addEventListener("input", () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
         const q = $("#m-query").value.trim();
         const box = $("#m-results");
-        if (q.length < 2) { box.innerHTML = ""; return; }
+        if (q.length < 2) { box.innerHTML = MATERIALS_HINT; return; }
         const { eu, dlg } = Labeling.searchFeedMaterials(q);
         const cards = [];
         for (const m of eu) {
@@ -392,8 +520,9 @@
             ${m.requirements_de ? `<p><span class="label">Anforderungen:</span> ${escapeHtml(m.requirements_de)}</p>` : ""}
           </div>`);
         }
-        box.innerHTML = cards.length ? cards.join("")
-          : `<p>Keine Treffer für „${escapeHtml(q)}“.</p>`;
+        box.innerHTML = cards.length
+          ? `<div class="result-count">${cards.length} Treffer</div>` + cards.join("")
+          : `<div class="empty">Keine Treffer für „${escapeHtml(q)}“.</div>`;
       }, 250);
     });
   }
@@ -401,23 +530,30 @@
   // ── Datenstatus ───────────────────────────────────────────────
   function renderStatus() {
     $("#st-info").innerHTML = `
-      <div class="material-card">
-        <h4>Zusatzstoff-Datenbank</h4>
-        <p>${additives.length} Datensätze · ${idx.allENumbers.length} Kennnummern · ${idx.allSubstances.length} Stoffe</p>
+      <div class="card">
+        <h3>Zusatzstoff-Datenbank</h3>
+        <div class="tiles">
+          <div class="tile"><b>${additives.length}</b><span>Datensätze</span></div>
+          <div class="tile"><b>${idx.allENumbers.length}</b><span>Kennnummern</span></div>
+          <div class="tile"><b>${idx.allSubstances.length}</b><span>Stoffe</span></div>
+        </div>
       </div>
-      <div class="material-card">
-        <h4>Kennzeichnungs-Datenbank</h4>
-        <p>Version ${escapeHtml(dbInfo.version)} · ${dbInfo.totalRuleCount} Regeln</p>
-        <p>Rechtsgrundlage: ${escapeHtml(dbInfo.regulation)} (Stand ${escapeHtml(dbInfo.versionDate)})</p>
+      <div class="card">
+        <h3>Kennzeichnungs-Datenbank</h3>
+        <div class="tiles">
+          <div class="tile"><b>${escapeHtml(dbInfo.version)}</b><span>Version</span></div>
+          <div class="tile"><b>${dbInfo.totalRuleCount}</b><span>Regeln</span></div>
+        </div>
+        <p class="meta">Rechtsgrundlage: ${escapeHtml(dbInfo.regulation)} (Stand ${escapeHtml(dbInfo.versionDate)})</p>
       </div>
-      <div class="material-card">
-        <h4>Automatische Updates</h4>
+      <div class="card">
+        <h3>Automatische Updates</h3>
         <p>Datenquelle: ${escapeHtml(dataState.source)}</p>
         ${dataState.lastUpdate ? `<p>Letztes Update: ${escapeHtml(formatDate(dataState.lastUpdate))}</p>` : ""}
         ${dataState.updateNote ? `<p>${escapeHtml(dataState.updateNote)}</p>` : "<p>Update-Prüfung läuft …</p>"}
-        <p class="meta" style="color:var(--gray);font-size:0.8rem">Beim Start wird das Manifest aus dem
-          FeedLabelCheck-Data-Repo geprüft; geänderte Dateien werden per SHA256 verifiziert und lokal
-          (IndexedDB) gespeichert. Ohne Internet läuft die App mit dem letzten Stand weiter.</p>
+        <p class="meta">Beim Start wird das Manifest aus dem FeedLabelCheck-Data-Repo geprüft;
+          geänderte Dateien werden per SHA256 verifiziert und lokal (IndexedDB) gespeichert.
+          Ohne Internet läuft die App mit dem letzten Stand weiter.</p>
       </div>`;
   }
 
