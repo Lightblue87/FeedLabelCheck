@@ -235,6 +235,9 @@ const Labeling = (() => {
     return [...declarations.values()];
   }
 
+  const SUPPLEMENT_NOTE = /Ergänzungsfutter(?:mittel)?(?=[ \t\n]+darf\b)/gi;
+  const MINERAL_HEADING = /^[ \t]*Mineral(?:futter|futtermittel|-Futtermittel)[ \t]+für[ \t]+\p{L}{3,}/imu;
+
   function detectFeedType(ocrText, feedTypes) {
     const diets = declaredDiet(ocrText, feedTypes);
     if (diets.length > 1) return null;
@@ -246,6 +249,19 @@ const Labeling = (() => {
     const candidates = rankedCandidates(normalized, feedTypes);
     const best = candidates[0];
     if (!best) return null;
+    // „Mineralfuttermittel für Rinder“ als eigene Zeile ist die Bezeichnung. Der vorgeschriebene Hinweis
+    // „Dieses Ergänzungsfutter darf wegen …“ im selben Etikett nennt dagegen nur die Oberart.
+    const mineral = candidates.find(c => c.feedType.id === "mineral_feed");
+    // Der Vorrang gilt nur, wenn die Nennung von „Ergänzungsfutter“ allein aus dem Pflichthinweis stammt. Eine
+    // ausdrückliche Bezeichnung („Ergänzungsfuttermittel für Pferde“) und Fütterungsanweisungen, die eine Zeile
+    // mit „Mineralfutter für …“ beginnen, ändern den Typ nicht.
+    const withoutNote = normalizeText(ocrText.replace(SUPPLEMENT_NOTE, " "));
+    const declaredComplementary = rankedCandidates(withoutNote, feedTypes)
+      .some(c => c.feedType.id === "complementary_feed" && hasDirectLegalMatch(c));
+    if (mineral && MINERAL_HEADING.test(ocrText) && !declaredComplementary
+        && candidates.every(c => ["mineral_feed", "complementary_feed"].includes(c.feedType.id) || !hasDirectLegalMatch(c))) {
+      return mineral;
+    }
     const milk = candidates.find(c => c.feedType.id === "milk_replacer" && hasDirectLegalMatch(c));
     if (milk && candidates.every(c => ["milk_replacer", "complete_feed"].includes(c.feedType.id)
         || !hasDirectLegalMatch(c))) return milk;
@@ -298,10 +314,39 @@ const Labeling = (() => {
       idx = normText.indexOf(normalized);
     }
     if (idx < 0) return null;
-    // Snippet um den Treffer (auf dem Originaltext; Normalisierung ist längenerhaltend)
-    const start = Math.max(0, idx - 20);
-    const end = Math.min(text.length, idx + keyword.length + 40);
-    return "…" + text.slice(start, end).replace(/\n/g, " ").trim() + "…";
+    return evidenceSnippet(text, idx, keyword.length);
+  }
+
+  // Belegausschnitt für die Anzeige: die Zeile des Treffers (auf dem Originaltext; die Normalisierung
+  // ist längenerhaltend), bei sehr kurzen Zeilen mit Nachbarzeilen, bei langen an Wortgrenzen gekürzt.
+  const SNIPPET_MIN = 12;
+  const SNIPPET_MAX = 120;
+  function evidenceSnippet(text, idx, length) {
+    let lineStart = text.lastIndexOf("\n", idx - 1) + 1;
+    let lineEnd = text.indexOf("\n", idx + length);
+    if (lineEnd < 0) lineEnd = text.length;
+    for (let round = 0; round < 2 && lineEnd - lineStart < SNIPPET_MIN; round++) {
+      if (lineEnd < text.length) {
+        const next = text.indexOf("\n", lineEnd + 1);
+        lineEnd = next < 0 ? text.length : next;
+      }
+      if (lineEnd - lineStart < SNIPPET_MIN && lineStart > 0) lineStart = text.lastIndexOf("\n", lineStart - 2) + 1;
+    }
+    let start = lineStart;
+    let end = lineEnd;
+    if (end - start > SNIPPET_MAX) {
+      start = Math.max(lineStart, idx - 40);
+      end = Math.min(lineEnd, idx + length + 60);
+      if (start > lineStart) {
+        const gap = text.slice(start, idx).search(/\s/);
+        if (gap >= 0) start += gap + 1;
+      }
+      if (end < lineEnd) {
+        const gap = text.slice(idx + length, end).search(/\s\S*$/);
+        if (gap >= 0) end = idx + length + gap;
+      }
+    }
+    return (start > lineStart ? "…" : "") + text.slice(start, end).replace(/\s+/g, " ").trim() + (end < lineEnd ? "…" : "");
   }
 
   function regexMatch(pattern, text) {
@@ -310,7 +355,7 @@ const Labeling = (() => {
     const m = re.exec(text);
     if (!m) return null;
     const matched = m[0];
-    return matched.length > 80 ? matched.slice(0, 80) + "…" : matched;
+    return matched.length > 80 ? matched.slice(0, 80).replace(/\s+\S*$/, "") + "…" : matched;
   }
 
   function matchPattern(pattern, text, normText) {
@@ -497,8 +542,42 @@ const Labeling = (() => {
 
   function postalAddressEvidence(text) {
     // Eine PLZ braucht erkennbaren Adresskontext. Ein Zahlenwert vor einer Einheit oder
-    // Zutatenbezeichnung kann sonst wie eine PLZ aussehen.
-    return text.match(POSTAL_ADDRESS)?.[0] ?? null;
+    // Zutatenbezeichnung kann sonst wie eine PLZ aussehen. Angezeigt wird die ganze Adresszeile.
+    const match = POSTAL_ADDRESS.exec(text);
+    return match ? evidenceSnippet(text, match.index, match[0].length) : null;
+  }
+
+  // „Zusatzstoffe je kg: Vitamin A 12.000 I.E.“: Überschrift mit mindestens einer Mengenangabe im
+  // eigenen Abschnitt. Eine leere Überschrift oder eine Menge aus dem Nachbarabschnitt genügt nicht.
+  const ADDITIVES_HEADING = /\b(?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)[ \t]+)?Zusatzstoffe(?:[ \t]+(?:je|pro)[ \t]*kg)?[ \t]*(?:\([^)\n]{0,20}\))?[ \t]*:/giu;
+  const ADDITIVE_AMOUNT = /\d[\d.,]*[ \t]*(?:mg|µg|μg|mcg|g|I\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}])/u;
+  const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer|Vertrieb|Netto\w*|Inhalt|Füllmenge|Packungsinhalt|Gewicht|net[ \t]+(?:weight|contents|quantity)|Chargen?|Losnummer|Dosierung|Anwendung|Lagerung\w*|Tagesration|Futtermenge|Ration|täglich)\b/i;
+  const ADDITIVE_AMOUNT_ALL = new RegExp(ADDITIVE_AMOUNT.source, "gu");
+  const ADDITIVES_END_AT_START = new RegExp(`^[ \\t]*(?:${ADDITIVES_END.source})`, "i");
+  // Eine Menge zählt nur mit einem benannten Stoff davor oder dahinter. Bezugsmengen („je 100 g“, „pro kg“)
+  // und Mengen ohne Stoffnamen gehören nicht zu einer Zusatzstoffangabe.
+  function namedAdditiveAmount(section) {
+    for (const amount of section.matchAll(ADDITIVE_AMOUNT_ALL)) {
+      const before = section.slice(Math.max(0, amount.index - 60), amount.index).split("\n").pop();
+      if (/\b(?:je|pro|per|bei|ab|bis|je\s+\d+)[ \t]*$/i.test(before)) continue;
+      const after = section.slice(amount.index + amount[0].length, amount.index + amount[0].length + 40).split("\n")[0];
+      const nameBefore = /\p{L}{3,}/u.test(before);
+      const nameAfter = /^[ \t.]*\p{L}{3,}/u.test(after) && !ADDITIVES_END_AT_START.test(after);
+      if (nameBefore || nameAfter) return amount;
+    }
+    return null;
+  }
+  function additivesEvidence(text) {
+    for (const heading of text.matchAll(ADDITIVES_HEADING)) {
+      const start = heading.index + heading[0].length;
+      const section = text.slice(start, start + 400).split(ADDITIVES_END, 1)[0];
+      const amount = namedAdditiveAmount(section);
+      if (!amount) continue;
+      const head = evidenceSnippet(text, heading.index, heading[0].length);
+      const line = evidenceSnippet(text, start + amount.index, amount[0].length);
+      return line === head || head.includes(line) ? head : `${head} … ${line}`;
+    }
+    return null;
   }
 
   function structuredEvidence(ruleId, text) {
@@ -509,6 +588,7 @@ const Labeling = (() => {
       return text.match(DIET_DECLARATION)?.[0] ?? text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? null;
     }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
+    if (ruleId === "art15_006") return additivesEvidence(text);
     if (ruleId.startsWith("art17_004_")) {
       const fields = moistureConflict(declaredMoisture(text), moistureHints(text)) ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
       return percentageEvidence(text, fields);
@@ -652,10 +732,13 @@ const Labeling = (() => {
     const operatorRule = rule.id === "art15_002" || rule.id.startsWith("art17_005_");
     const moisture = rule.id === "art15_005" ? declaredMoisture(text) : [];
     const humidityHints = rule.id === "art15_005" ? moistureHints(text) : [];
-    if (moistureConflict(moisture, humidityHints)) {
+    const invalidMoisture = [...moisture, ...humidityHints].some(evidence => moistureValue(evidence) > 100);
+    if (invalidMoisture || moistureConflict(moisture, humidityHints)) {
       return { rule, status: "unclear", matchedText: [...moisture, ...humidityHints].join(" / "),
                matchedLanguage: null, confidence: 0.3,
-               note: "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
+               note: invalidMoisture
+                 ? "Ein erkannter Feuchtewert liegt über 100 %. Bitte den OCR-Text am Originalfoto prüfen und korrigieren."
+                 : "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
     }
     if (!moisture.length && humidityHints.length) {
       return { rule, status: "probablyFound", matchedText: humidityHints[0],
@@ -684,6 +767,9 @@ const Labeling = (() => {
     for (const p of positive) {
       if (rule.id === "art15_001" && p.patternType === "keyword" && normalizeText(p.patternValue) === "milk replacer"
           && !/^[ \t]*(?:(?:calf|lamb|kid)[ \t]+)?milk replacer(?:[ \t]+for[ \t]+[^\n]+)?[ \t]*$/im.test(text)) continue;
+      // „… gegenüber Alleinfuttermitteln höheren Gehalte …“ (Pflichthinweis) ist keine Bezeichnung der Futtermittelart.
+      if (rule.id === "art15_001" && p.patternType === "keyword" && DIRECT_LEGAL_TERMS.has(normalizeText(p.patternValue))
+          && !containsPhraseOutsideComparison(normalizeText(p.patternValue), normText)) continue;
       // Allgemeine Zahlenmuster können Futterrationen, einzelne Ziffern oder Fragmente erfassen.
       const barePostalCode = operatorRule && p.patternValue === String.raw`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b`;
       if (p.patternType === "regex" && (hasNumericEvidence || barePostalCode
@@ -742,7 +828,15 @@ const Labeling = (() => {
   const STRUVITE_DISSOLUTION = /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i;
   const STRUVITE_RECURRENCE = /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i;
   const INTOLERANCE_PURPOSE = /\b(?:Minderung|Verringerung)\s+von\s+Ausgangs?erzeugnis\s*[-‐‑–]\s+und\s+Nährstoffintoleranz(?:en|erscheinungen)\b|\breduction\s+of\s+ingredient\s+and\s+nutrient\s+intolerances\b/i;
+  const RECOVERY_PURPOSE = /\bernährungsphysiologische[nr]?\s+Wiederherstellung\s*[,/]\s*Rekonvaleszenz\b|\bnutritional\s+restoration\s*[,/]\s*convalescence\b/i;
+  // Eintrag 72: Stabilisierung der physiologischen Verdauung (Darmflorastabilisator); Eintrag 55: Wasser- und Elektrolythaushalt.
+  const STABILISATION_PURPOSE = /\bStabilisierung\s+der\s+physiologischen\s+Verdauung\b|\bstabili[sz]ation\s+of\s+(?:the\s+)?physiological\s+digestion\b/i;
+  const ELECTROLYTE_PURPOSE = /\bStabilisierung\s+des\s+Wasser-?\s+und\s+Elektrolythaushalt(?:e?s)?\b|\bstabili[sz]ation\s+of\s+(?:the\s+)?water\s+and\s+electrolyte\s+balance\b/i;
   const DIET_PURPOSES = [
+    STABILISATION_PURPOSE,
+    ELECTROLYTE_PURPOSE,
+    /\bRegulierung\s+der\s+Glu[ck]oseversorgung(?:\s*\(Diabetes\s+mellitus\))?|\bregulation\s+of\s+glucose\s+supply(?:\s*\(diabetes\s+mellitus\))?/i,
+    RECOVERY_PURPOSE,
     RENAL_PURPOSE,
     /\bVerringerung\s+(?:der\s+|von\s+)?Oxalsteinbildung\b|\breduction\s+of\s+oxalate\s+stone\s+formation\b/i,
     DIGESTION_PURPOSE,
@@ -766,7 +860,7 @@ const Labeling = (() => {
   const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
   const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "gi");
   const DIET_DURATION_FOLLOWUP = /\b(?:wenn\s+(?:die\s+)?Anzeichen\s+von\s+Intoleranzen\s+verschwinden|if\s+signs\s+of\s+intolerance\s+disappear)\b[^.!?;]{0,125}?\b(?:bis\s+zu\s+(?:einem|1)\s+Jahr|up\s+to\s+(?:one|1)\s+year)\b|\b(?:bei\s+chronischer\s+Insuffizienz\s+der\s+Bauchspeicheldrüse|in\s+case\s+of\s+chronic\s+pancreatic\s+insufficiency)\s*[, ]*\s*(?:lebenslang|for\s+life)\b/gi;
-  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+(?:or|and)\s+(?:before\s+)?extending\b)?\b/gi;
+  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Verfütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+(?:or|and)\s+(?:before\s+)?extending\b)?\b/gi;
 
   const DIET_SPECIES = /^\s+(?:für\s+(?:(?:ausgewachsene|adulte|erwachsene)\s+)?(?:Hunde|Katzen)|for\s+(?:adult\s+)?(?:dogs|cats)|pour\s+(?:chiens|chats))\b/i;
   const DIET_PURPOSE_ANCHOR = /\b(?:Zur[ \t]+Unterstützung[ \t]+der[ \t]+Nierenfunktion|Zum[ \t]+Ausgleich[ \t]+unzureichender[ \t]+Verdauung|Zur[ \t]+Auflösung[ \t]+von[ \t]+Struvitsteinen|Zur[ \t]+Verringerung[ \t]+von[ \t]+Struvitsteinrezidiven)\b/i;
@@ -985,6 +1079,29 @@ const Labeling = (() => {
     ];
   }
 
+  // Eintrag 72 verlangt Bezeichnung UND zugesetzte Menge des Darmflorastabilisators. Beides muss im
+  // Abschnitt unter der Überschrift stehen; fehlt eines, bleibt das Feld unklar (mit dem erkannten Teil als Beleg).
+  const STABILISER_SECTION = /\bDarmflorastabilisator(?:en)?[ \t]*:[ \t]*(?:\n(?![ \t]*\n))?[^\n]*(?:\n(?![ \t]*\n)[^\n]*)?/i;
+  const STABILISER_END = new RegExp(`${ADDITIVES_END.source}|\\b(?:Zusatzstoffe|Inhaltsstoffe|Mindesthaltbarkeit|Best[ \\t]+before|Rohprotein|Rohfett|Rohasche|Rohfaser)\\b`, "i");
+  const STABILISER_AMOUNT = /\d[\d.,]*(?:[ \t]*[x×*][ \t]*10[ \t]*[\^⁰¹²³⁴⁵⁶⁷⁸⁹°º]?[ \t]*\d*)?[ \t]*(?:KBE|CFU)\b/i;
+  const STABILISER_NAME = /\b[A-Z][a-z]{3,}[ \t]+[a-z]{4,}\b|\b4b\d{3,4}[a-z]?\b/;
+  function stabiliserField(text, source) {
+    const label = "Darmflorastabilisator mit Bezeichnung und zugesetzter Menge";
+    const raw = text.match(STABILISER_SECTION)?.[0];
+    // Nur der Teil hinter der Überschrift bis zum nächsten Etikettenfeld zählt (MHD, Hersteller, Nettomenge …).
+    const section = raw ? `${raw.slice(0, raw.indexOf(":") + 1)} ${raw.slice(raw.indexOf(":") + 1).split(STABILISER_END, 1)[0]}`.replace(/\s+/g, " ").trim() : undefined;
+    const hasAmount = section ? STABILISER_AMOUNT.test(section) : false;
+    const hasName = section ? STABILISER_NAME.test(section) : false;
+    if (hasAmount && hasName) {
+      return dietField("art18_stabiliser", label, source, section,
+        "Zulassung des Stabilisators für die Tierart und die Menge am Etikett prüfen.");
+    }
+    return dietField("art18_stabiliser", label, source, section || null,
+      section ? `${hasName ? "Die zugesetzte Menge" : hasAmount ? "Die Bezeichnung" : "Bezeichnung und Menge"} des Darmflorastabilisators wurde im Prüftext nicht erkannt. Bitte am Etikett prüfen.`
+        : "Bezeichnung und zugesetzte Menge des Darmflorastabilisators wurden im Prüftext nicht erkannt. Bitte am Etikett prüfen.",
+      "unclear");
+  }
+
   function dietRuleResults(text) {
     const article = "Art. 18 VO (EG) Nr. 767/2009";
     const annex = "Anhang Teil B VO (EU) 2020/354";
@@ -1001,9 +1118,13 @@ const Labeling = (() => {
     const recurrence = dogOrCat && purposes.has(STRUVITE_RECURRENCE);
     const intolerance = dogOrCat && purposes.has(INTOLERANCE_PURPOSE);
     const extendedAdvice = renal || dissolution || recurrence || intolerance;
+    const recoveryDuration = purposes.has(RECOVERY_PURPOSE)
+      ? text.match(/\bbis\s+zur\s+voll(?:-?\s*)ständigen\s+Genesung\b|\buntil\s+(?:complete|full)\s+recovery\b/i)?.[0]
+      : null;
     const durations = [...new Set([...text.matchAll(DIET_DURATION), ...text.matchAll(DIET_DURATION_FOLLOWUP)]
       .sort((a, b) => a.index - b.index)
       .map(([wording]) => wording.replace(/\s+/g, " ")))];
+    if (recoveryDuration) durations.push(recoveryDuration.replace(/voll-?\s+ständigen/i, "vollständigen").replace(/\s+/g, " "));
     const advice = [...text.matchAll(DIET_ADVICE)].map(([wording]) => wording.replace(/\s+/g, " "));
     const vetAdvice = advice.find(wording => /Tierarzt|Tierärztin|veterinarian/i.test(wording)
       && /Verlängerung|extending/i.test(wording)
@@ -1015,6 +1136,15 @@ const Labeling = (() => {
       extra.push(dietField("art18_digestible_diet", "Hinweis auf leichtverdauliche Ernährung", `${annex}, Eintrag 19`,
         text.match(/\bleichtverdauliche\s+Ernährung\b|\bhighly\s+digestible\s+diet\b/i)?.[0],
         "Kein eindeutiger Hinweis auf leichtverdauliche Ernährung im Prüftext erkannt."));
+    }
+    if (purposes.has(STABILISATION_PURPOSE)) {
+      const source = `${annex}, Eintrag 72`;
+      extra.push(
+        stabiliserField(text, source),
+        dietField("art18_risk_hint", "Hinweis „Bei Gefahr von, während oder nach Verdauungsstörungen“", source,
+          text.match(/\bBei\s+Gefahr\s+von,?\s+während\s+oder\s+nach\s+Verdauungsstörungen\b/i)?.[0]?.replace(/\s+/g, " "),
+          "Der vorgeschriebene Hinweis wurde im Prüftext nicht erkannt. Bitte am Etikett prüfen."),
+      );
     }
     if (intolerance) {
       const source = `${annex}, Eintrag 13`;
@@ -1043,6 +1173,8 @@ const Labeling = (() => {
         "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."
           + (renal ? " Bei Nierendiät auch die zutreffende Variante in Eintrag 10, zugesetzte essentielle Fettsäuren und gegebenenfalls Lanthancarbonat prüfen." : "")
           + (dissolution || recurrence ? " Bei Struvitdiät auch den Magnesiumhöchstwert und den Nachweis der angegebenen Harneigenschaften prüfen." : "")
+          + (purposes.has(STABILISATION_PURPOSE) ? " Bei Stabilisierung der physiologischen Verdauung (Eintrag 72) auch die empfohlene Fütterungsdauer von bis zu vier Wochen prüfen." : "")
+          + (purposes.has(ELECTROLYTE_PURPOSE) ? " Bei Stabilisierung des Wasser- und Elektrolythaushalts (Eintrag 55) auch die empfohlene Fütterungsdauer von ein bis sieben Tagen prüfen." : "")
           + (intolerance ? " Bei Futtermittelintoleranzen auch die Kombination der ernährungsphysiologischen Merkmale und bedingte Angaben prüfen." : "")
           + (digestion ? " Beim Ausgleich unzureichender Verdauung auch die leichtverdaulichen Ausgangsquellen und gegebenenfalls deren Behandlung prüfen." : "")),
 

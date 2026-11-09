@@ -588,7 +588,7 @@ test("Nährwert und Zutaten tragen ohne Adresskontext keinen Firmenbeleg", () =>
     assert.equal(check("Zusatzstoffe je kg: Vitamin A 17000 IE/kg, 18568 Klinoptylolit, 40 mg.").status, "missing");
     assert.equal(check("Artikelnummer: 18723\nAnimal feed for cattle. Anwendung: täglich.").status, "missing");
     assert.equal(check("Alleinfuttermittel für Fische. Kontakt: Fischweg 12, 49808 Lingen.").status, "found");
-    assert.equal(check("Alleinfuttermittel für Wasserschildkröten. F 68000 Colmar.").matchedText, "F 68000 Colmar");
+    assert.match(check("Alleinfuttermittel für Wasserschildkröten. F 68000 Colmar.").matchedText, /F 68000 Colmar/);
   }
   assert.equal(checkNumericLabelRule("art15_002", "COMPOSITION: EACH KG CONTAINS VITAMIN A.", " KG", "keyword", 1).status, "missing");
 });
@@ -654,6 +654,57 @@ test("Produktnamen und Nierenwerbung lösen keine Diätfutter-Prüfung aus", () 
   const text = "Alleinfuttermittel für Katzen. Veterinary Diet – Renal. Unterstützt die Nierenfunktion.";
   assert.equal(Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id, "complete_feed");
   assert.equal(Labeling.check(text, FEED_TYPES[0], []).dietary, false);
+});
+
+test("Belegausschnitt zeigt die ganze Zeile und kürzt nur an Wortgrenzen", () => {
+  const check = (text, keyword = "AG") => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${text}`, { id: "complementary_feed" },
+    [{ id: "x_test", severity: "critical", patterns: [{ patternValue: keyword, patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.9 }] }]).ruleResults[0].matchedText;
+  assert.equal(check("Zusammensetzung: Getreide\nHersteller: Beispielfirma AG, Berlin\nAnalytische Bestandteile: Rohprotein 12 %"), "Hersteller: Beispielfirma AG, Berlin");
+  assert.equal(check("Hersteller\nAG\nBerlin\nLinde"), "Hersteller AG Berlin");
+  const long = check(`${"alpha ".repeat(40)}Beispielfirma AG, Hauptstraße 1 ${"omega ".repeat(40)}`);
+  assert.match(long, /^….*Beispielfirma AG, Hauptstraße 1.*…$/);
+  assert.doesNotMatch(long.replace(/^…|…$/g, ""), /(?:^|\s)(?:lpha|mega|alph|omeg)(?:\s|$)/);
+  assert.ok(long.length < 140);
+  assert.equal(check("Mars PF France - CS 20001 - 45550 Saint-Denis-de-l'Hôtel", " KG"), null);
+});
+
+test("Mineralfutter-Überschrift gewinnt gegen den vorgeschriebenen Hinweis „Dieses Ergänzungsfutter darf …“", () => {
+  const note = "Dieses Ergänzungsfutter darf wegen der gegenüber Alleinfuttermitteln höheren Gehalte an Vitaminen nur an Rinder verfüttert werden.";
+  const detect = text => Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id ?? null;
+  assert.equal(detect(`Mineralfuttermittel für Rinder\n${note}`), "mineral_feed");
+  assert.equal(detect(`Salesta\nMineralfutter für Rinder N & Co\nZusatzstoffe je kg: 8 g\n${note}`), "mineral_feed");
+  // nur als Überschrift, nicht als Erwähnung im Fließtext
+  assert.equal(detect("Ergänzungsfuttermittel für Pferde. Kann mit Mineralfutter für Pferde kombiniert werden."), "complementary_feed");
+  assert.equal(detect(`Ergänzungsfuttermittel für Pferde\n${note}`), "complementary_feed");
+  // eine ausdrückliche Ergänzungsfuttermittel-Bezeichnung bleibt maßgeblich, auch bei einer Anweisungszeile „Mineralfutter für …“
+  assert.equal(detect("Ergänzungsfuttermittel für Pferde\nFütterungsempfehlung:\nMineralfutter für Pferde zusätzlich anbieten."), "complementary_feed");
+  assert.equal(detect(`Ergänzungsfuttermittel für Pferde\nMineralfutter für Pferde zusätzlich anbieten.\n${note}`), "complementary_feed");
+  assert.equal(detect(`Mineralfutter für Rinder\nFütterungsempfehlung: 100 g\n${note}`), "mineral_feed");
+});
+
+test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
+  const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
+  const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(check("Dieses Futter darf wegen der gegenüber Alleinfuttermitteln höheren Gehalte nur an Rinder verfüttert werden.").status, "missing");
+  const real = check("Alleinfuttermittel für Rinder. Gegenüber Alleinfuttermitteln anderer Hersteller …");
+  assert.equal(real.status, "found");
+  assert.match(real.matchedText, /Alleinfuttermittel für Rinder/);
+});
+
+test("Zusatzstoffe: Überschrift mit Mengenangabe im eigenen Abschnitt ist ein Beleg", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = text => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${text}`, FEED_TYPES[1], [rule]).ruleResults[0];
+  const real = check("Zusatzstoffe je kg: Vitamin A 12.000 I.E., Vitamin E 50 mg");
+  assert.equal(real.status, "found");
+  assert.match(real.matchedText, /Zusatzstoffe je kg.*12\.000 I\.E\./);
+  assert.equal(check("Ernährungsphysiologische Zusatzstoffe (je kg):\nVitamin D3 3.200 I.E.").status, "found");
+  assert.equal(check("Zusatzstoffe je kg:\n15.000 I.E. Vitamin A\n50 mg Vitamin E").status, "found");
+  for (const text of ["Zusatzstoffe:\nFütterungsempfehlung: 100 g täglich", "Zusatzstoffe: keine", "Zusatzstoffe je kg:\n\nVitamin A 100 mg",
+                      "Zusatzstoffe: Fütterung 100 g", "Ohne Zusatzstoffe. Rohprotein 12 %", "Zusatzstoffe:\nNettogewicht: 400 g",
+                      "Zusatzstoffe:\nNettomasse 25 kg", "Zusatzstoffe:\nInhalt: 1,5 kg", "Zusatzstoffe:\nCharge: 12 g", "Zusatzstoffe:\nNet weight: 400 g",
+                      "Zusatzstoffe: pro 100 g", "Zusatzstoffe: je 100 g\nVitamin A", "Zusatzstoffe je kg: 100 g", "Zusatzstoffe:\nTagesration 100 g"]) {
+    assert.notEqual(check(text).status, "found", text);
+  }
 });
 
 test("Herstelleranschrift mit gängigen Straßenformen bleibt ein Firmenbeleg", () => {
@@ -785,6 +836,46 @@ test("Phosphor und Rohprotein werden aus einem beschrifteten Abschnitt auf 12 % 
   assert.match(adjacent.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^5,28 g\/kg/);
   const at12 = Labeling.check(text.replace("80%", "12%"), FEED_TYPES[0], []);
   assert.match(at12.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^1,2 g\/kg/);
+});
+
+test("Diätzwecke Eintrag 72 und 55 für Kälber werden erkannt und zweckbezogen geprüft", () => {
+  const field = (result, id) => result.ruleResults.find(r => r.rule.id === `art18_${id}`);
+  const prevent = Labeling.check("BEWI-SAN Prevent C\nDiätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung\n"
+    + "Darmflorastabilisatoren:\n80 x 10° KBE Enterococcus faecium NCIMB 11181 (4b1708) (Milchsäurebakterium)\n", FEED_TYPES[1], []);
+  assert.equal(field(prevent, "purpose").status, "found");
+  assert.match(field(prevent, "purpose").matchedText, /Stabilisierung der physiologischen Verdauung/);
+  assert.equal(field(prevent, "stabiliser").status, "found");
+  assert.match(field(prevent, "stabiliser").matchedText, /KBE Enterococcus faecium NCIMB 11181/);
+  assert.equal(field(prevent, "risk_hint").status, "unclear");
+  assert.match(field(prevent, "review").note, /Eintrag 72.*vier Wochen/);
+  const withHint = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.\nDarmflorastabilisatoren: 1 x 10^9 KBE Stamm X\n"
+    + "Bei Gefahr von, während oder nach Verdauungsstörungen.", FEED_TYPES[1], []);
+  assert.equal(field(withHint, "risk_hint").status, "found");
+  // Name oder Menge allein genügen nicht
+  const stabiliser = body => field(Labeling.check(`Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.\n${body}`, FEED_TYPES[1], []), "stabiliser");
+  for (const body of ["Darmflorastabilisatoren: Enterococcus faecium (KBE)", "Darmflorastabilisatoren: 100 KBE", "Darmflorastabilisatoren: Enterococcus faecium NCIMB 11181",
+                      "Darmflorastabilisatoren:\n\n1 x 10^9 KBE Enterococcus faecium",
+                      "Darmflorastabilisatoren: 100 KBE\nMindestens haltbar bis: 12.12.2026", "Darmflorastabilisatoren: 100 KBE\nHersteller: Muster GmbH",
+                      "Darmflorastabilisator: 100 KBE\nNettogewicht: 400 g", "Darmflorastabilisatoren: Enterococcus faecium\nMHD 12.12.2026 5 KBE"]) {
+    assert.equal(stabiliser(body).status, "unclear", body);
+  }
+  assert.match(stabiliser("Darmflorastabilisatoren: 100 KBE").note, /Bezeichnung/);
+  assert.equal(stabiliser("Darmflorastabilisatoren: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg").status, "found");
+  assert.equal(stabiliser("Darmflorastabilisatoren:\n1 x 10° KBE Enterococcus faecium").status, "found");
+  assert.equal(stabiliser("Darmflorastabilisator: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg").status, "found");
+  assert.equal(stabiliser("Darmflorastabilisator: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg\nMindestens haltbar bis: 12.12.2026").status, "found");
+  // ohne ausgewiesenen Stabilisator bleibt das Feld offen
+  const noStabiliser = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.", FEED_TYPES[1], []);
+  assert.equal(field(noStabiliser, "stabiliser").status, "unclear");
+  const lyt = Labeling.check("BEWI-SAN Bewilyt\nDiätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung des Wasser- und\nElektrolythaushaltes\n"
+    + "Es wird empfohlen, vor der Verfütterung den Rat eines Tierarztes einzuholen.", FEED_TYPES[1], []);
+  assert.equal(field(lyt, "purpose").status, "found");
+  assert.match(field(lyt, "purpose").matchedText, /Wasser- und Elektrolythaushaltes/);
+  assert.equal(field(lyt, "advice").status, "found");
+  assert.match(field(lyt, "review").note, /Eintrag 55.*sieben Tagen/);
+  // ohne Diätdeklaration entsteht keine Diätprüfung
+  const plain = Labeling.check("Ergänzungsfuttermittel für Aufzuchtkälber. Zur Stabilisierung der physiologischen Verdauung.", FEED_TYPES[1], []);
+  assert.equal(field(plain, "purpose"), undefined);
 });
 
 test("leere Quellenüberschrift liest nicht in die nächste Diätangabe hinein", () => {
@@ -1011,4 +1102,25 @@ test("die französische Typzeile aus einer Nachbarspalte gehört nicht zur deuts
   const text = "Alleinfuttermittel für Katzen. Zusammensetzung: Fleisch und tierische Nebenerzeugnisse Aliment complet pour chats (32 % davon 18 % Huhn), Zucker, Mineralstoffe. Zusatzstoffe: Taurin.";
   const result = checkNumericLabelRule("art17_003_complete", text, "Zusammensetzung", "keyword", 0.7);
   assert.equal(result.matchedText, "Zusammensetzung: Fleisch und tierische Nebenerzeugnisse (32 % davon 18 % Huhn), Zucker, Mineralstoffe.");
+});
+
+test("Diabetes und Aufbaukur erhalten ihren ausdrücklich deklarierten Ernährungszweck", () => {
+  const field = (text, id) => Labeling.check(text, FEED_TYPES[0], []).ruleResults.find(r => r.rule.id === id);
+  const base = "Diät-Alleinfuttermittel für ausgewachsene Katzen. ";
+  const diabetes = field(base + "Zur Regulierung der Glucoseversorgung (Diabetes mellitus).", "art18_purpose");
+  assert.equal(diabetes.status, "found");
+  assert.match(diabetes.matchedText, /Glucoseversorgung \(Diabetes mellitus\)/);
+  assert.equal(field(base + "Diabetes steht im Produktnamen.", "art18_purpose").status, "unclear");
+  const recovery = base + "Zur ernährungsphysiologischen Wiederherstellung, Rekonvaleszenz. Empfohlene Dauer der Fütterung: Bis zur voll\nStändigen Genesung.";
+  assert.equal(field(recovery, "art18_purpose").status, "found");
+  assert.equal(field(recovery, "art18_duration").matchedText, "Bis zur vollständigen Genesung");
+  assert.equal(field(recovery, "art18_review").status, "unclear");
+});
+
+test("Feuchte über 100 Prozent bleibt sichtbar und erhält einen konkreten Korrekturhinweis", () => {
+  const text = "Diät-Alleinfuttermittel für Katzen. Feuchtegehalt 80%. Humidite 809%.";
+  const result = checkNumericLabelRule("art15_005", text, "Feuchtigkeit", "keyword", 0.7);
+  assert.equal(result.status, "unclear");
+  assert.match(result.matchedText, /80%.*809%/);
+  assert.match(result.note, /über 100 %/);
 });
