@@ -744,6 +744,152 @@ test("Bezeichnungen der Futtermittelart in Kurz- und Langform werden als Typ und
   }
 });
 
+// ── Spaltenreihenfolge ────────────────────────────────────────────
+
+const boxed = (y, ...cells) => cells.map(([text, x0, x1]) => ({ text, confidence: 90, bbox: { x0, x1, y0: y, y1: y + 15 } }));
+const lineText = lines => lines.map(words => words.map(word => word.text).join(" "));
+
+test("zweispaltiges Etikett: Zeilen werden an der Spaltenlücke getrennt und spaltenweise geordnet", () => {
+  const lines = [
+    boxed(10, ["Carolina", 288, 560]),
+    boxed(40, ["Zusammensetzung:", 47, 250], ["Analytische", 403, 520], ["Bestandteile:", 525, 690]),
+    boxed(69, ["Weizengrießkleie", 47, 200], ["4%", 410, 440], ["Phosphor", 450, 520]),
+    boxed(97, ["Calciumcarbonat", 47, 190], ["10%", 410, 445], ["Calcium", 455, 520]),
+    boxed(125, ["Magnesiumoxid", 48, 193]),
+    boxed(153, ["Ernährungsphysiologische", 402, 597], ["Zusatzstoffe", 602, 690]),
+    boxed(181, ["Fütterung:", 38, 140], ["625.000", 408, 468], ["I.E.", 472, 500], ["Vitamin", 510, 580], ["A", 585, 600]),
+    boxed(209, ["Dieses", 38, 100], ["Ergänzungsfutter", 105, 300], ["3.000", 426, 467], ["mg", 470, 495], ["Vitamin", 500, 560], ["E", 565, 580]),
+  ];
+  assert.deepEqual(lineText(Ocr.reorderColumns(lines)), [
+    "Carolina", "Zusammensetzung:", "Weizengrießkleie", "Calciumcarbonat", "Magnesiumoxid", "Fütterung:", "Dieses Ergänzungsfutter",
+    "Analytische Bestandteile:", "4% Phosphor", "10% Calcium", "Ernährungsphysiologische Zusatzstoffe", "625.000 I.E. Vitamin A", "3.000 mg Vitamin E",
+  ]);
+});
+
+test("getrennte Spaltenstücke behalten die Entscheidung der ursprünglichen Zeile (Konfidenzfilter)", () => {
+  const row = (y, confidence, ...cells) => ({ words: cells.map(([text, x0, x1, conf]) => ({ text, confidence: conf ?? confidence, bbox: { x0, x1, y0: y, y1: y + 15 } })) });
+  const result = lines => ({ blocks: [{ paragraphs: [{ lines }] }] });
+  const data = result([
+    row(40, 90, ["Zusammensetzung:", 47, 250, 90], ["Analytische", 403, 520, 90], ["Bestandteile:", 525, 690, 90]),
+    row(69, 90, ["Weizengrießkleie", 47, 200, 75], ["4%", 410, 440, 95], ["Phosphor", 450, 520, 95]),
+    row(97, 90, ["Calciumcarbonat", 47, 190, 75], ["10%", 410, 445, 95], ["Calcium", 455, 520, 95]),
+    row(125, 90, ["Magnesiumoxid", 48, 193, 75], ["2%", 410, 440, 95], ["Magnesium", 450, 540, 95]),
+  ]);
+  assert.equal(Ocr.textFromResult(data), "Zusammensetzung:\nWeizengrießkleie\nCalciumcarbonat\nMagnesiumoxid\nAnalytische Bestandteile:\n4% Phosphor\n10% Calcium\n2% Magnesium");
+  // eine ursprünglich verworfene Rauschzeile bleibt verworfen, auch wenn sie sich teilen ließe
+  const noisy = result([
+    row(40, 90, ["Zusammensetzung:", 47, 250, 90], ["Analytische", 403, 520, 90], ["Bestandteile:", 525, 690, 90]),
+    row(69, 90, ["Weizen", 47, 200, 90], ["4%", 410, 440, 90], ["Phosphor", 450, 520, 90]),
+    row(97, 20, ["xq", 47, 90, 20], ["zt", 410, 440, 20]),
+  ]);
+  assert.equal(Ocr.textFromResult(noisy), "Zusammensetzung:\nWeizen\nAnalytische Bestandteile:\n4% Phosphor");
+});
+
+test("zweispaltiges Etikett: eine mittig gesetzte Zeile ohne Spaltenlücke bleibt ganz", () => {
+  const rows = Array.from({ length: 16 }, (_, i) => boxed(69 + i * 28, [`Zutat${i}`, 47, 200], [`${i}%`, 410, 440], [`Wert${i}`, 450, 520]));
+  const lines = [
+    boxed(40, ["Zusammensetzung:", 47, 250], ["Analytische", 403, 520], ["Bestandteile:", 525, 690]),
+    ...rows,
+    // Fußzeilen über die ganze Breite: die Wortlücke liegt zwar bei der Spaltenlücke, ist aber klein
+    boxed(600, ["Charge:", 250, 318], ["4711", 334, 380], ["MHD", 410, 450], ["12/2027", 455, 520]),
+    boxed(630, ["Charge:", 250, 318], ["4711", 334, 380]),
+  ];
+  const result = lineText(Ocr.reorderColumns(lines));
+  assert.ok(result.includes("Charge: 4711 MHD 12/2027"), result.join(" | "));
+  assert.ok(result.includes("Charge: 4711"), result.join(" | "));
+  // die Spalten darüber bleiben getrennt: erst alle Zutaten, dann die Analytik
+  assert.equal(result[0], "Zusammensetzung:");
+  assert.equal(result[1], "Zutat0");
+  assert.equal(result[16], "Zutat15");
+  assert.equal(result[17], "Analytische Bestandteile:");
+  assert.equal(result[18], "0% Wert0");
+});
+
+test("Spaltenreihenfolge ändert einspaltige Etiketten, Tabellen und Zeilen ohne Überschriftenkollision nicht", () => {
+  // Tabelle in einer Spalte: Zellen derselben Zeile bleiben zusammen
+  const table = [
+    boxed(10, ["Zusatzstoffe", 40, 160], ["je", 165, 185], ["kg:", 190, 220]),
+    boxed(40, ["625.000", 40, 110], ["I.E.", 120, 150], ["Vitamin", 260, 340], ["A", 345, 360], ["(3a672a)", 520, 600]),
+    boxed(68, ["3.000", 60, 110], ["mg", 120, 150], ["Vitamin", 260, 340], ["E", 345, 360], ["(3a700)", 520, 590]),
+  ];
+  assert.deepEqual(Ocr.reorderColumns(table), table);
+  // zwei Überschriften in einer Zeile, aber ohne Lücke zwischen den Spalten: keine Trennung
+  const dense = [
+    boxed(10, ["Zusammensetzung:", 40, 200], ["Analytische", 205, 300], ["Bestandteile:", 305, 400]),
+    boxed(40, ["Weizen", 40, 120], ["4%", 125, 150], ["Protein", 155, 230], ["Mais", 240, 300]),
+  ];
+  assert.deepEqual(Ocr.reorderColumns(dense), dense);
+  // Wörter ohne Position bleiben unverändert
+  const plain = [[{ text: "Zusammensetzung:", confidence: 90 }, { text: "Analytische", confidence: 90 }]];
+  assert.deepEqual(Ocr.reorderColumns(plain), plain);
+});
+
+test("Abschnitte werden vollständig und zeilenweise als Beleg gezeigt (Zusammensetzung, Analytik, Zusatzstoffe)", () => {
+  const rules = [
+    { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+    { id: "art17_004_mineral", severity: "critical", patterns: [{ patternValue: "Analytische", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+    { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+  ];
+  const text = [
+    "Mineralfutter für Rinder",
+    "Zusammensetzung:", "Weizengrießkleie", "Calciumcarbonat", "Monocalciumphosphat", "Natriumchlorid", "pflanzliches Fett aus Raps, raffiniert, gehärtet", "",
+    "Analytische Bestandteile:", "4% Phosphor", "10% Calcium", "4% Natrium", "2% Magnesium", "",
+    "Ernährungsphysiologische Zusatzstoffe (je kg):", "625.000 I.E. Vitamin A (3a672a)", "3.000 mg Vitamin E (3a700)", "",
+    "Technologische Zusatzstoffe (je kg):", "1 mg Citronensäure", "100 mg Betahydroxytoluol (E321)", "",
+    "Inverkehrbringer: Weissachmühle GmbH, Mühlenstraße 15, 87534 Oberstaufen",
+  ].join("\n");
+  const [composition, analytic, additives] = Labeling.check(text, FEED_TYPES[2], rules).ruleResults;
+  assert.equal(composition.status, "found");
+  assert.equal(composition.matchedText, "Zusammensetzung:\nWeizengrießkleie\nCalciumcarbonat\nMonocalciumphosphat\nNatriumchlorid\npflanzliches Fett aus Raps, raffiniert, gehärtet");
+  assert.equal(analytic.status, "found");
+  assert.equal(analytic.matchedText, "Analytische Bestandteile:\n4% Phosphor\n10% Calcium\n4% Natrium\n2% Magnesium");
+  assert.equal(additives.status, "found");
+  assert.equal(additives.matchedText, "Ernährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\n3.000 mg Vitamin E (3a700)\n"
+    + "Technologische Zusatzstoffe (je kg):\n1 mg Citronensäure\n100 mg Betahydroxytoluol (E321)");
+  // Logo- und Siegeltext nach der letzten Messwertzeile gehört nicht zum Abschnitt
+  const trailing = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n10 mg Vitamin E\n5 mg Zink\nA VLOG\nAMA-Gütesiegel tauglich", FEED_TYPES[2], rules).ruleResults[2];
+  assert.equal(trailing.matchedText, "Zusatzstoffe je kg:\n10 mg Vitamin E\n5 mg Zink");
+  // umgebrochene Namen: genau eine Fortsetzungszeile bleibt erhalten, Siegeltext danach nicht
+  const rule2 = rules[2];
+  const wrapped = (...lines) => Labeling.check(`Mineralfutter für Rinder\nZusatzstoffe je kg:\n${lines.join("\n")}`, FEED_TYPES[2], [rule2]).ruleResults[0].matchedText;
+  assert.equal(wrapped("250 mg Vitamin E", "100 mg Vitamin", "A"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n100 mg Vitamin\nA");
+  assert.equal(wrapped("250 mg Vitamin E", "100 mg Kupfer als Kupfer-(II)-sulfat,", "pentahydrat"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n100 mg Kupfer als Kupfer-(II)-sulfat,\npentahydrat");
+  assert.equal(wrapped("250 mg Vitamin E", "100 mg Vitamin", "A", "AMA-Gütesiegel tauglich"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n100 mg Vitamin\nA");
+  assert.equal(wrapped("250 mg Vitamin E", "40 mg Selen als Natriumselenit (3b801)", "A VLOG", "utter, gepru"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n40 mg Selen als Natriumselenit (3b801)");
+  // eine fünfstellige Menge mit großgeschriebener Einheit ist keine Postleitzahl
+  const fiveDigits = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n25000 IE Vitamin A\n300 mg Vitamin E", FEED_TYPES[2], rules).ruleResults[2];
+  assert.equal(fiveDigits.matchedText, "Zusatzstoffe je kg:\n25000 IE Vitamin A\n300 mg Vitamin E");
+  // Kontaktzeilen gehören nicht zum Abschnitt
+  const withAddress = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n10 mg Vitamin E\nHersteller: Weissachmühle GmbH, 87534 Oberstaufen\n3 mg Eisen", FEED_TYPES[2], rules).ruleResults[2];
+  assert.equal(withAddress.matchedText, "Zusatzstoffe je kg:\n10 mg Vitamin E");
+});
+
+test("Mengenangaben aus einer Nachbarspalte sind keine Losnummer", () => {
+  const rule = { id: "art15_004", severity: "critical", patterns: ["Partie", "Charge", "Lot"].map(patternValue => ({ patternValue, patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 })) };
+  const check = text => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Calciumcarbonat, Magnesiumoxid\n${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  for (const text of ["Kennnummer der Partie: 1mg Citronensäure\nSiehe Aufdruck Betahydroxytoluol", "Kennnummer der Partie:\n1mg", "Kennnummer der Partie: 100 mg\nVitamin A",
+                      "Chargen-Nr.: 5 g", "Charge: 25 kg", "Lot: 12 %", "Charge: 10 IE", "Kennnummer der Partie: 4711mg"]) {
+    assert.equal(check(text).status, "probablyFound", text);
+  }
+  // echte Losnummern bleiben bestätigt, auch wenn sie so ähnlich beginnen
+  for (const text of ["Charge: 4711", "Chargen-Nr.: A12345", "Charge: L 123456", "Lot: 2024-17", "Charge: 240315 MHD 03/2027", "Chargen-Nr.: 12 gelagert", "Charge: 123 g12"]) {
+    assert.equal(check(text).status, "found", text);
+  }
+  // „Kennnummer der Partie: Siehe Aufdruck“ ist ein Verweis auf den Aufdruck
+  const reference = check("Kennnummer der Partie:\nSiehe Aufdruck");
+  assert.equal(reference.status, "probablyFound");
+  assert.match(reference.note, /Verweis auf Aufdruck erkannt/);
+});
+
+test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
+  const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(result.status, "probablyFound");
+  assert.match(result.note, /mehrspaltiges Layout/);
+  const plain = Labeling.check("Mineralfutter für Rinder\nZusammensetzung siehe Rückseite", FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.match(plain.note ?? "", /Indirekter Treffer/);
+});
+
 test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
   const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
   const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];

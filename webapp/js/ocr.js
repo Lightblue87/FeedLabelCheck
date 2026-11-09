@@ -57,6 +57,90 @@ const Ocr = (() => {
     return lines;
   }
 
+  // ── Zweispaltige Etiketten ─────────────────────────────────────
+  // Tesseract liest Zeilen quer über beide Spalten („Zusammensetzung: Analytische Bestandteile:“) und mischt
+  // damit linke und rechte Spalte. Nur wenn zwei Abschnittsüberschriften in einer Zeile kollidieren und
+  // zwischen den Spalten eine leere Lücke liegt, werden die Zeilen an der Lücke getrennt und spaltenweise
+  // geordnet. Einspaltige Etiketten und Tabellen innerhalb einer Spalte bleiben unverändert.
+  const SECTION_HEADING_START = /^(?:Analytische|Analytical|Zusatzstoffe|Ernährungsphysiologische|Technologische|Zootechnische|Sensorische|Fütterungsempfehlung|Inhaltsstoffe|Zusammensetzung|Composition|Hersteller|Inverkehrbringer|Constituants)/i;
+
+  function lineHeight(words) {
+    const heights = words.map(w => w.bbox.y1 - w.bbox.y0).sort((a, b) => a - b);
+    return heights[Math.floor(heights.length / 2)] || 1;
+  }
+
+  function findColumnGutter(lines) {
+    for (let index = 0; index < lines.length; index++) {
+      const words = lines[index];
+      if (!words.every(w => w.bbox)) continue;
+      const height = lineHeight(words);
+      for (let j = 1; j < words.length; j++) {
+        const before = words[j - 1];
+        const gap = words[j].bbox.x0 - before.bbox.x1;
+        if (!before.text.endsWith(":") || !SECTION_HEADING_START.test(words[j].text) || gap < height * 1.5) continue;
+        // Spaltenlücke: Bereich zwischen den beiden Überschriften, den höchstens ein Wort der Zeilen darunter überdeckt.
+        const from = Math.ceil(before.bbox.x1);
+        const to = Math.floor(words[j].bbox.x0);
+        const below = lines.slice(index);
+        const covered = new Array(to - from + 1).fill(0);
+        for (const line of below) {
+          const hit = new Set();
+          for (const word of line) {
+            if (!word.bbox) continue;
+            for (let x = Math.max(from, Math.floor(word.bbox.x0)); x <= Math.min(to, Math.ceil(word.bbox.x1)); x++) hit.add(x);
+          }
+          for (const x of hit) covered[x - from]++;
+        }
+        // Frei ist ein Bereich, den nur wenige Zeilen überdecken (Rauschwörter, mittig gesetzte Zeilen).
+        const allowed = Math.max(1, Math.ceil(below.length * 0.12));
+        let best = null;
+        for (let x = 0, start = null; x <= covered.length; x++) {
+          const free = x < covered.length && covered[x] <= allowed;
+          if (free && start === null) start = x;
+          if (!free && start !== null) {
+            if (!best || x - start > best.width) best = { start, width: x - start };
+            start = null;
+          }
+        }
+        if (best && best.width >= height) return { x: from + best.start + best.width / 2, height, width: best.width };
+      }
+    }
+    return null;
+  }
+
+  // Ein an der Spaltenlücke getrenntes Stück übernimmt die Entscheidung der ursprünglichen Zeile: Hat die ganze Zeile
+  // den Konfidenzfilter bestanden, wird ein einzelnes Wort der einen Spalte nicht nachträglich verworfen.
+  const fragmentOrigin = new WeakMap();
+
+  /** Ordnet die Zeilen eines zweispaltigen Etiketts spaltenweise (links, dann rechts). */
+  function reorderColumns(lines) {
+    const gutter = findColumnGutter(lines);
+    if (!gutter) return lines;
+    const tolerance = gutter.height * 0.4;
+    const result = [];
+    let left = [];
+    let right = [];
+    const flush = () => { result.push(...left, ...right); left = []; right = []; };
+    for (const words of lines) {
+      if (!words.every(w => w.bbox)) { flush(); result.push(words); continue; }
+      const crossing = words.some(w => w.bbox.x0 < gutter.x - tolerance && w.bbox.x1 > gutter.x + tolerance);
+      if (crossing) { flush(); result.push(words); continue; }
+      const side = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 < gutter.x);
+      const other = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 >= gutter.x);
+      // Eine Zeile über beide Hälften wird nur getrennt, wenn ihre Lücke so breit ist wie die Spaltenlücke.
+      // Eine mittig gesetzte Zeile („Charge: 4711“) fällt mit ihrer kleinen Wortlücke nicht darunter.
+      if (side.length && other.length) {
+        const gap = Math.min(...other.map(w => w.bbox.x0)) - Math.max(...side.map(w => w.bbox.x1));
+        if (gap < gutter.width * 0.5) { flush(); result.push(words); continue; }
+      }
+      for (const part of [side, other]) if (part.length && part.length < words.length) fragmentOrigin.set(part, words);
+      if (side.length) left.push(side);
+      if (other.length) right.push(other);
+    }
+    flush();
+    return result;
+  }
+
   function findTextRegion(data, matchLine) {
     for (const words of flattenLines(data.blocks)) {
       const match = matchLine(words.map(word => word.text).join(" "));
@@ -92,7 +176,14 @@ const Ocr = (() => {
    */
   function textFromResult(data) {
     if (data && Array.isArray(data.blocks) && data.blocks.length) {
-      const kept = flattenLines(data.blocks).map(filterLine).filter(Boolean);
+      const kept = reorderColumns(flattenLines(data.blocks)).map(words => {
+        const origin = fragmentOrigin.get(words);
+        if (!origin) return filterLine(words);
+        // Stück einer getrennten Zeile: gilt, wenn die ursprüngliche Zeile gilt; nur schwache Randwörter fallen weg.
+        if (!filterLine(origin)) return null;
+        const kept = words.filter(w => w.confidence >= WORD_MIN_CONFIDENCE || countAlnum(w.text) >= WORD_MIN_ALNUM);
+        return kept.length ? kept.map(w => w.text).join(" ") : null;
+      }).filter(Boolean);
       if (kept.length) return cleanText(kept.join("\n"));
     }
     return cleanText(data && data.text ? data.text : "");
@@ -150,7 +241,7 @@ const Ocr = (() => {
     return cleaned;
   }
 
-  return { textFromResult, cleanText, flattenLines, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
+  return { textFromResult, cleanText, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
