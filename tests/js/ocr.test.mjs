@@ -744,6 +744,32 @@ test("Bezeichnungen der Futtermittelart in Kurz- und Langform werden als Typ und
   }
 });
 
+test("Mengenangaben aus einer Nachbarspalte sind keine Losnummer", () => {
+  const rule = { id: "art15_004", severity: "critical", patterns: ["Partie", "Charge", "Lot"].map(patternValue => ({ patternValue, patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 })) };
+  const check = text => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Calciumcarbonat, Magnesiumoxid\n${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  for (const text of ["Kennnummer der Partie: 1mg Citronensäure\nSiehe Aufdruck Betahydroxytoluol", "Kennnummer der Partie:\n1mg", "Kennnummer der Partie: 100 mg\nVitamin A",
+                      "Chargen-Nr.: 5 g", "Charge: 25 kg", "Lot: 12 %", "Charge: 10 IE", "Kennnummer der Partie: 4711mg"]) {
+    assert.equal(check(text).status, "probablyFound", text);
+  }
+  // echte Losnummern bleiben bestätigt, auch wenn sie so ähnlich beginnen
+  for (const text of ["Charge: 4711", "Chargen-Nr.: A12345", "Charge: L 123456", "Lot: 2024-17", "Charge: 240315 MHD 03/2027", "Chargen-Nr.: 12 gelagert", "Charge: 123 g12"]) {
+    assert.equal(check(text).status, "found", text);
+  }
+  // „Kennnummer der Partie: Siehe Aufdruck“ ist ein Verweis auf den Aufdruck
+  const reference = check("Kennnummer der Partie:\nSiehe Aufdruck");
+  assert.equal(reference.status, "probablyFound");
+  assert.match(reference.note, /Verweis auf Aufdruck erkannt/);
+});
+
+test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
+  const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(result.status, "probablyFound");
+  assert.match(result.note, /mehrspaltiges Layout/);
+  const plain = Labeling.check("Mineralfutter für Rinder\nZusammensetzung siehe Rückseite", FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.match(plain.note ?? "", /Indirekter Treffer/);
+});
+
 test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
   const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
   const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];

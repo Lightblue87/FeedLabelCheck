@@ -623,9 +623,9 @@ const Labeling = (() => {
   const LOT_LABEL = /\b(?:chargen?(?:[ \t-]*(?:nummer|nr))?|los(?:[ \t-]*(?:nummer|nr))?|(?:zulassungsnummer|kennnummer|bezugsnr\.?)\s+der\s+partie|partie(?:[ \t-]*(?:nummer|nr))?|lot(?:[ \t]+(?:no|number(?=[ \t]*[:#\n])))?|batch(?:[ \t]+(?:number|no))?|L(?=[ \t]*:)|^L(?=[ \t]+[A-Z0-9]))\b\.?[ \t]*(?:[:#\-–][ \t]*\n?[ \t]*|\n[ \t]*)?/gim;
   const LOT_SEGMENT = String.raw`(?=[A-Za-z0-9./-]*\d)[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)*`;
   const LOT_VALUE = new RegExp(String.raw`^(?:[A-Z]{1,5}[ \t]+)?${LOT_SEGMENT}(?:[ \t]+${LOT_SEGMENT})*(?:[ \t]+[A-Z]{1,5}(?=[ \t]*(?:[;,.\n]|$)))?`);
-  const IMPRINT_REFERENCE = /\b(?:mhd|mind(?:estens|\.)?\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer))(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i;
+  const IMPRINT_REFERENCE = /\b(?:mhd|mind(?:estens|\.)?\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer)|(?:bezugs|kenn)(?:nummer|nr\.?)\s+der\s+partie)(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i;
 
-  const LOT_PRINT_FIELD = String.raw`chargen?(?:[ \t-]*(?:nr\.?|nummer))?|los(?:[ \t-]*(?:nr\.?|nummer))?|bezugs(?:nummer|nr\.?)\s+der\s+partie|lot[ \t]+(?:no\.?|number)|batch(?:[ \t]+(?:no\.?|number))?`;
+  const LOT_PRINT_FIELD = String.raw`chargen?(?:[ \t-]*(?:nr\.?|nummer))?|los(?:[ \t-]*(?:nr\.?|nummer))?|(?:bezugs|kenn)(?:nummer|nr\.?)\s+der\s+partie|lot[ \t]+(?:no\.?|number)|batch(?:[ \t]+(?:no\.?|number))?`;
   const DATE_PRINT_FIELD = String.raw`mhd|mind(?:estens|\.)?\s+haltbar\s+bis|best\s+before(?:\s+end)?|expiry\s+date`;
   const PRINT_FIELD = String.raw`(?:${LOT_PRINT_FIELD}|${DATE_PRINT_FIELD})`;
   const PRINT_REFERENCE = new RegExp(String.raw`\b(${PRINT_FIELD})(?:[ \t]*(?:[,/]|und\b|and\b)[ \t]*(${PRINT_FIELD}))?[ \t:.]*\n?[ \t]*(?:siehe|s\.|see)\s+(aufdruck|stempel|(?:behälter|packungs)?boden|(?:container|packaging)\s+(?:bottom|base)|imprint|stamp)\b`, "gi");
@@ -682,12 +682,21 @@ const Labeling = (() => {
   // (MHD …, NETTO 800 g): dessen Name darf nicht als Code gelten. Ein Code wie "NET12345" bleibt erlaubt.
   const NEIGHBOR_FIELD = /^(?:mhd|exp|bbd|best[ \t]+before|mindestens|netto\w*|net|inhalt|gewicht|hersteller|vertrieb|zusammensetzung|analytische|feuchte\w*|tierart)(?![A-Za-z0-9])/i;
 
+  // „1mg“, „25 kg“, „12 %“, „10 IE“ sind Mengenangaben (oft aus einer Nachbarspalte), keine Losnummern.
+  const QUANTITY_UNIT = String.raw`(?:mg|[µμ]g|mcg|kg|g|t|ml|cl|dl|l|%|ie|i\.[ \t]?e\.|iu|kbe|cfu|ftu|kcal|mj|ppm)(?![\p{L}\p{N}])`;
+  const QUANTITY_CODE = new RegExp(String.raw`^\d[\d.,]*[ \t]*${QUANTITY_UNIT}`, "iu");
+  const QUANTITY_UNIT_AT_START = new RegExp(String.raw`^[ \t]*${QUANTITY_UNIT}`, "iu");
+  function looksLikeQuantity(code, following) {
+    return QUANTITY_CODE.test(code) || (/^\d[\d.,]*$/.test(code) && QUANTITY_UNIT_AT_START.test(following));
+  }
+
   function declaredLots(text) {
     const codes = new Map();
     const keyFor = code => code.replace(/[ \t]+/g, " ");
     for (const label of text.matchAll(LOT_LABEL)) {
-      const code = text.slice(label.index + label[0].length).match(LOT_VALUE)?.[0];
-      if (!code || /^\d$/.test(code) || NEIGHBOR_FIELD.test(code)) continue;
+      const rest = text.slice(label.index + label[0].length);
+      const code = rest.match(LOT_VALUE)?.[0];
+      if (!code || /^\d$/.test(code) || NEIGHBOR_FIELD.test(code) || looksLikeQuantity(code, rest.slice(code.length, code.length + 12))) continue;
       const key = keyFor(code);
       if (!codes.has(key)) codes.set(key, `${label[0].trim()} ${code}`);
     }
@@ -826,7 +835,14 @@ const Labeling = (() => {
         notes.push(`Verweis auf ${location} erkannt. Bitte ${location} separat fotografieren oder den Wert im Prüftext ergänzen.`);
       }
       if (po) notes.push(PO_LOT_NOTE);
-      if (!imprint && !po) notes.push("Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
+      if (!imprint && !po) {
+        // „Zusammensetzung: Analytische Bestandteile:“ in einer Zeile: die Zutatenliste steht in einer anderen Spalte,
+        // die Texterkennung hat die Spalten zeilenweise vermischt.
+        const columns = rule.id.startsWith("art17_003_") && /\bZusammensetzung[ \t]*:[ \t]*(?:Analytische|Zusatzstoffe|Inhaltsstoffe|Ernährungsphysiologische)/i.test(text);
+        notes.push(columns
+          ? "Die Zutatenliste ist im Prüftext nicht eindeutig zugeordnet (mehrspaltiges Layout?). Bitte die Liste am Etikett prüfen oder den Text korrigieren."
+          : "Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
+      }
     }
     return { rule, status, matchedText: best.text, matchedLanguage: best.language,
              confidence: best.weight, note: notes.join(" ") || null };
