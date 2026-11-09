@@ -26,6 +26,13 @@ const FEED_TYPES = [
 
 // ── cleanText ─────────────────────────────────────────────────────
 
+test("cleanText korrigiert als 32xxx gelesene Vitamincodes, Mengen bleiben", () => {
+  const out = Ocr.cleanText("90.000 I.E. Vitamin D3 (32671)\n3.000 mg Vitamin E (3a700)\nEnergie (32000) kJ\nJod (3202)");
+  assert.match(out, /Vitamin D3 \(3a671\)/);
+  assert.match(out, /\(32000\)/);
+  assert.match(out, /\(3202\)/);
+});
+
 test("cleanText korrigiert als 33xxx gelesene 3a-Zusatzstoffcodes", () => {
   const input = "600 mg Vitamin B1 (33821), 15.000 mcg Biotin (33880), 200 mg Folsäure (33316)";
   const out = Ocr.cleanText(input);
