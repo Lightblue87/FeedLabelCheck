@@ -822,7 +822,12 @@ const Labeling = (() => {
   const STRUVITE_RECURRENCE = /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i;
   const INTOLERANCE_PURPOSE = /\b(?:Minderung|Verringerung)\s+von\s+Ausgangs?erzeugnis\s*[-‐‑–]\s+und\s+Nährstoffintoleranz(?:en|erscheinungen)\b|\breduction\s+of\s+ingredient\s+and\s+nutrient\s+intolerances\b/i;
   const RECOVERY_PURPOSE = /\bernährungsphysiologische[nr]?\s+Wiederherstellung\s*[,/]\s*Rekonvaleszenz\b|\bnutritional\s+restoration\s*[,/]\s*convalescence\b/i;
+  // Eintrag 72: Stabilisierung der physiologischen Verdauung (Darmflorastabilisator); Eintrag 55: Wasser- und Elektrolythaushalt.
+  const STABILISATION_PURPOSE = /\bStabilisierung\s+der\s+physiologischen\s+Verdauung\b|\bstabili[sz]ation\s+of\s+(?:the\s+)?physiological\s+digestion\b/i;
+  const ELECTROLYTE_PURPOSE = /\bStabilisierung\s+des\s+Wasser-?\s+und\s+Elektrolythaushalt(?:e?s)?\b|\bstabili[sz]ation\s+of\s+(?:the\s+)?water\s+and\s+electrolyte\s+balance\b/i;
   const DIET_PURPOSES = [
+    STABILISATION_PURPOSE,
+    ELECTROLYTE_PURPOSE,
     /\bRegulierung\s+der\s+Glu[ck]oseversorgung(?:\s*\(Diabetes\s+mellitus\))?|\bregulation\s+of\s+glucose\s+supply(?:\s*\(diabetes\s+mellitus\))?/i,
     RECOVERY_PURPOSE,
     RENAL_PURPOSE,
@@ -848,7 +853,7 @@ const Labeling = (() => {
   const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
   const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "gi");
   const DIET_DURATION_FOLLOWUP = /\b(?:wenn\s+(?:die\s+)?Anzeichen\s+von\s+Intoleranzen\s+verschwinden|if\s+signs\s+of\s+intolerance\s+disappear)\b[^.!?;]{0,125}?\b(?:bis\s+zu\s+(?:einem|1)\s+Jahr|up\s+to\s+(?:one|1)\s+year)\b|\b(?:bei\s+chronischer\s+Insuffizienz\s+der\s+Bauchspeicheldrüse|in\s+case\s+of\s+chronic\s+pancreatic\s+insufficiency)\s*[, ]*\s*(?:lebenslang|for\s+life)\b/gi;
-  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+(?:or|and)\s+(?:before\s+)?extending\b)?\b/gi;
+  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Verfütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+(?:or|and)\s+(?:before\s+)?extending\b)?\b/gi;
 
   const DIET_SPECIES = /^\s+(?:für\s+(?:(?:ausgewachsene|adulte|erwachsene)\s+)?(?:Hunde|Katzen)|for\s+(?:adult\s+)?(?:dogs|cats)|pour\s+(?:chiens|chats))\b/i;
   const DIET_PURPOSE_ANCHOR = /\b(?:Zur[ \t]+Unterstützung[ \t]+der[ \t]+Nierenfunktion|Zum[ \t]+Ausgleich[ \t]+unzureichender[ \t]+Verdauung|Zur[ \t]+Auflösung[ \t]+von[ \t]+Struvitsteinen|Zur[ \t]+Verringerung[ \t]+von[ \t]+Struvitsteinrezidiven)\b/i;
@@ -1102,6 +1107,17 @@ const Labeling = (() => {
         text.match(/\bleichtverdauliche\s+Ernährung\b|\bhighly\s+digestible\s+diet\b/i)?.[0],
         "Kein eindeutiger Hinweis auf leichtverdauliche Ernährung im Prüftext erkannt."));
     }
+    if (purposes.has(STABILISATION_PURPOSE)) {
+      const source = `${annex}, Eintrag 72`;
+      extra.push(
+        dietField("art18_stabiliser", "Darmflorastabilisator mit Bezeichnung und zugesetzter Menge", source,
+          text.match(/\bDarmflorastabilisatoren?[ \t]*:[ \t]*\n?[^\n]*(?:KBE|CFU)[^\n]*/i)?.[0]?.replace(/\s+/g, " "),
+          "Bezeichnung und zugesetzte Menge des Darmflorastabilisators sowie dessen Zulassung für die Tierart am Etikett prüfen."),
+        dietField("art18_risk_hint", "Hinweis „Bei Gefahr von, während oder nach Verdauungsstörungen“", source,
+          text.match(/\bBei\s+Gefahr\s+von,?\s+während\s+oder\s+nach\s+Verdauungsstörungen\b/i)?.[0]?.replace(/\s+/g, " "),
+          "Der vorgeschriebene Hinweis wurde im Prüftext nicht erkannt. Bitte am Etikett prüfen."),
+      );
+    }
     if (intolerance) {
       const source = `${annex}, Eintrag 13`;
       extra.push(
@@ -1129,6 +1145,8 @@ const Labeling = (() => {
         "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."
           + (renal ? " Bei Nierendiät auch die zutreffende Variante in Eintrag 10, zugesetzte essentielle Fettsäuren und gegebenenfalls Lanthancarbonat prüfen." : "")
           + (dissolution || recurrence ? " Bei Struvitdiät auch den Magnesiumhöchstwert und den Nachweis der angegebenen Harneigenschaften prüfen." : "")
+          + (purposes.has(STABILISATION_PURPOSE) ? " Bei Stabilisierung der physiologischen Verdauung (Eintrag 72) auch die empfohlene Fütterungsdauer von bis zu vier Wochen prüfen." : "")
+          + (purposes.has(ELECTROLYTE_PURPOSE) ? " Bei Stabilisierung des Wasser- und Elektrolythaushalts (Eintrag 55) auch die empfohlene Fütterungsdauer von ein bis sieben Tagen prüfen." : "")
           + (intolerance ? " Bei Futtermittelintoleranzen auch die Kombination der ernährungsphysiologischen Merkmale und bedingte Angaben prüfen." : "")
           + (digestion ? " Beim Ausgleich unzureichender Verdauung auch die leichtverdaulichen Ausgangsquellen und gegebenenfalls deren Behandlung prüfen." : "")),
 

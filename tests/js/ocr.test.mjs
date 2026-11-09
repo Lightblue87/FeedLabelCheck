@@ -834,6 +834,33 @@ test("Phosphor und Rohprotein werden aus einem beschrifteten Abschnitt auf 12 % 
   assert.match(at12.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^1,2 g\/kg/);
 });
 
+test("Diätzwecke Eintrag 72 und 55 für Kälber werden erkannt und zweckbezogen geprüft", () => {
+  const field = (result, id) => result.ruleResults.find(r => r.rule.id === `art18_${id}`);
+  const prevent = Labeling.check("BEWI-SAN Prevent C\nDiätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung\n"
+    + "Darmflorastabilisatoren:\n80 x 10° KBE Enterococcus faecium NCIMB 11181 (4b1708) (Milchsäurebakterium)\n", FEED_TYPES[1], []);
+  assert.equal(field(prevent, "purpose").status, "found");
+  assert.match(field(prevent, "purpose").matchedText, /Stabilisierung der physiologischen Verdauung/);
+  assert.equal(field(prevent, "stabiliser").status, "found");
+  assert.match(field(prevent, "stabiliser").matchedText, /KBE Enterococcus faecium NCIMB 11181/);
+  assert.equal(field(prevent, "risk_hint").status, "unclear");
+  assert.match(field(prevent, "review").note, /Eintrag 72.*vier Wochen/);
+  const withHint = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.\nDarmflorastabilisatoren: 1 x 10^9 KBE Stamm X\n"
+    + "Bei Gefahr von, während oder nach Verdauungsstörungen.", FEED_TYPES[1], []);
+  assert.equal(field(withHint, "risk_hint").status, "found");
+  // ohne ausgewiesenen Stabilisator bleibt das Feld offen
+  const noStabiliser = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.", FEED_TYPES[1], []);
+  assert.equal(field(noStabiliser, "stabiliser").status, "unclear");
+  const lyt = Labeling.check("BEWI-SAN Bewilyt\nDiätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung des Wasser- und\nElektrolythaushaltes\n"
+    + "Es wird empfohlen, vor der Verfütterung den Rat eines Tierarztes einzuholen.", FEED_TYPES[1], []);
+  assert.equal(field(lyt, "purpose").status, "found");
+  assert.match(field(lyt, "purpose").matchedText, /Wasser- und Elektrolythaushaltes/);
+  assert.equal(field(lyt, "advice").status, "found");
+  assert.match(field(lyt, "review").note, /Eintrag 55.*sieben Tagen/);
+  // ohne Diätdeklaration entsteht keine Diätprüfung
+  const plain = Labeling.check("Ergänzungsfuttermittel für Aufzuchtkälber. Zur Stabilisierung der physiologischen Verdauung.", FEED_TYPES[1], []);
+  assert.equal(field(plain, "purpose"), undefined);
+});
+
 test("leere Quellenüberschrift liest nicht in die nächste Diätangabe hinein", () => {
   const label = "Diät-Alleinfuttermittel für Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
   for (const next of ["Empfohlene Fütterungsdauer: bis zu 6 Monate.", "Fütterungsdauer: bis zu 6 Monate.", "Frisches Wasser steht stets zur freien Verfügung.",
