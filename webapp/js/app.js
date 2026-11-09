@@ -88,6 +88,7 @@
     await Labeling.openDatabase(buffers["labeling.sqlite"], SQLJS_CONFIG);
     additives = LavesEval.loadAdditives(rawAdditives);
     idx = LavesEval.buildIndexes(additives);
+    Ocr.setAdditiveCodes(additives.map(a => a.e_number));
     feedTypes = Labeling.loadFeedTypes();
     dbInfo = Labeling.loadDatabaseInfo();
   }

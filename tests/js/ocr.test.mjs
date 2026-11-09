@@ -926,6 +926,37 @@ test("Vermischte Spalten: Feuchte-Zeile, längere Analytikspalte und unbekannte 
   assert.equal(unknown.status, "probablyFound");
 });
 
+test("cleanText: Kennnummern werden gegen die bekannte Liste geprüft, nur eindeutige Korrekturen", () => {
+  Ocr.setAdditiveCodes(["3b502", "3a502", "3b405", "3a671"]);
+  try {
+    // 3a502 und 3b502 sind beide bekannt: nicht eindeutig, Text bleibt
+    assert.match(Ocr.cleanText("2.500 mg Mangan (30502)"), /\(30502\)/);
+    Ocr.setAdditiveCodes(["3b502", "3b405", "3a671"]);
+    assert.match(Ocr.cleanText("2.500 mg Mangan (30502)"), /\(3b502\)/);
+    assert.match(Ocr.cleanText("Kupfer (3b405) Vitamin D3 (3a671)"), /\(3b405\).*\(3a671\)/);
+    assert.match(Ocr.cleanText("Wasser (30999)"), /\(30999\)/);
+  } finally {
+    Ocr.setAdditiveCodes([]);
+  }
+});
+
+test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und Kennnummer in der Folgezeile", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\nFütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)\nDieses Ergänzungsfutter darf we- 2.000 mg Beta-Carotin (3a160(a))\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)\nTechnologische Zusatzstoffe (je kg):\n100 mg Betahydroxytoluol (E321)";
+  const result = Labeling.check(label, FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.doesNotMatch(result.matchedText, /Fütterungsempfehlung|Dieses Ergänzungsfutter|minen und/);
+  for (const row of ["90.000 Vitamin D3 (3a671)", "2.000 mg Beta-Carotin (3a160(a))", "(3b502)", "100 mg Betahydroxytoluol (E321)"]) {
+    assert.ok(result.matchedText.split("\n").includes(row), row);
+  }
+  const rows = Labeling.parseAdditiveRows(label);
+  assert.deepEqual(rows.map(r => [r.amount, r.unit, r.code]), [
+    ["625.000", "I.E.", "3a672a"], ["90.000", null, "3a671"], ["2.000", "mg", "3a160(a)"],
+    ["2.500", "mg", "3b502"], ["100", "mg", "e321"],
+  ]);
+  assert.equal(rows[3].name, "Mangan als Mangan-(II)-Oxid");
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];

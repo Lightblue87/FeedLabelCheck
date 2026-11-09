@@ -628,7 +628,64 @@ const Labeling = (() => {
     }
     return null;
   }
-  function additivesEvidence(text) {
+  // Zusatzstoffzeilen einer Tabelle, die die OCR mit dem Text einer Nachbarspalte vermischt hat:
+  // „Fütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)“. Der Fremdtext wird nur abgeschnitten, wenn er
+  // erkennbar Fließtext ist (endet auf „-“, „:“ oder „.“) und danach eine Menge mit Einheit beginnt oder eine
+  // Zeile „Stoff als Verbindung“ folgt. Alles andere bleibt unverändert im Beleg.
+  const ROW_AMOUNT = /(?<![\p{L}\p{N},.])\d[\d.]*(?:,\d+)?[ \t]*(?:mg|µg|μg|mcg|g|[I1l]\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}\/])/u;
+  const ROW_CODE = /\(([1-4][a-z]\d{1,4}[a-z]{0,3}(?:\([a-z]\))?|E[ \t]?\d{3,4}[a-z]?)\)/i;
+
+  // Zeilenanfang einer Zusatzstoffangabe: Menge mit Einheit oder, wenn die OCR die Einheit verloren hat, eine Zahl
+  // vor Stoffname und Kennnummer in derselben Zeile.
+  const ROW_START = new RegExp(`${ROW_AMOUNT.source}|(?<![\\p{L}\\p{N},.])\\d[\\d.]*(?:,\\d+)?(?=[ \\t]+\\p{L}[^\\n]*${ROW_CODE.source})`, "iu");
+  const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
+
+  function cleanAdditiveLine(line) {
+    const start = ROW_START.exec(line);
+    if (start) {
+      const prefix = line.slice(0, start.index).trim();
+      return prefix && /[-:.]$/.test(prefix) && !ROW_HEADING_WORDS.test(prefix) ? line.slice(start.index) : line;
+    }
+    const compound = /(?:^|[.:][ \t]+)(\p{Lu}\p{L}+[ \t]+als[ \t]+\p{Lu}.*)$/u.exec(line);
+    if (compound && compound.index > 0) return compound[1];
+    // Nur die Kennnummer gehört zur Tabelle: „minen und Spurenelementen an (3b502)“.
+    const tail = new RegExp(String.raw`^([^\d()]*\p{L})[ \t]+(${ROW_CODE.source})$`, "iu").exec(line);
+    return tail && tail[1].trim().split(/\s+/).length >= 3 ? tail[2] : line;
+  }
+
+  function cleanAdditiveLines(evidence) {
+    return evidence.split("\n").map(cleanAdditiveLine).join("\n");
+  }
+
+  // Strukturierte Zusatzstoffzeilen: Menge, Einheit (null, wenn nicht gelesen), Name, Kennnummer. Eine Zeile zählt
+  // nur mit Kennnummer oder Stoffname. Die Kennnummer darf in der Folgezeile stehen („als Mangan-(II)-Oxid⏎(3b502)“).
+  function parseAdditiveRows(text) {
+    const rows = [];
+    const lines = String(text || "").split("\n").map(cleanAdditiveLine);
+    for (let i = 0; i < lines.length; i += 1) {
+      const start = ROW_START.exec(lines[i]);
+      if (!start) continue;
+      const withUnit = ROW_AMOUNT.exec(lines[i].slice(start.index));
+      const hasUnit = withUnit && withUnit.index === 0;
+      const number = (hasUnit ? withUnit[0] : start[0]).match(/^[\d.]*(?:,\d+)?/)[0];
+      const unit = hasUnit ? withUnit[0].slice(number.length).trim().replace(/^[I1l]\.[ \t]?E\./, "I.E.") : null;
+      const rest = lines[i].slice(start.index + (hasUnit ? withUnit[0].length : number.length)).trim();
+      let code = ROW_CODE.exec(rest);
+      if (!code && i + 1 < lines.length && !ROW_START.test(lines[i + 1])) code = ROW_CODE.exec(lines[i + 1]);
+      const name = rest.replace(ROW_CODE, "").replace(/[ \t,;:]+$/, "").trim();
+      if (!code && !/\p{L}{3,}/u.test(name)) continue;
+      rows.push({
+        amount: number, unit, name,
+        code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
+        line: lines[i],
+      });
+    }
+    return rows;
+  }
+
+  function additivesEvidence(rawText) {
+    // Vermischte Tabellenzeilen („Fütterungsempfehlung pro Tag: 90.000 …“) würden den Abschnitt vorzeitig beenden.
+    const text = cleanAdditiveLines(rawText);
     const sections = [];
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;
@@ -1341,7 +1398,7 @@ const Labeling = (() => {
     needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
     matchDietPurposeAnchor: text => dietPurposeMatch(text, DIET_PURPOSE_ANCHOR),
-    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
+    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH, parseAdditiveRows,
   };
 })();
 

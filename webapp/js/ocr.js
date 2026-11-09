@@ -219,6 +219,29 @@ const Ocr = (() => {
     [/\(3\s*2([6-9]\d{2}[a-z]{0,3})\)/gi, "(3a$1)"],
   ];
 
+  // Bekannte Kennnummern (aus zusatzstoffe.json), kleingeschrieben. Ohne Liste gilt nur die Regelkorrektur oben.
+  let knownAdditiveCodes = null;
+
+  function setAdditiveCodes(codes) {
+    const set = new Set();
+    for (const code of codes || []) {
+      const normalised = String(code || "").toLowerCase().replace(/\s+/g, "");
+      if (/^[1-4][a-z]\d{1,4}[a-z]{0,3}$/.test(normalised)) set.add(normalised);
+    }
+    knownAdditiveCodes = set.size ? set : null;
+  }
+
+  // Kennnummer in Klammern, die nicht bekannt ist: der Buchstabe nach der Gruppenziffer wird oft als Ziffer gelesen
+  // ((30502) statt (3b502)). Korrigiert wird nur, wenn genau ein Buchstabe eine bekannte Kennnummer ergibt.
+  function fixUnknownCodes(text) {
+    if (!knownAdditiveCodes) return text;
+    return text.replace(/\(([1-4])([0-9])(\d{2,3}[a-z]{0,3})\)/gi, (whole, group, second, rest) => {
+      if (knownAdditiveCodes.has(`${group}${second}${rest}`.toLowerCase())) return whole;
+      const hits = "abcdefg".split("").filter(letter => knownAdditiveCodes.has(`${group}${letter}${rest}`.toLowerCase()));
+      return hits.length === 1 ? `(${group}${hits[0]}${rest})` : whole;
+    });
+  }
+
   /**
    * Bereinigt rohen OCR-Text:
    *  - Zeilen mit weniger als zwei alphanumerischen Zeichen (reiner
@@ -241,10 +264,10 @@ const Ocr = (() => {
     for (const [pattern, replacement] of ADDITIVE_CODE_FIXES) {
       cleaned = cleaned.replace(pattern, replacement);
     }
-    return cleaned;
+    return fixUnknownCodes(cleaned);
   }
 
-  return { textFromResult, cleanText, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
