@@ -158,3 +158,52 @@ test("cleanText + Erkennung auf komplettem OCR-Rohtext", () => {
   assert.ok(det);
   assert.equal(det.feedType.id, "complementary_feed");
 });
+
+const LABEL_EVIDENCE_RULES = [
+  ["art17_001_complementary", "Tierart:", 0.7],
+  ["art17_003_complementary", "Zusammensetzung", 0.7],
+  ["art15_002", "AG ", 1],
+  ["art17_002_complementary", "Mindestens haltbar bis", 0.7],
+  ["art15_004", "Chargen", 0.7],
+].map(([id, patternValue, confidenceWeight]) => ({
+  id, severity: "critical",
+  patterns: (id === "art15_002" ? [patternValue, " KG", "Platz ", "Weg "] : [patternValue])
+    .map(patternValue => ({ patternValue, confidenceWeight, patternLanguage: "de", patternType: "keyword" })),
+}));
+
+function checkLabelEvidence(text) {
+  return Labeling.check(text, FEED_TYPES[1], LABEL_EVIDENCE_RULES).ruleResults;
+}
+
+test("Etikett für Wildvögel erkennt Tierkategorie und Zutaten mit konkretem Beleg", () => {
+  const results = checkLabelEvidence(
+    "Ergänzungsfuttermittel für alle Wildvögel.\nZusammensetzung: Getreide, Saaten, Nüsse. "
+    + "Mindestens haltbar bis/Chargen-Nr.: s.\nAufdruck. Convient toute Vannäg Ayx jncectes. Am Futterplatz achten. Nettomasse 1 kg.",
+  );
+  assert.equal(results[0].status, "found");
+  assert.equal(results[0].matchedText, "für alle Wildvögel");
+  assert.equal(results[1].status, "found");
+  assert.match(results[1].matchedText, /Getreide, Saaten/);
+  assert.equal(results[2].status, "missing");
+  for (const result of results.slice(3)) {
+    assert.equal(result.status, "probablyFound");
+    assert.match(result.note, /Aufdruck separat fotografieren/);
+  }
+});
+
+test("bloße Überschrift und Werbetext bestätigen keine Zutaten oder Tierkategorie", () => {
+  const results = checkLabelEvidence(
+    "Ganzjahresfütterung. Heimische Wildvögel besuchen den Futterplatz. "
+    + "Zusammensetzung: siehe Rückseite, Zusatzstoffe: keine Angabe.",
+  );
+  assert.equal(results[0].status, "missing");
+  assert.equal(results[1].status, "probablyFound");
+});
+
+
+test("Firmenkürzel und Straßenanschrift bleiben als konkrete Angaben erkennbar", () => {
+  for (const address of ["Beispielfirma AG, Berlin", "Beispielbetrieb, Marktplatz 2, Berlin"]) {
+    const results = checkLabelEvidence(`Ergänzungsfuttermittel für alle Wildvögel. ${address}`);
+    assert.equal(results[2].status, "found");
+  }
+});

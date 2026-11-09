@@ -237,7 +237,16 @@ const Labeling = (() => {
   }
 
   function keywordMatch(keyword, text, normText) {
-    const idx = normText.indexOf(normalizeText(keyword));
+    const normalized = normalizeText(keyword);
+    const term = keyword.trim();
+    let idx;
+    if (/^(?:AG|KG|OHG)$/.test(term)) {
+      idx = text.search(new RegExp(`\\b${term}\\b`));
+    } else if (/^(?:Weg|Platz)$/.test(term)) {
+      idx = normText.search(new RegExp(`${term.toLowerCase()}[ \\t]+\\d+\\b`));
+    } else {
+      idx = normText.indexOf(normalized);
+    }
     if (idx < 0) return null;
     // Snippet um den Treffer (auf dem Originaltext; Normalisierung ist längenerhaltend)
     const start = Math.max(0, idx - 20);
@@ -259,6 +268,16 @@ const Labeling = (() => {
     return keywordMatch(pattern.patternValue, text, normText);
   }
 
+  function structuredEvidence(ruleId, text) {
+    if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {
+      return text.match(/\bfür\s+(?:alle\s+)?Wildvögel\b/i)?.[0] ?? null;
+    }
+    if (ruleId.startsWith("art17_003_")) {
+      return text.match(/\bZusammensetzung[ \t]*:\s*(?!(?:siehe|keine)\b|s\.)[\p{L}][^:;,\n]{1,55},\s*[\p{L}][^:;,\n]{1,45}/iu)?.[0] ?? null;
+    }
+    return null;
+  }
+
   function checkRule(rule, text, normText) {
     const positive = rule.patterns.filter(p => !p.isNegativePattern);
     const negative = rule.patterns.filter(p => p.isNegativePattern);
@@ -270,7 +289,8 @@ const Labeling = (() => {
 
     const hasNegativeMatch = negative.some(p => matchPattern(p, text, normText) !== null);
 
-    let best = null;
+    const evidence = structuredEvidence(rule.id, text);
+    let best = evidence ? { text: evidence, language: "de", weight: 1, languagePriority: 0 } : null;
     for (const p of positive) {
       const m = matchPattern(p, text, normText);
       if (m !== null) {
@@ -289,17 +309,20 @@ const Labeling = (() => {
     }
 
     if (!best) {
-      const note = rule.severity === "critical"
-        ? "Pflichtangabe wurde im Text nicht gefunden. Bitte Etikett manuell prüfen."
-        : "Angabe wurde im Text nicht gefunden. Bitte Etikett manuell prüfen.";
       return { rule, status: "missing", matchedText: null, matchedLanguage: null,
-               confidence: 0, note };
+               confidence: 0, note: "Im Prüftext nicht erkannt. Bitte Etikett manuell prüfen." };
     }
 
     const status = best.weight >= 0.85 ? "found" : "probablyFound";
     const notes = [];
     if (best.language !== "de") notes.push(`Hinweis wurde in ${languageName(best.language)} gefunden.`);
-    if (status === "probablyFound") notes.push("Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
+    if (status === "probablyFound") {
+      const imprint = (rule.id === "art15_004" || rule.id === "art16_002" || rule.id.startsWith("art17_002_"))
+        && /\b(?:mhd|mindestens\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer))(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i.test(text);
+      notes.push(imprint
+        ? "Verweis auf Aufdruck erkannt. Bitte Aufdruck separat fotografieren oder den Wert im Prüftext ergänzen."
+        : "Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
+    }
     return { rule, status, matchedText: best.text, matchedLanguage: best.language,
              confidence: best.weight, note: notes.join(" ") || null };
   }
