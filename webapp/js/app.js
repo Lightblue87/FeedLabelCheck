@@ -455,19 +455,34 @@
       return current;
     }
 
+    // Nur lokal geänderten Text speichern: Ein unberührter Tab darf beim Ausblenden, Wechseln oder
+    // "Neuer Check" nicht seinen (womöglich veralteten) Text über eine Korrektur aus einem anderen
+    // Tab schreiben. textVersion zählt lokale Änderungen, savedVersion den zuletzt gesicherten Stand.
+    let textVersion = 0;
+    let savedVersion = 0;
+    const markTextEdited = () => { textVersion++; };          // vor saveText() aufrufen
+    const markTextLoaded = () => { savedVersion = textVersion; }; // Text stammt aus dem Speicher
+
     function saveText() {
-      if (!history) return;
+      if (!history || textVersion === savedVersion) return;
       return enqueue(async () => {
         const text = textEl.value;
-        if (!current && !text.trim()) return;
+        const version = textVersion;          // beides im selben synchronen Schritt lesen
+        if (version === savedVersion) return;
+        if (!current && !text.trim()) { savedVersion = version; return; }
         await ensureEntry();
         const e = await history.update(current.id, { text });
         if (e) current = e;
+        savedVersion = Math.max(savedVersion, version);
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
     }
 
     let textTimer = null;
-    textEl.addEventListener("input", () => { clearTimeout(textTimer); textTimer = setTimeout(saveText, 400); });
+    textEl.addEventListener("input", () => {
+      markTextEdited();
+      clearTimeout(textTimer);
+      textTimer = setTimeout(saveText, 400);
+    });
     sel.addEventListener("change", () => {
       if (!history || !current) return;
       enqueue(async () => {
@@ -710,6 +725,7 @@
       current = e;
       rememberCurrent(id);
       textEl.value = e.text;
+      markTextLoaded();
       setFeedType(e.feedType);
       $("#l-result").hidden = true;
       $("#l-ocr-status").className = "ocr-status";
@@ -725,6 +741,7 @@
       current = null;
       rememberCurrent(null);
       textEl.value = "";
+      markTextLoaded();
       setFeedType("auto");
       $("#l-result").hidden = true;
       $("#l-ocr-status").className = "ocr-status";
@@ -765,6 +782,7 @@
       if (!history || !targetId || current?.id === targetId) {
         textEl.value = join(textEl.value);
         if (!viewer.hidden) $("#viewer-text").value = textEl.value;   // Betrachter ist gerade offen
+        markTextEdited();
         saveText();
         return true;
       }
@@ -823,6 +841,7 @@
     $("#l-clear").addEventListener("click", () => {
       textEl.value = "";
       $("#l-result").hidden = true;
+      markTextEdited();
       saveText();
       textEl.focus();
     });
