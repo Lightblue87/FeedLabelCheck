@@ -737,3 +737,41 @@ test("ein getrennt gedruckter Calciumgehalt bleibt eine zweifach gelesene Zusatz
   assert.equal(calcium.status, "probablyFound");
   assert.match(calcium.note, /Originaletikett/);
 });
+
+test("Phosphor und Rohprotein werden aus einem beschrifteten Abschnitt auf 12 % Feuchte umgerechnet", () => {
+  const text = "Diät-Alleinfuttermittel für Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n"
+    + "Analytische Bestandteile: Phosphor 0,12%, Rohproteln 6%, Feuchtegehalt 80%.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const calc = id => result.ruleResults.find(r => r.rule.id === `art18_renal_12pct_${id}`);
+  assert.equal(calc("phosphorus").status, "probablyFound");
+  assert.match(calc("phosphorus").matchedText, /^5,28 g\/kg/);
+  assert.match(calc("protein").matchedText, /^264 g\/kg/);
+  assert.equal(result.overallStatus, "unklar");
+  const at12 = Labeling.check(text.replace("80%", "12%"), FEED_TYPES[0], []);
+  assert.match(at12.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^1,2 g\/kg/);
+});
+
+test("Feuchteumrechnung bleibt bei widersprüchlicher oder nicht zuordenbarer Basis offen", () => {
+  const label = "Diät-Alleinfuttermittel für Hunde. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
+  for (const body of [
+    "Analytische Bestandteile: Phosphor 0,12%.",
+    "Analytische Bestandteile: Phosphor 0,12%, Feuchte 100%.",
+    "Analytische Bestandteile: Phosphor 0,12%, Feuchte 80%. Bezogen auf Trockenmasse.",
+    "Analytische Bestandteile: Phosphor 0,12%, Feuchte 80%. Basis: 12 % Feuchte.",
+    "Analytische Bestandteile: Phosphor 0,12%.\n\nAnalytical constituents: Moisture 80%.",
+    "Analytische Bestandteile: Phosphor 0,12%, Feuchte 80%.\n\nAnalytical constituents: Moisture 83%.",
+    "Analytische Bestandteile: Phosphor 1.200 mg/kg, Feuchte 80%.",
+    "Analytische Bestandteile: Phosphor 1200 mg/kg TM, Feuchte 80%.",
+  ]) {
+    const result = Labeling.check(label + body, FEED_TYPES[0], []);
+    assert.equal(result.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").status, "unclear", body);
+  }
+});
+
+test("Ein Calciumhinweis stimmt mit derselben Menge in einer anderen Einheit überein", () => {
+  const label = "Diät-Alleinfuttermittel für Hunde. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
+  const status = value => Labeling.check(label + `Analytische Bestandteile: Calcium ${value}.\n\nOCR-Nachprüfung Calcium: 0,18 %`,
+    FEED_TYPES[0], []).ruleResults.find(r => r.rule.id === "art18_renal_calcium").status;
+  assert.equal(status("1,8 g/kg"), "found");
+  assert.equal(status("0,16 %"), "unclear");
+});

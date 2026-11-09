@@ -618,7 +618,7 @@ const Labeling = (() => {
     const sections = analyticalSections(text);
     return sections.some(section => /\bCalci-[ \t]*\n/i.test(section)
       && section.split("\n").some(line => SPLIT_CALCIUM_LINE.test(line)))
-      && analyticalMineral(sections, "Calcium|Kalzium").length === 0;
+      && analyticalAmounts(sections, "Calcium|Kalzium").length === 0;
   }
 
   function matchingSplitCalcium(first, second) {
@@ -644,22 +644,55 @@ const Labeling = (() => {
     };
   }
 
-  function analyticalMineral(sections, names) {
-    const massUnit = String.raw`(?:%|(?:mg|g)[ \t]*\/[ \t]*kg\b)`;
+  function analyticalAmounts(sections, names) {
+    const massUnit = String.raw`(?:%(?![\p{L}\p{N}/])|(?:mg|g)[ \t]*\/[ \t]*kg\b)`;
     const value = String.raw`(${DECIMAL})[ \t]*(${massUnit})`;
-    const named = new RegExp(String.raw`\b(?:${names})\b[ \t:;=]*${value}`, "gi");
-    const preceding = new RegExp(String.raw`(?:^|[,;][ \t]+)\s*(${value}[ \t]+(?:${names})\b)(?![ \t:;=]*\d)`, "gim");
+    const named = new RegExp(String.raw`\b(?:${names})\b[ \t:;=]*${value}`, "giu");
+    const preceding = new RegExp(String.raw`(?:^|[,;][ \t]+)\s*(${value}[ \t]+(?:${names})\b)(?![ \t:;=]*\d)`, "gimu");
     const matches = new Map();
     for (const section of sections) {
       const direct = [...section.matchAll(named)];
       const values = direct.length ? direct : [...section.matchAll(preceding)].map(match => match.slice(1));
       for (const [evidence, amount, unit] of values) {
-        const gramsPerKg = amountNumber(amount) * (unit === "%" ? 10 : /^mg/i.test(unit) ? 0.001 : 1);
-        const key = gramsPerKg.toPrecision(12);
-        if (!matches.has(key)) matches.set(key, evidence);
+        const ambiguousDecimal = /^[1-9]\d*\.\d{3}$/.test(amount);
+        const gramsPerKg = ambiguousDecimal ? null : amountNumber(amount) * (unit === "%" ? 10 : /^mg/i.test(unit) ? 0.001 : 1);
+        const key = gramsPerKg === null ? evidence : gramsPerKg.toPrecision(12);
+        if (!matches.has(key)) matches.set(key, { evidence, gramsPerKg });
       }
     }
     return [...matches.values()];
+  }
+
+  const ALTERNATE_ANALYSIS_BASIS = /\b(?:Trockenmasse|Trockensubstanz|dry matter)\b|(?:%|\b(?:mg|g)\s*\/\s*kg)\s+(?:TS|TM|DM)\b|\b(?:bezogen auf|normiert auf|bei|based on|at|Basis:)\s*\d+(?:[,.]\d+)?\s*%\s*(?:Feuchte(?:gehalt)?|Feuchtigkeit(?:sgehalt)?|moisture|water content)\b/i;
+  const PHOSPHOR_NAMES = "Phosphor|phosphorus|phosphore";
+  const CRUDE_PROTEIN_NAMES = "Rohprotein|Rohproteln|crude protein";
+  const formatDietNumber = value => value.toLocaleString("de-DE", { maximumFractionDigits: 3, useGrouping: false });
+
+  function dietAmountsAt12Percent(text, sections, legalBasis) {
+    const ruleSource = `${legalBasis} · VO (EG) Nr. 152/2009, Anhang III`;
+    const fields = [
+      ["phosphorus", "Phosphor", PHOSPHOR_NAMES],
+      ["protein", "Rohprotein", CRUDE_PROTEIN_NAMES],
+    ];
+    const moistureValues = new Set(sections.flatMap(declaredMoisture)
+      .map(evidence => amountNumber(evidence.match(/\d+(?:[,.]\d+)?(?=[ \t|]*%)/)[0])));
+    const [moisture] = moistureValues;
+    const ordinaryBasis = !ALTERNATE_ANALYSIS_BASIS.test(text);
+    return fields.map(([id, title, names]) => {
+      const values = analyticalAmounts(sections, names);
+      const value = values.length === 1 ? values[0] : null;
+      // Feuchte und Gehalt müssen aus demselben beschrifteten Analyseabschnitt stammen.
+      const sameSection = sections.some(section =>
+        declaredMoisture(section).length === 1 && analyticalAmounts([section], names).length === 1);
+      const canConvert = ordinaryBasis && moistureValues.size === 1 && moisture >= 0 && moisture < 100
+        && value?.gramsPerKg != null && value.gramsPerKg <= (100 - moisture) * 10 && sameSection;
+      const result = canConvert ? formatDietNumber(value.gramsPerKg * 88 / (100 - moisture)) : null;
+      return dietField(`art18_renal_12pct_${id}`, `${title} rechnerisch bei 12 % Feuchte`, ruleSource,
+        result === null ? null : `${result} g/kg (aus „${value.evidence}“ und ${formatDietNumber(moisture)} % Feuchte)`,
+        result === null ? "Feuchte, Gehalt oder Bezugsbasis im selben Analyseabschnitt nicht eindeutig."
+          : "Berechnet aus den Etikettangaben. Ausgangswerte und Bezugsbasis am Original prüfen. Die zutreffende Variante in Eintrag 10 ist fachlich zu klären.",
+        result === null ? "unclear" : "probablyFound");
+    });
   }
 
   function renalDietFields(text, legalBasis) {
@@ -678,26 +711,34 @@ const Labeling = (() => {
     }
     const minerals = [
       ["calcium", "Calcium", "Calcium|Kalzium"],
-      ["phosphor", "Phosphor", "Phosphor|phosphorus|phosphore"],
+      ["phosphor", "Phosphor", PHOSPHOR_NAMES],
       ["kalium", "Kalium", "Kalium|potassium"],
       ["natrium", "Natrium", "Natrium|sodium"],
     ].map(([id, label, names]) => {
-      const values = analyticalMineral(sections, names);
-      if (id === "calcium" && !values.length && calciumHints.size) {
-        return dietField("art18_renal_calcium", label, legalBasis, [...calciumHints.values()].join(" / "),
-          calciumHints.size === 1 ? "Zusatzlesung eines getrennt gedruckten Gehalts. Bitte am Originaletikett bestätigen."
-            : "Widersprüchliche Zusatzlesungen. Bitte am Originaletikett prüfen.",
-          calciumHints.size === 1 ? "probablyFound" : "unclear");
+      const values = analyticalAmounts(sections, names);
+      if (id === "calcium" && calciumHints.size) {
+        const conflicting = calciumHints.size > 1 || (values.length > 0
+          && [...calciumHints.keys()].some(hint => values.some(value => value.gramsPerKg === null || Math.abs(value.gramsPerKg - hint * 10) > 1e-8)));
+        if (conflicting || !values.length) {
+          const evidence = [...values.map(value => value.evidence), ...calciumHints.values()];
+          return dietField("art18_renal_calcium", label, legalBasis, evidence.join(" / "),
+            conflicting ? "Widersprüchliche Zusatzlesungen. Bitte am Originaletikett prüfen."
+              : "Zusatzlesung eines getrennt gedruckten Gehalts. Bitte am Originaletikett bestätigen.",
+            conflicting ? "unclear" : "probablyFound");
+        }
       }
-      return dietField(`art18_renal_${id}`, label, legalBasis, values.join(" / "), values.length > 1
-        ? "Widersprüchliche Gehalte im Prüftext. Bitte Originaletikett prüfen."
-        : "Kein eindeutig zugeordneter Gehalt unter den analytischen Bestandteilen erkannt.",
-      values.length === 1 ? "found" : "unclear");
+      const ambiguous = values.some(value => value.gramsPerKg === null);
+      return dietField(`art18_renal_${id}`, label, legalBasis, values.map(value => value.evidence).join(" / "),
+        values.length > 1 ? "Widersprüchliche Gehalte im Prüftext. Bitte Originaletikett prüfen."
+          : ambiguous ? "Dezimal- oder Tausendertrennzeichen im Prüftext nicht eindeutig."
+          : "Kein eindeutig zugeordneter Gehalt unter den analytischen Bestandteilen erkannt.",
+        values.length === 1 && !ambiguous ? "found" : "unclear");
     });
     return [
       dietField("art18_renal_protein", "Proteinquellen", legalBasis, sourceEvidence,
         "Keine ausdrücklich genannten Proteinquellen im Prüftext erkannt."),
       ...minerals,
+      ...dietAmountsAt12Percent(text, sections, legalBasis),
       dietField("art18_renal_water", "Hinweis zur freien Wasseraufnahme", legalBasis, water,
         "Kein eindeutiger Hinweis zur freien Wasseraufnahme im Prüftext erkannt."),
     ];
