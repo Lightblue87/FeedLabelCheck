@@ -739,6 +739,18 @@ const Labeling = (() => {
     STRUVITE_DISSOLUTION,
     STRUVITE_RECURRENCE,
   ];
+  function dietPurposeMatch(text, pattern) {
+    for (const match of text.matchAll(new RegExp(pattern.source, pattern.flags + "g"))) {
+      const before = text.slice(Math.max(0, match.index - 50), match.index).split(/\n[ \t]*\n/).pop();
+      const end = match.index + match[0].length;
+      const after = text.slice(end, end + 28).split(/\n[ \t]*\n/, 1)[0];
+      if (/\b(?:nicht|not|never)(?:\s+(?:zur|zum|für|for|intended|geeignet|suitable))*\s*$/i.test(before)
+          || /^\s*(?:nicht\s+geeignet|ungeeignet|not\s+suitable|not\s+intended)\b/i.test(after)) continue;
+      return match;
+    }
+    return null;
+  }
+
   const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
   const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "gi");
   const DIET_DURATION_FOLLOWUP = /\b(?:wenn\s+(?:die\s+)?Anzeichen\s+von\s+Intoleranzen\s+verschwinden|if\s+signs\s+of\s+intolerance\s+disappear)\b[^.!?;]{0,125}?\b(?:bis\s+zu\s+(?:einem|1)\s+Jahr|up\s+to\s+(?:one|1)\s+year)\b|\b(?:bei\s+chronischer\s+Insuffizienz\s+der\s+Bauchspeicheldrüse|in\s+case\s+of\s+chronic\s+pancreatic\s+insufficiency)\s*[, ]*\s*(?:lebenslang|for\s+life)\b/gi;
@@ -748,7 +760,7 @@ const Labeling = (() => {
   const DIET_PURPOSE_ANCHOR = /\b(?:Zur[ \t]+Unterstützung[ \t]+der[ \t]+Nierenfunktion|Zum[ \t]+Ausgleich[ \t]+unzureichender[ \t]+Verdauung|Zur[ \t]+Auflösung[ \t]+von[ \t]+Struvitsteinen|Zur[ \t]+Verringerung[ \t]+von[ \t]+Struvitsteinrezidiven)\b/i;
 
   function needsDietDeclaration(text) {
-    return !text.match(DIET_DECLARATION) && DIET_PURPOSE_ANCHOR.test(text);
+    return !text.match(DIET_DECLARATION) && !!dietPurposeMatch(text, DIET_PURPOSE_ANCHOR);
   }
 
   function dietDeclarationHint(text) {
@@ -760,8 +772,8 @@ const Labeling = (() => {
   }
 
   function dietPurposeHint(text, primary) {
-    return DIET_PURPOSES.filter(pattern => !pattern.test(primary))
-      .map(pattern => text.match(pattern)?.[0].replace(/\s+/g, " "))
+    return DIET_PURPOSES.filter(pattern => !dietPurposeMatch(primary, pattern))
+      .map(pattern => dietPurposeMatch(text, pattern)?.[0].replace(/\s+/g, " "))
       .filter(Boolean).join(" / ");
   }
 
@@ -773,7 +785,7 @@ const Labeling = (() => {
   const CALCIUM_LINE_VALUE = new RegExp(String.raw`^(?:[\p{L}\p{P}]{1,4}\s+)?(${DECIMAL})[ \t]*%[ \t]*[,;]?[ \t]*Phosphor[ \t:]+(${DECIMAL})[ \t]*%`, "iu");
 
   function needsSplitCalcium(text) {
-    if (!text.match(DIET_DECLARATION) || !RENAL_PURPOSE.test(text)) return false;
+    if (!text.match(DIET_DECLARATION) || !dietPurposeMatch(text, RENAL_PURPOSE)) return false;
     const sections = analyticalSections(text);
     return sections.some(section => /\bCalci-[ \t]*\n/i.test(section)
       && section.split("\n").some(line => SPLIT_CALCIUM_LINE.test(line)))
@@ -961,14 +973,18 @@ const Labeling = (() => {
   function dietRuleResults(text) {
     const article = "Art. 18 VO (EG) Nr. 767/2009";
     const annex = "Anhang Teil B VO (EU) 2020/354";
-    const purposes = DIET_PURPOSES.map(pattern => text.match(pattern)?.[0].replace(/\s+/g, " ")).filter(Boolean);
+    const purposes = new Map();
+    for (const pattern of DIET_PURPOSES) {
+      const match = dietPurposeMatch(text, pattern);
+      if (match) purposes.set(pattern, match[0].replace(/\s+/g, " "));
+    }
     const dogOrCat = [...text.matchAll(DIET_DECLARATION)].some(match =>
       DIET_SPECIES.test(text.slice(match.index + match[0].length, match.index + match[0].length + 80)));
-    const renal = dogOrCat && RENAL_PURPOSE.test(text);
-    const digestion = dogOrCat && DIGESTION_PURPOSE.test(text);
-    const dissolution = dogOrCat && STRUVITE_DISSOLUTION.test(text);
-    const recurrence = dogOrCat && STRUVITE_RECURRENCE.test(text);
-    const intolerance = dogOrCat && INTOLERANCE_PURPOSE.test(text);
+    const renal = dogOrCat && purposes.has(RENAL_PURPOSE);
+    const digestion = dogOrCat && purposes.has(DIGESTION_PURPOSE);
+    const dissolution = dogOrCat && purposes.has(STRUVITE_DISSOLUTION);
+    const recurrence = dogOrCat && purposes.has(STRUVITE_RECURRENCE);
+    const intolerance = dogOrCat && purposes.has(INTOLERANCE_PURPOSE);
     const extendedAdvice = renal || dissolution || recurrence || intolerance;
     const durations = [...new Set([...text.matchAll(DIET_DURATION), ...text.matchAll(DIET_DURATION_FOLLOWUP)]
       .sort((a, b) => a.index - b.index)
@@ -996,7 +1012,7 @@ const Labeling = (() => {
     }
     return [
       dietField("art18_purpose", "Besonderer Ernährungszweck", `${article} Buchst. b · ${annex}`,
-        purposes.join(" / "), "Kein Ernährungszweck aus der hinterlegten Liste im Prüftext erkannt. Bitte Deklaration am Etikett prüfen."),
+        [...purposes.values()].join(" / "), "Kein Ernährungszweck aus der hinterlegten Liste im Prüftext erkannt. Bitte Deklaration am Etikett prüfen."),
       dietField("art18_duration", "Empfohlene Fütterungsdauer", `${article} Buchst. b · ${annex}`,
         durations.join(" / "), durations.length > 1 ? "Mehrere Zeitangaben erkannt. Bedingungen und Zuordnung zum Ernährungszweck prüfen."
           : "Keine zuordenbare Fütterungsdauer im Prüftext erkannt.",
@@ -1046,7 +1062,7 @@ const Labeling = (() => {
     needsMoistureCrop: text => declaredMoisture(text).length === 1, moistureCropHint,
     needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
-    matchDietPurposeAnchor: text => text.match(DIET_PURPOSE_ANCHOR),
+    matchDietPurposeAnchor: text => dietPurposeMatch(text, DIET_PURPOSE_ANCHOR),
     needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
   };
 })();

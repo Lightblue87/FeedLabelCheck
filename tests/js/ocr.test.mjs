@@ -943,3 +943,14 @@ test("eine separat gedruckte metrische Nettomenge ist aus dem englischen Doppela
   assert.equal(Labeling.declaredNetAmount("Net Weight 50 lb (32.67 kg)"), null);
   assert.equal(Labeling.declaredNetAmount("50 lb (22.67 kg)"), null);
 });
+
+test("ausgeschlossene Ernährungszwecke lösen keine zweckbezogene Prüfung aus", () => {
+  const text = "Diät-Alleinfuttermittel für Hunde. Nicht zur\nAuflösung von Struvitsteinen. "
+    + "Zur Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const purpose = result.ruleResults.find(r => r.rule.id === "art18_purpose");
+  assert.match(purpose.matchedText, /Nierenfunktion/);
+  assert.doesNotMatch(purpose.matchedText, /Struvit/);
+  assert.ok(!result.ruleResults.some(r => r.rule.id.startsWith("art18_struvite_")));
+  assert.equal(Labeling.needsDietDeclaration("Nicht zur Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz."), false);
+});
