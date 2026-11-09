@@ -488,10 +488,15 @@ const Labeling = (() => {
     return compositionEvidence(text) ?? "";
   }
 
+  const POSTAL_CITY = String.raw`\d{5}[ \t]+[A-ZÄÖÜ][\p{L}-]{2,}(?![\p{L}\p{N}/])`;
+  const POSTAL_STREET = String.raw`(?:\p{L}[\p{L}-]*(?:straße|strasse|str\.|weg|platz|allee|gasse|ring|damm|ufer|chaussee|hof|stieg|pfad)|(?:Am|An|Im|Zum|Zur|Auf)[ \t]+(?:(?:der|dem|den)[ \t]+)?\p{Lu}\p{L}+|\b(?:rue|avenue)\b[^,\n]{2,55})`;
+  const POSTAL_COMPANY_LABEL = String.raw`\b(?:Hersteller|Vertrieb(?:[ \t]+durch)?|Inverkehrbringer|Importeur|Hergestellt[ \t]+(?:von|für)|Verantwortlich\p{L}*)\b[^\n]{0,80}?[ \t,]`;
+  const POSTAL_ADDRESS = new RegExp(String.raw`(?:\b(?:DE?|FR?|AT|PL|NL|BE|CH)[ -]+|\b${POSTAL_STREET}[ \t]+\d+[a-z]?[ \t]*,?[ \t]+|${POSTAL_COMPANY_LABEL})${POSTAL_CITY}`, "u");
+
   function postalAddressEvidence(text) {
     // Eine PLZ braucht erkennbaren Adresskontext. Ein Zahlenwert vor einer Einheit oder
     // Zutatenbezeichnung kann sonst wie eine PLZ aussehen.
-    return text.match(/(?:\b(?:DE?|FR?|AT|PL|NL|BE|CH)[ -]+|(?:\b\p{L}[\p{L}-]*(?:straße|str\.|weg|platz)|\b(?:rue|avenue)\b[^,\n]{2,55})[ \t]+\d+[a-z]?[ \t]*,?[ \t]+)\d{5}[ \t]+[A-ZÄÖÜ][\p{L}-]{2,}(?![\p{L}\p{N}/])/u)?.[0] ?? null;
+    return text.match(POSTAL_ADDRESS)?.[0] ?? null;
   }
 
   function structuredEvidence(ruleId, text) {
@@ -855,7 +860,7 @@ const Labeling = (() => {
     ["chlorid", "Chlorid", "Chloride?|chlorures?"],
     ["schwefel", "Schwefel", "Schwefel|sul(?:f|ph)ur|soufre"],
   ];
-  const FREE_WATER = /\bWasser\s+zur\s+freien\s+Aufnahme\s+anbieten\b|\b(?:fresh\s+)?water\s+should\s+be\s+available\s+at\s+all\s+times\b/i;
+  const FREE_WATER = /\bWasser\s+zur\s+freien\s+Aufnahme\s+anbieten\b|\b(?:frisches\s+)?(?:Trink)?wasser\s+(?:sollte\s+|muss\s+|soll\s+|steht\s+|stehen\s+)?(?:stets\s+|jederzeit\s+|immer\s+|ständig\s+)?(?:frisch\s+)?(?:zur\s+(?:freien\s+)?Verfügung(?:\s+stehen)?|verfügbar(?:\s+sein)?)\b|\b(?:fresh\s+)?water\s+should\s+be\s+available\s+at\s+all\s+times\b/i;
   const formatDietNumber = value => value.toLocaleString("de-DE", { maximumFractionDigits: 3, useGrouping: false });
 
   function dietAmountsAt12Percent(text, sections, legalBasis, prefix, fields) {

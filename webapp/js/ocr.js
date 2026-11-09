@@ -108,8 +108,12 @@ const Ocr = (() => {
     return data.confidence < 50 && orientationScore(data) < 12;
   }
 
+  // Kurze Etikettenausschnitte liefern auch aufrecht nur wenige sichere Wörter. Dort genügt eine
+  // deutliche relative Verbesserung, sofern die Drehung selbst brauchbaren Text liefert.
   function isBetterOrientation(candidate, original) {
-    return orientationScore(candidate) >= orientationScore(original) + 12;
+    const c = orientationScore(candidate);
+    const o = orientationScore(original);
+    return c >= o + 12 || (c >= 6 && c >= o * 3 + 4);
   }
 
   // Zusatzstoff-Codes wie (3a671) liest die OCR oft falsch:

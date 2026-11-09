@@ -510,7 +510,7 @@ test("englischer Hinweis auf eine spätere Milchfütterung belegt die Futtermitt
   assert.equal(check("Calf milk replacer for calves\nFollow the directions on this label.").status, "found");
 });
 
-test("schwacher OCR-Text erlaubt eine Drehung, eine bessere Drehung braucht zwölf sichere Wörter mehr", () => {
+test("schwacher OCR-Text erlaubt eine Drehung, eine bessere Drehung braucht deutlich mehr sichere Wörter", () => {
   const word = ["Futtermittel", 85];
   const makeResult = (count, confidence) => ({
     ...fakeResult([Array.from({ length: count }, () => word)]), confidence,
@@ -519,8 +519,13 @@ test("schwacher OCR-Text erlaubt eine Drehung, eine bessere Drehung braucht zwö
   assert.equal(Ocr.needsOrientationCheck(sideways), true);
   assert.equal(Ocr.needsOrientationCheck(makeResult(25, 35)), false);
   assert.equal(Ocr.needsOrientationCheck(makeResult(5, 62)), false);
-  assert.equal(Ocr.isBetterOrientation(makeResult(12, 37), sideways), false);
   assert.equal(Ocr.isBetterOrientation(makeResult(13, 45), sideways), true);
+  // kurzer Etikettenausschnitt: relative Verbesserung genügt, aber nur mit brauchbarem Text
+  assert.equal(Ocr.isBetterOrientation(makeResult(10, 70), makeResult(0, 30)), true);
+  assert.equal(Ocr.isBetterOrientation(makeResult(6, 70), makeResult(0, 30)), true);
+  assert.equal(Ocr.isBetterOrientation(makeResult(5, 70), makeResult(0, 30)), false);
+  assert.equal(Ocr.isBetterOrientation(makeResult(10, 70), makeResult(4, 40)), false);
+  assert.equal(Ocr.isBetterOrientation(makeResult(16, 70), makeResult(4, 40)), true);
 });
 
 test("eigenständige Zutatenüberschriften funktionieren ohne Doppelpunkt und auf Englisch", () => {
@@ -649,6 +654,33 @@ test("Produktnamen und Nierenwerbung lösen keine Diätfutter-Prüfung aus", () 
   const text = "Alleinfuttermittel für Katzen. Veterinary Diet – Renal. Unterstützt die Nierenfunktion.";
   assert.equal(Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id, "complete_feed");
   assert.equal(Labeling.check(text, FEED_TYPES[0], []).dietary, false);
+});
+
+test("Herstelleranschrift mit gängigen Straßenformen bleibt ein Firmenbeleg", () => {
+  const legacy = String.raw`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b`;
+  for (const id of ["art15_002", "art17_005_complete"]) {
+    const check = text => checkNumericLabelRule(id, `Alleinfuttermittel für Legehennen.\n${text}`, legacy);
+    for (const address of ["Hersteller: Geflügelfutter eG, Am Markt 3, 31000 Hildesheim", "Salinenallee 4, 74000 Heilbronn",
+                           "Vertrieb: Futterhof OHG, Dorfring 2, 50000 Köln", "Im Gewerbepark 7, 90000 Nürnberg",
+                           "Hersteller: Muster, 12345 Musterstadt"]) {
+      assert.equal(check(address).status, "found", address);
+    }
+    // weiterhin kein Firmenbeleg ohne Adresskontext
+    assert.equal(check("Zusatzstoffe je kg: 18568 Klinoptylolit, 17000 IE").status, "missing");
+    assert.equal(check("Hersteller:\nZusammensetzung: 12345 Hafer").status, "missing");
+  }
+});
+
+test("Hinweis zur freien Wasseraufnahme erkennt gängige Formulierungen", () => {
+  const text = water => `Diät-Alleinfuttermittel für ausgewachsene Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n${water}`;
+  const status = water => Labeling.check(text(water), FEED_TYPES[0], []).ruleResults.find(r => r.rule.id === "art18_renal_water").status;
+  for (const water of ["Frisches Wasser steht stets zur freien Verfügung.", "Frisches Trinkwasser sollte jederzeit zur Verfügung stehen.",
+                       "Wasser sollte stets frisch zur freien Verfügung stehen.", "Wasser zur freien Aufnahme anbieten."]) {
+    assert.equal(status(water), "found", water);
+  }
+  for (const water of ["Mit Wasser mischen.", "Das Wasser aus der Dose abgießen und zur Verfügung stellen.", "Nicht in Wasser einweichen."]) {
+    assert.notEqual(status(water), "found", water);
+  }
 });
 
 test("Nierendiät zeigt Proteinquellen, zugeordnete Mineralstoffgehalte und Wasserhinweis", () => {
