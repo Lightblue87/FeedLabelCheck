@@ -847,6 +847,15 @@ test("Diätzwecke Eintrag 72 und 55 für Kälber werden erkannt und zweckbezogen
   const withHint = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.\nDarmflorastabilisatoren: 1 x 10^9 KBE Stamm X\n"
     + "Bei Gefahr von, während oder nach Verdauungsstörungen.", FEED_TYPES[1], []);
   assert.equal(field(withHint, "risk_hint").status, "found");
+  // Name oder Menge allein genügen nicht
+  const stabiliser = body => field(Labeling.check(`Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.\n${body}`, FEED_TYPES[1], []), "stabiliser");
+  for (const body of ["Darmflorastabilisatoren: Enterococcus faecium (KBE)", "Darmflorastabilisatoren: 100 KBE", "Darmflorastabilisatoren: Enterococcus faecium NCIMB 11181",
+                      "Darmflorastabilisatoren:\n\n1 x 10^9 KBE Enterococcus faecium"]) {
+    assert.equal(stabiliser(body).status, "unclear", body);
+  }
+  assert.match(stabiliser("Darmflorastabilisatoren: 100 KBE").note, /Bezeichnung/);
+  assert.equal(stabiliser("Darmflorastabilisatoren: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg").status, "found");
+  assert.equal(stabiliser("Darmflorastabilisatoren:\n1 x 10° KBE Enterococcus faecium").status, "found");
   // ohne ausgewiesenen Stabilisator bleibt das Feld offen
   const noStabiliser = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.", FEED_TYPES[1], []);
   assert.equal(field(noStabiliser, "stabiliser").status, "unclear");

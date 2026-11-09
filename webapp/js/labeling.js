@@ -1072,6 +1072,26 @@ const Labeling = (() => {
     ];
   }
 
+  // Eintrag 72 verlangt Bezeichnung UND zugesetzte Menge des Darmflorastabilisators. Beides muss im
+  // Abschnitt unter der Überschrift stehen; fehlt eines, bleibt das Feld unklar (mit dem erkannten Teil als Beleg).
+  const STABILISER_SECTION = /\bDarmflorastabilisatoren?[ \t]*:[ \t]*(?:\n(?![ \t]*\n))?[^\n]*(?:\n(?![ \t]*\n)[^\n]*)?/i;
+  const STABILISER_AMOUNT = /\d[\d.,]*(?:[ \t]*[x×*][ \t]*10[ \t]*[\^⁰¹²³⁴⁵⁶⁷⁸⁹°º]?[ \t]*\d*)?[ \t]*(?:KBE|CFU)\b/i;
+  const STABILISER_NAME = /\b[A-Z][a-z]{3,}[ \t]+[a-z]{4,}\b|\b4b\d{3,4}[a-z]?\b/;
+  function stabiliserField(text, source) {
+    const label = "Darmflorastabilisator mit Bezeichnung und zugesetzter Menge";
+    const section = text.match(STABILISER_SECTION)?.[0]?.replace(/\s+/g, " ").trim();
+    const hasAmount = section ? STABILISER_AMOUNT.test(section) : false;
+    const hasName = section ? STABILISER_NAME.test(section) : false;
+    if (hasAmount && hasName) {
+      return dietField("art18_stabiliser", label, source, section,
+        "Zulassung des Stabilisators für die Tierart und die Menge am Etikett prüfen.");
+    }
+    return dietField("art18_stabiliser", label, source, section || null,
+      section ? `${hasName ? "Die zugesetzte Menge" : hasAmount ? "Die Bezeichnung" : "Bezeichnung und Menge"} des Darmflorastabilisators wurde im Prüftext nicht erkannt. Bitte am Etikett prüfen.`
+        : "Bezeichnung und zugesetzte Menge des Darmflorastabilisators wurden im Prüftext nicht erkannt. Bitte am Etikett prüfen.",
+      "unclear");
+  }
+
   function dietRuleResults(text) {
     const article = "Art. 18 VO (EG) Nr. 767/2009";
     const annex = "Anhang Teil B VO (EU) 2020/354";
@@ -1110,9 +1130,7 @@ const Labeling = (() => {
     if (purposes.has(STABILISATION_PURPOSE)) {
       const source = `${annex}, Eintrag 72`;
       extra.push(
-        dietField("art18_stabiliser", "Darmflorastabilisator mit Bezeichnung und zugesetzter Menge", source,
-          text.match(/\bDarmflorastabilisatoren?[ \t]*:[ \t]*\n?[^\n]*(?:KBE|CFU)[^\n]*/i)?.[0]?.replace(/\s+/g, " "),
-          "Bezeichnung und zugesetzte Menge des Darmflorastabilisators sowie dessen Zulassung für die Tierart am Etikett prüfen."),
+        stabiliserField(text, source),
         dietField("art18_risk_hint", "Hinweis „Bei Gefahr von, während oder nach Verdauungsstörungen“", source,
           text.match(/\bBei\s+Gefahr\s+von,?\s+während\s+oder\s+nach\s+Verdauungsstörungen\b/i)?.[0]?.replace(/\s+/g, " "),
           "Der vorgeschriebene Hinweis wurde im Prüftext nicht erkannt. Bitte am Etikett prüfen."),
