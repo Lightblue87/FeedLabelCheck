@@ -567,3 +567,42 @@ test("abweichende Feuchtewerte auf mehrsprachigen Ansichten bleiben unklar", () 
   assert.match(result.matchedText, /63,0%.*83,0%/);
   assert.equal(check("Alleinfuttermittel für Katzen. Feuchtigkeit: 83,0%.\nHumidité: 83 %").status, "found");
 });
+
+test("Mineralfutter ist auch mit polnischer Deklaration erkennbar", () => {
+  const text = "BESTERMINE BIOCOMPLEX WRC\nMieszanka paszowa mineralna dla krów mlecznych\nStosowanie 1,00 % w mieszance paszowej pełnoporcjowej";
+  assert.equal(Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id, "mineral_feed");
+  const result = checkNumericLabelRule("art15_001", text, "Mineralfuttermittel", "keyword", 0.7);
+  assert.equal(result.status, "found");
+  assert.equal(result.matchedText, "Mieszanka paszowa mineralna");
+});
+
+test("Nährwert und Zutaten tragen ohne Adresskontext keinen Firmenbeleg", () => {
+  const legacy = String.raw`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b`;
+  for (const id of ["art15_002", "art17_005_complete"]) {
+    const check = text => checkNumericLabelRule(id, text, legacy);
+    assert.equal(check("Zusatzstoffe je kg: Vitamin A 17000 IE/kg, 18568 Klinoptylolit, 40 mg.").status, "missing");
+    assert.equal(check("Artikelnummer: 18723\nAnimal feed for cattle. Anwendung: täglich.").status, "missing");
+    assert.equal(check("Alleinfuttermittel für Fische. Kontakt: Fischweg 12, 49808 Lingen.").status, "found");
+    assert.equal(check("Alleinfuttermittel für Wasserschildkröten. F 68000 Colmar.").matchedText, "F 68000 Colmar");
+  }
+  assert.equal(checkNumericLabelRule("art15_002", "COMPOSITION: EACH KG CONTAINS VITAMIN A.", " KG", "keyword", 1).status, "missing");
+});
+
+test("Alleinfutter und Zielgruppe auf dem Schildkrötenetikett sind eigenständige Belege", () => {
+  const text = "Alleinfutter für Wasserschildkröten und Echsen – Gebrauchsanweisung: täglich sparsam füttern.";
+  assert.equal(checkNumericLabelRule("art15_001", text, "Alleinfuttermittel", "keyword", 0.7).matchedText, "Alleinfutter für");
+  assert.equal(checkNumericLabelRule("art17_001_complete", text, "Tierart", "keyword", 0.7).matchedText, "für Wasserschildkröten und Echsen");
+});
+
+test("Verweise auf Stempel und Behälterboden bleiben Hinweise zur Nachaufnahme", () => {
+  for (const [stamp, location] of [
+    ["Chargennr.: siehe Stempel", "Stempel"],
+    ["Mindestens haltbar bis, Charge: Siehe Behälterboden", "Behälterboden"],
+  ]) {
+    const text = `Ergänzungsfuttermittel für Pferde. ${stamp}.`;
+    const result = checkNumericLabelRule("art15_004", text, "Charge", "keyword", 0.7);
+    assert.equal(result.status, "probablyFound");
+    assert.ok(result.note.includes(`${location} separat fotografieren`));
+    assert.equal(Labeling.needsImprintLot(text), false);
+  }
+});
