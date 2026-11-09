@@ -170,6 +170,8 @@ Die folgenden Ansichten wurden in Chromium mit einem mobilen Ansichtsfenster gep
 
 Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütterungsdauer der Aufbaukur als „Gefunden“. Beim Renal-Beutel benennt die Feuchtekarte den Wert über 100 % ausdrücklich. Die Rechenkarten bleiben bis zur eindeutigen Klärung offen. Wiederhole bei der Abnahme den normalen Foto-Upload und prüfe die sichtbaren Karten neben dem OCR-Rohtext. [Änderung und Browserbefunde in PR #42](https://github.com/Lightblue87/FeedLabelCheck/pull/42)
 
+- Prüfe „Gefunden“ immer gegen den eingeblendeten Beleg. Bei Aufbaukur Huhn enthält die grüne Zusammensetzungskarte auch Teile der folgenden Analyse und Zusatzstoffe. Bei Diabetes Lachs zeigt „Analytische Bestandteile“ nur den Treffer „Rohprotein 8 %“. In beiden Fällen zeigt die Partiekarte „Wahrscheinlich“ mit einem Verweis auf den Stempel. Eine Partienummer wurde aus diesen Bildern nicht angezeigt.
+
 **Noch nicht im Foto-Upload geprüft.** Verwende Produkttexte und Deklarationsblätter als Referenz für den Sollwert. Für einen OCR-Test brauchst du eine lesbare Verpackungsansicht oder ein separat gekennzeichnetes gerendertes Deklarationsblatt.
 
 - **Mineralfutter für Rinder und Diätergänzungsfutter für Kälber.** Der Downloadbereich enthält Deklarationen für TMR-Mineral und BEWI-SAN Bewilyt. Damit lassen sich tabellarische Gehalte und die Abgrenzung zum Milchaustauscher vorbereiten. [Weissachmühle – Deklarationen und Downloads](https://www.weissachmuehle.de/downloads/)
