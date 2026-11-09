@@ -298,10 +298,39 @@ const Labeling = (() => {
       idx = normText.indexOf(normalized);
     }
     if (idx < 0) return null;
-    // Snippet um den Treffer (auf dem Originaltext; Normalisierung ist längenerhaltend)
-    const start = Math.max(0, idx - 20);
-    const end = Math.min(text.length, idx + keyword.length + 40);
-    return "…" + text.slice(start, end).replace(/\n/g, " ").trim() + "…";
+    return evidenceSnippet(text, idx, keyword.length);
+  }
+
+  // Belegausschnitt für die Anzeige: die Zeile des Treffers (auf dem Originaltext; die Normalisierung
+  // ist längenerhaltend), bei sehr kurzen Zeilen mit Nachbarzeilen, bei langen an Wortgrenzen gekürzt.
+  const SNIPPET_MIN = 12;
+  const SNIPPET_MAX = 120;
+  function evidenceSnippet(text, idx, length) {
+    let lineStart = text.lastIndexOf("\n", idx - 1) + 1;
+    let lineEnd = text.indexOf("\n", idx + length);
+    if (lineEnd < 0) lineEnd = text.length;
+    for (let round = 0; round < 2 && lineEnd - lineStart < SNIPPET_MIN; round++) {
+      if (lineEnd < text.length) {
+        const next = text.indexOf("\n", lineEnd + 1);
+        lineEnd = next < 0 ? text.length : next;
+      }
+      if (lineEnd - lineStart < SNIPPET_MIN && lineStart > 0) lineStart = text.lastIndexOf("\n", lineStart - 2) + 1;
+    }
+    let start = lineStart;
+    let end = lineEnd;
+    if (end - start > SNIPPET_MAX) {
+      start = Math.max(lineStart, idx - 40);
+      end = Math.min(lineEnd, idx + length + 60);
+      if (start > lineStart) {
+        const gap = text.slice(start, idx).search(/\s/);
+        if (gap >= 0) start += gap + 1;
+      }
+      if (end < lineEnd) {
+        const gap = text.slice(idx + length, end).search(/\s\S*$/);
+        if (gap >= 0) end = idx + length + gap;
+      }
+    }
+    return (start > lineStart ? "…" : "") + text.slice(start, end).replace(/\s+/g, " ").trim() + (end < lineEnd ? "…" : "");
   }
 
   function regexMatch(pattern, text) {
@@ -310,7 +339,7 @@ const Labeling = (() => {
     const m = re.exec(text);
     if (!m) return null;
     const matched = m[0];
-    return matched.length > 80 ? matched.slice(0, 80) + "…" : matched;
+    return matched.length > 80 ? matched.slice(0, 80).replace(/\s+\S*$/, "") + "…" : matched;
   }
 
   function matchPattern(pattern, text, normText) {
@@ -497,8 +526,9 @@ const Labeling = (() => {
 
   function postalAddressEvidence(text) {
     // Eine PLZ braucht erkennbaren Adresskontext. Ein Zahlenwert vor einer Einheit oder
-    // Zutatenbezeichnung kann sonst wie eine PLZ aussehen.
-    return text.match(POSTAL_ADDRESS)?.[0] ?? null;
+    // Zutatenbezeichnung kann sonst wie eine PLZ aussehen. Angezeigt wird die ganze Adresszeile.
+    const match = POSTAL_ADDRESS.exec(text);
+    return match ? evidenceSnippet(text, match.index, match[0].length) : null;
   }
 
   function structuredEvidence(ruleId, text) {

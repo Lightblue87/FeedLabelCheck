@@ -588,7 +588,7 @@ test("Nährwert und Zutaten tragen ohne Adresskontext keinen Firmenbeleg", () =>
     assert.equal(check("Zusatzstoffe je kg: Vitamin A 17000 IE/kg, 18568 Klinoptylolit, 40 mg.").status, "missing");
     assert.equal(check("Artikelnummer: 18723\nAnimal feed for cattle. Anwendung: täglich.").status, "missing");
     assert.equal(check("Alleinfuttermittel für Fische. Kontakt: Fischweg 12, 49808 Lingen.").status, "found");
-    assert.equal(check("Alleinfuttermittel für Wasserschildkröten. F 68000 Colmar.").matchedText, "F 68000 Colmar");
+    assert.match(check("Alleinfuttermittel für Wasserschildkröten. F 68000 Colmar.").matchedText, /F 68000 Colmar/);
   }
   assert.equal(checkNumericLabelRule("art15_002", "COMPOSITION: EACH KG CONTAINS VITAMIN A.", " KG", "keyword", 1).status, "missing");
 });
@@ -654,6 +654,18 @@ test("Produktnamen und Nierenwerbung lösen keine Diätfutter-Prüfung aus", () 
   const text = "Alleinfuttermittel für Katzen. Veterinary Diet – Renal. Unterstützt die Nierenfunktion.";
   assert.equal(Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id, "complete_feed");
   assert.equal(Labeling.check(text, FEED_TYPES[0], []).dietary, false);
+});
+
+test("Belegausschnitt zeigt die ganze Zeile und kürzt nur an Wortgrenzen", () => {
+  const check = (text, keyword = "AG") => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${text}`, { id: "complementary_feed" },
+    [{ id: "x_test", severity: "critical", patterns: [{ patternValue: keyword, patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.9 }] }]).ruleResults[0].matchedText;
+  assert.equal(check("Zusammensetzung: Getreide\nHersteller: Beispielfirma AG, Berlin\nAnalytische Bestandteile: Rohprotein 12 %"), "Hersteller: Beispielfirma AG, Berlin");
+  assert.equal(check("Hersteller\nAG\nBerlin\nLinde"), "Hersteller AG Berlin");
+  const long = check(`${"alpha ".repeat(40)}Beispielfirma AG, Hauptstraße 1 ${"omega ".repeat(40)}`);
+  assert.match(long, /^….*Beispielfirma AG, Hauptstraße 1.*…$/);
+  assert.doesNotMatch(long.replace(/^…|…$/g, ""), /(?:^|\s)(?:lpha|mega|alph|omeg)(?:\s|$)/);
+  assert.ok(long.length < 140);
+  assert.equal(check("Mars PF France - CS 20001 - 45550 Saint-Denis-de-l'Hôtel", " KG"), null);
 });
 
 test("Herstelleranschrift mit gängigen Straßenformen bleibt ein Firmenbeleg", () => {
