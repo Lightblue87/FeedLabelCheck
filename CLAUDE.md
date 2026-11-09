@@ -109,10 +109,15 @@ Weitere sieben öffentliche Bilder mit Kälber- und Pferdefutter sowie Legehenne
 
 ## Abnahme mit Nutzerfotos
 
-- Neun Fotos ergeben sechs Etikettenfälle. Prüfe mehrere Ansichten desselben Produkts gemeinsam. Bei schlecht lesbarem Erstlauf können beide 90-Grad-Drehungen verglichen werden. Nutze die Drehung nur bei deutlich mehr sicher erkannten Wörtern. Das Originalfoto bleibt im Prüfverlauf erhalten.
+- Neun Fotos ergeben sechs Etikettenfälle. Prüfe mehrere Ansichten desselben Produkts gemeinsam. Bei schlecht lesbarem Erstlauf vergleicht der Entwurf #41 Drehungen um 90, 180 und 270 Grad. Nutze die Drehung nur bei deutlich mehr sicher erkannten Wörtern. Das Originalfoto bleibt im Prüfverlauf erhalten.
 - Referenz für getrennte Felder ist AGROBS Seniormineral mit `3 kg`, Charge `120300` und MHD `03/2027`. Bei AlpenGrün Mash gehören `01102000040327`, `04.09.2026` und `5 kg` zu getrennten Feldern. Bewahre führende Nullen und prüfe beim Mash, ob die Überschrift „Zusammensetzung“ ohne Doppelpunkt gelesen wird.
 - Auf dem gedrehten Purina-Etikett steht `2 × 57 g = 114 g`. Prüfe die ausdrücklich gedruckte Gesamtmenge. Ein undeutlicher Aufdruck mit mehreren Nummerngruppen bleibt offen, bis die Partie eindeutig zugeordnet ist. Widersprüchliche Feuchtewerte aus mehreren Ansichten erfordern den Abgleich mit dem Originalfoto.
-- Offene Bildfälle sind die kleine mehrsprachige Pavo-Zutatenliste im Gesamtfoto, der Aufdruck auf dem Galopp-Leckstein und die Zuordnung von Datum und Code auf dem Vitakraft-Etikett. Die Testfotos bleiben lokal. [Browser- und Regressionstests in Entwurf #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
+- Im Entwurf #41 liefert der normale Upload der Pavo-Fotos die deutsche Zutatenliste mit allen sechs Bestandteilen. Beim Purina-Etikett liest er die gedruckten `114 g`. Die Feuchte-Nachprüfung liefert `83,0 %`. Der Widerspruch zur ersten Lesung bleibt sichtbar. Offene Bildfälle sind die kleinen Aufdrucke auf Galopp, AlpenGrün Mash und Vitakraft sowie die genaue Zuordnung des Purina-Stempels. Die Testfotos bleiben lokal. [Browser- und Regressionstests in Entwurf #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
+
+## Abnahme bei Diätfutter
+
+- Prüfe die Diätdeklaration zusammen mit der Grundart. Der Entwurf #41 enthält zusätzliche Etikettenfelder unter anderem für Nierendiät, Struvit und Futtermittelintoleranzen. Verwende die Kennzeichnungsangaben des tatsächlich deklarierten Verwendungszwecks. Prüfe bedingte Angaben und die Eignung der Formulierung getrennt. [VO (EU) 2020/354, Anhang Teil B](https://eur-lex.europa.eu/legal-content/DE/ALL/?uri=CELEX%3A02020R0354-20250422)
+- Nutze die rechnerischen Werte bei 12 % Feuchte nur, wenn Feuchte und Gehalt demselben Analyseabschnitt entnommen werden können und die Bezugsbasis eindeutig ist. Halte erkannte Quellen, Werte und Einheiten sichtbar. Widersprechende Ansichten erfordern einen Abgleich mit dem Original. [VO (EG) Nr. 152/2009, Anhang III](https://eur-lex.europa.eu/eli/reg/2009/152/2025-05-14/eng)
 
 ## Verbleibende Abnahmeentscheidungen
 
