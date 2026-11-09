@@ -640,6 +640,13 @@ const Labeling = (() => {
   const ROW_START = new RegExp(`${ROW_AMOUNT.source}|(?<![\\p{L}\\p{N},.])\\d[\\d.]*(?:,\\d+)?(?=[ \\t]+\\p{L}[^\\n]*${ROW_CODE.source})`, "iu");
   const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
 
+  // Fließtext einer Nachbarspalte statt Stoffname („Vitamin E:“): Wortfragment mit Bindestrich am Ende, Beginn mit
+  // Kleinbuchstaben oder ein kleingeschriebenes Funktionswort („Fütterungsempfehlung pro Tag:“).
+  const PROSE_WORD = /(?:^|[ \t])(?:pro|je|der|die|das|dem|den|und|oder|an|bis|für|von|mit|wegen|darf|dürfen|wird|werden|gegenüber|zur|zum|im|in|auf|bei|nach)(?=[ \t:.]|$)/u;
+  function proseFragment(prefix) {
+    return /-$/.test(prefix) || /^\p{Ll}/u.test(prefix) || PROSE_WORD.test(prefix);
+  }
+
   // `next` ist die Folgezeile: die Kennnummer darf dort stehen.
   function cleanAdditiveLine(line, next = "") {
     const start = ROW_START.exec(line);
@@ -648,7 +655,8 @@ const Labeling = (() => {
       // Ein Vorlauf wird nur abgeschnitten, wenn die Zeile als Zusatzstoffzeile belegt ist (Kennnummer in dieser
       // oder der Folgezeile). Eine Mengenangabe allein genügt nicht: „Fütterungsempfehlung: 100 g“ ist eine Überschrift.
       const isRow = ROW_CODE.test(line.slice(start.index)) || (ROW_CODE.test(next) && !ROW_START.test(next));
-      return isRow && prefix && /[-:.]$/.test(prefix) && !ROW_HEADING_WORDS.test(prefix) ? line.slice(start.index) : line;
+      return isRow && prefix && /[-:.]$/.test(prefix) && proseFragment(prefix) && !ROW_HEADING_WORDS.test(prefix)
+        ? line.slice(start.index) : line;
     }
     const compound = /(?:^|[.:][ \t]+)(\p{Lu}\p{L}+[ \t]+als[ \t]+\p{Lu}.*)$/u.exec(line);
     if (compound && compound.index > 0) return compound[1];
