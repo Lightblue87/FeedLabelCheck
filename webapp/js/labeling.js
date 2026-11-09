@@ -834,7 +834,8 @@ const Labeling = (() => {
     const matches = new Map();
     for (const section of sections) {
       const direct = [...section.matchAll(named), ...section.matchAll(wrapped)];
-      const values = direct.length ? direct : [...section.matchAll(preceding)].map(match => match.slice(1));
+      // Nachgestellte und vorangestellte Schreibweisen zählen beide: widersprüchliche Werte verhindern die Rechnung.
+      const values = [...direct, ...[...section.matchAll(preceding)].map(match => match.slice(1))];
       for (const [evidence, amount, unit] of values) {
         const ambiguousDecimal = /^[1-9]\d*\.\d{3}$/.test(amount);
         const gramsPerKg = ambiguousDecimal ? null : amountNumber(amount) * (unit === "%" ? 10 : /^mg/i.test(unit) ? 0.001 : 1);
@@ -918,6 +919,8 @@ const Labeling = (() => {
 
   const PROTEIN_SOURCE = String.raw`(?:ausgewählte\s+)?(?:Proteinquellen?|Eiweißquellen?|protein sources?)`;
   const CARBOHYDRATE_SOURCE = String.raw`(?:ausgewählte\s+)?(?:Kohlenhydrat(?:quellen?|auellen?)|carbohydrate sources?)`;
+  // Ein leerer Quellenabschnitt darf nicht in die nächste Diätangabe oder ein Pflichtfeld hineinlesen.
+  const DIET_SOURCE_END = /\b(?:(?:empfohlene\s+)?Fütterungsdauer|Dauer\s+der\s+Fütterung|recommended\s+(?:length|period)|Fütterung(?:sanleitung)?\s*:|(?:vor|before)\s+(?:der\s+)?(?:Verwendung|Verlängerung|use|extending)|(?:frisches\s+)?(?:Trink)?wasser|Besonderer\s+Ernährungszweck|Hersteller|Vertrieb|Nettomasse|Chargen?)\b/i;
   const DIET_SOURCE_HEADING = new RegExp(String.raw`\b(?:${PROTEIN_SOURCE}|${CARBOHYDRATE_SOURCE})\b[ \t]*[:;]`, "i");
 
   function dietSourceEvidence(text, label) {
@@ -927,7 +930,7 @@ const Labeling = (() => {
       if (!match) continue;
       const start = match.index + match[0].length;
       const body = block.slice(start, start + 300).split(ANALYSIS_HEADING, 1)[0]
-        .split(NEXT_LABEL_SECTION, 1)[0].split(DIET_SOURCE_HEADING, 1)[0].trim();
+        .split(NEXT_LABEL_SECTION, 1)[0].split(DIET_SOURCE_HEADING, 1)[0].split(DIET_SOURCE_END, 1)[0].trim();
       if (/\p{L}{3}/u.test(body) && !/^(?:keine|nicht|siehe|see|not)\b/i.test(body)) {
         return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
       }

@@ -783,6 +783,20 @@ test("Phosphor und Rohprotein werden aus einem beschrifteten Abschnitt auf 12 % 
   assert.match(at12.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^1,2 g\/kg/);
 });
 
+test("leere Quellenüberschrift liest nicht in die nächste Diätangabe hinein", () => {
+  const label = "Diät-Alleinfuttermittel für Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
+  for (const next of ["Empfohlene Fütterungsdauer: bis zu 6 Monate.", "Fütterungsdauer: bis zu 6 Monate.", "Frisches Wasser steht stets zur freien Verfügung.",
+                      "Vor Verwendung oder Verlängerung den Rat eines Tierarztes einholen.", "Hersteller: Muster GmbH, Berlin"]) {
+    const result = Labeling.check(`${label}Proteinquellen:\n${next}`, FEED_TYPES[0], []);
+    assert.notEqual(result.ruleResults.find(r => r.rule.id === "art18_renal_protein").status, "found", next);
+  }
+  const real = Labeling.check(`${label}Proteinquellen: Huhn, Leber.\nEmpfohlene Fütterungsdauer: bis zu 6 Monate.`, FEED_TYPES[0], []);
+  const field = real.ruleResults.find(r => r.rule.id === "art18_renal_protein");
+  assert.equal(field.status, "found");
+  assert.match(field.matchedText, /Huhn, Leber/);
+  assert.doesNotMatch(field.matchedText, /Fütterungsdauer/);
+});
+
 test("Feuchteumrechnung bleibt bei widersprüchlicher oder nicht zuordenbarer Basis offen", () => {
   const label = "Diät-Alleinfuttermittel für Hunde. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
   for (const body of [
@@ -794,6 +808,7 @@ test("Feuchteumrechnung bleibt bei widersprüchlicher oder nicht zuordenbarer Ba
     "Analytische Bestandteile: Phosphor 0,12%, Feuchte 80%.\n\nAnalytical constituents: Moisture 83%.",
     "Analytische Bestandteile: Phosphor 1.200 mg/kg, Feuchte 80%.",
     "Analytische Bestandteile: Phosphor 1200 mg/kg TM, Feuchte 80%.",
+    "Analytische Bestandteile: Phosphor 0,12%; 0,25% phosphorus; Feuchte 80%.",
   ]) {
     const result = Labeling.check(label + body, FEED_TYPES[0], []);
     assert.equal(result.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").status, "unclear", body);
