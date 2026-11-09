@@ -322,9 +322,15 @@ const Labeling = (() => {
   const PACKAGE_AMOUNT = String.raw`(${DECIMAL})[ \t]*(kg|g|t|ml|l|Liter|Kilogramm|Gramm)\b`;
   const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Nettoinhalt|Nettovolumen|Packungsinhalt|Füllmenge|Inhalt|Netto|net weight|net contents|net volume|net quantity|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
   const NET_PREFIX = String.raw`\b(?:${NET_LABEL})\b[ \t:)]*(?:/[ \t]*)?\n?[ \t]*`;
-  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*[/=×])`, "i");
+  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*(?:[/=×]|x[ \t]*\d))`, "i");
   const PACK_TOTAL = new RegExp(String.raw`${NET_PREFIX}(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e©]?[ \t]*=[ \t]*${PACKAGE_AMOUNT}`, "i");
   const amountNumber = value => Number(value.replace(",", "."));
+  const METRIC_EQUIVALENT = new RegExp(String.raw`${NET_PREFIX}(${DECIMAL})[ \t]*(lbs?|Ib|oz)[ \t]*\((${DECIMAL})[ \t]*(kg|g)\)`, "gi");
+  const MARKED_DUAL_AMOUNT = new RegExp(String.raw`^[ \t]*${PACKAGE_AMOUNT}[ \t]*\/[ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e][ \t]*$`, "gim");
+  const NET_UNITS = {
+    g: ["mass", 1], gramm: ["mass", 1], kg: ["mass", 1000], kilogramm: ["mass", 1000], t: ["mass", 1000000],
+    ml: ["volume", 1], l: ["volume", 1000], liter: ["volume", 1000],
+  };
   const AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*$`, "im");
   const AMOUNT_LINE_ALL = new RegExp(AMOUNT_LINE.source, "gim");
   const PACK_COUNT = new RegExp(String.raw`\([ \t]*(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*\)`, "i");
@@ -334,21 +340,54 @@ const Labeling = (() => {
   const MOISTURE_NAME = "Feuchtegehalt|Feuchtigkeitsgehalt|Feuchtigkeit|Feuchte|Wassergehalt|moisture(?: content)?|humidit[ée6]";
   const ANALYTICAL_NAME = "Rohprotein|Rohfett|Rohfaser|Rohasche|Fettgehalt|Calcium|Phosphor|crude protein|crude fat|crude fib(?:re|er)|crude ash";
 
-  function declaredNetAmount(text) {
-    const pack = text.match(PACK_TOTAL);
-    if (pack) {
-      const [, count, perPack, unit, total, totalUnit] = pack;
+  function declaredNetAmounts(text) {
+    const amounts = new Map();
+    const add = (amount, unit, evidence) => {
+      const [dimension, factor] = NET_UNITS[unit.toLowerCase()];
+      const value = amountNumber(amount) * factor;
+      if (!Number.isFinite(value) || value <= 0) return;
+      const numeric = /^[1-9]\d*\.\d{3}$/.test(amount) ? `${amount} ${unit}` : value.toPrecision(12);
+      const key = `${dimension}:${numeric}`;
+      if (!amounts.has(key)) amounts.set(key, { dimension, evidence });
+    };
+    for (const [, count, perPack, unit, total, totalUnit] of text.matchAll(new RegExp(PACK_TOTAL.source, "gi"))) {
       if (unit.toLowerCase() === totalUnit.toLowerCase()
           && !/\.\d{3}$/.test(perPack) && !/\.\d{3}$/.test(total)
           && Math.abs(amountNumber(total) - Number(count) * amountNumber(perPack)) < 1e-8) {
-        return `${total} ${totalUnit}`;
+        add(total, totalUnit, `${total} ${totalUnit}`);
       }
     }
-    return text.match(NET_AMOUNT)?.[0].trim() ?? null;
+    for (const [evidence, amount, unit] of text.matchAll(new RegExp(NET_AMOUNT.source, "gi"))) {
+      add(amount, unit, evidence.trim());
+    }
+    for (const [, customary, customaryUnit, amount, unit] of text.matchAll(METRIC_EQUIVALENT)) {
+      const grams = amountNumber(amount) * NET_UNITS[unit.toLowerCase()][1];
+      const equivalent = amountNumber(customary) * (customaryUnit.toLowerCase() === "oz" ? 28.349523125 : 453.59237);
+      // Die Übereinstimmung ist eine OCR-Plausibilitätsprüfung für gerundete Doppelaufdrucke.
+      if (Math.abs(grams - equivalent) <= equivalent * 0.01) add(amount, unit, `${amount} ${unit}`);
+    }
+    for (const [evidence, amount, unit] of text.matchAll(AMOUNT_LINE_ALL)) {
+      if (/^[℮e]|[℮e]$/i.test(evidence.trim())) add(amount, unit, evidence.trim());
+    }
+    for (const [, amount, unit, secondary, secondaryUnit] of text.matchAll(MARKED_DUAL_AMOUNT)) {
+      if (NET_UNITS[unit.toLowerCase()][0] === NET_UNITS[secondaryUnit.toLowerCase()][0]) continue;
+      add(amount, unit, `${amount} ${unit}`);
+      add(secondary, secondaryUnit, `${secondary} ${secondaryUnit}`);
+    }
+    return [...amounts.values()];
+  }
+
+  function netAmountConflict(amounts) {
+    return new Set(amounts.map(amount => amount.dimension)).size < amounts.length;
+  }
+
+  function declaredNetAmount(text) {
+    const amounts = declaredNetAmounts(text);
+    return netAmountConflict(amounts) ? null : amounts.map(amount => amount.evidence).join(" / ") || null;
   }
 
   function needsPackageAmount(text) {
-    return !declaredNetAmount(text) && !AMOUNT_LINE.test(text) && (NET_HEADING.test(text) || PACK_COUNT.test(text));
+    return !declaredNetAmounts(text).length && !AMOUNT_LINE.test(text) && (NET_HEADING.test(text) || PACK_COUNT.test(text));
   }
 
   function packageAmountHint(primaryText, sparseText) {
@@ -451,19 +490,11 @@ const Labeling = (() => {
   }
 
   function structuredEvidence(ruleId, text) {
-    if (ruleId === "art15_003") {
-      // Eine ℮/e-markierte Menge gilt auch dann, wenn davor andere Mengenzeilen stehen (Fütterungstabelle).
-      const markedLine = [...text.matchAll(AMOUNT_LINE_ALL)].map(m => m[0].trim()).find(l => /^[℮e]|[℮e]$/i.test(l));
-      return declaredNetAmount(text) ?? markedLine ?? null;
-    }
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? postalAddressEvidence(text);
     }
     if (ruleId === "art15_001") {
       return text.match(DIET_DECLARATION)?.[0] ?? text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? null;
-    }
-    if (ruleId.startsWith("art17_002_")) {
-      return text.match(/\b(?:MHD|mindestens[ \t]+haltbar[ \t]+bis)[ \t:]*\n?[ \t]*(?:0?[1-9]|1[0-2])\.\d{4}\b(?![./-]\d)/i)?.[0] ?? null;
     }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
     if (ruleId.startsWith("art17_004_")) {
@@ -497,6 +528,39 @@ const Labeling = (() => {
       return { evidence: evidence.replace(/\s+/g, " "), place };
     }
     return null;
+  }
+
+  const EXPIRY_MARKER = String.raw`(?:${DATE_PRINT_FIELD}|mindesthaltbar\s+bis|verwendbar\s+bis|haltbar\s+bis|BBD|BBE|EXP)`;
+  const EXPLICIT_EXPIRY = new RegExp(String.raw`\b${EXPIRY_MARKER}(?:[ \t]+Ende)?[ \t:]*\n?[ \t]*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})|\d{1,2}[./-]\d{4})\b(?![./-]\d)`, "gi");
+
+  function declaredExpiry(text) {
+    const dates = new Map();
+    const invalid = new Set();
+    for (const [evidence, rawDate] of text.matchAll(EXPLICIT_EXPIRY)) {
+      const parts = rawDate.split(/[./-]/);
+      const hasDay = parts.length === 3;
+      const [rawDay, rawMonth, rawYear] = !hasDay ? ["0", ...parts]
+        : parts[0].length === 4 ? [...parts].reverse() : parts;
+      const year = Number(rawYear) + (rawYear.length === 2 ? 2000 : 0);
+      const month = Number(rawMonth);
+      const day = Number(rawDay);
+      const daysInMonth = month >= 1 && month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 0;
+      if (year < 1000 || !daysInMonth || (hasDay && (day < 1 || day > daysInMonth))) {
+        invalid.add(evidence);
+        continue;
+      }
+      const key = `${year}-${month}-${day}`;
+      if (!dates.has(key)) dates.set(key, { month: `${year}-${month}`, day, evidence });
+    }
+    const valid = [...dates.values()];
+    const conflict = new Set(valid.map(date => date.month)).size > 1
+      || new Set(valid.filter(date => date.day).map(date => date.day)).size > 1;
+    return {
+      evidence: (valid.find(date => date.day) ?? valid[0])?.evidence,
+      review: conflict || invalid.size ? [...valid.map(date => date.evidence), ...invalid].join(" / ") : null,
+      note: conflict ? "Unterschiedliche Haltbarkeitsdaten im Prüftext. Bitte Originaletikett prüfen."
+        : "Kein gültiges Kalenderdatum für die erkannte Angabe. Bitte Originaletikett prüfen.",
+    };
   }
 
   // Ein einzelnes "L" ist sonst keine Losangabe (10 L 50 …); direkt hinter einem Datum schon: "MHD 20.12.2026 L 123456".
@@ -567,6 +631,11 @@ const Labeling = (() => {
                note: "Unterschiedliche Partie-/Losnummern im Prüftext. Bitte den Aufdruck am Originaletikett prüfen." };
     }
     const expiryRule = rule.id === "art16_002" || rule.id.startsWith("art17_002_");
+    const expiry = expiryRule ? declaredExpiry(text) : null;
+    if (expiry?.review) {
+      return { rule, status: "unclear", matchedText: expiry.review,
+               matchedLanguage: null, confidence: 0.3, note: expiry.note };
+    }
     const reference = lotRule || expiryRule ? imprintReference(text, lotRule) : null;
     const operatorRule = rule.id === "art15_002" || rule.id.startsWith("art17_005_");
     const moisture = rule.id === "art15_005" ? declaredMoisture(text) : [];
@@ -581,9 +650,17 @@ const Labeling = (() => {
                matchedLanguage: null, confidence: 0.7,
                note: "Feuchtewert aus Zusatzlesung. Bitte am Originalfoto bestätigen." };
     }
-    const evidence = lotRule ? lots[0] : moisture[0] ?? structuredEvidence(rule.id, text);
-    const po = lotRule && !evidence ? possibleLotCode(text) : null;
     const netQuantity = rule.id === "art15_003";
+    const netAmounts = netQuantity ? declaredNetAmounts(text) : [];
+    if (netAmountConflict(netAmounts)) {
+      return { rule, status: "unclear", matchedText: netAmounts.map(amount => amount.evidence).join(" / "),
+               matchedLanguage: null, confidence: 0.3,
+               note: "Unterschiedliche Nettomengen im Prüftext. Bitte die Packungsangabe am Originaletikett prüfen." };
+    }
+    const evidence = lotRule ? lots[0]
+      : expiry?.evidence ?? moisture[0] ?? (netQuantity ? netAmounts.map(amount => amount.evidence).join(" / ") || null
+        : structuredEvidence(rule.id, text));
+    const po = lotRule && !evidence ? possibleLotCode(text) : null;
     const hasNumericEvidence = netQuantity || rule.id.startsWith("art17_004_");
     const packageHint = netQuantity && !evidence
       ? text.split("\n").find(line => line.startsWith(OCR_AMOUNT_HINT))

@@ -904,3 +904,42 @@ test("Verweise auf unterschiedliche Stellen werden je nach Feld getrennt zugeord
   assert.match(lot.note, /Behälterboden separat fotografieren/);
   assert.equal(lot.matchedText, "Lot no.: see container base");
 });
+
+test("MHD behält den Originaltext und kombiniert kompatible Tages- und Monatsangaben", () => {
+  const check = text => checkNumericLabelRule("art17_002_complementary",
+    `Ergänzungsfuttermittel für Pferde.\n${text}`, "MHD", "keyword", 0.7);
+  assert.equal(check("MHD: 03/2027").matchedText, "MHD: 03/2027");
+  assert.equal(check("MHD: 09.2026\n\nMindestens haltbar bis\n04.09.2026").matchedText, "Mindestens haltbar bis\n04.09.2026");
+  assert.equal(check("MHD: 29.02.2028").status, "found");
+  assert.equal(check("MHD: 04.09.26\n\nBest before 2026-09-04").status, "found");
+  assert.equal(check("MHD: 04.09.2026\n\nMHD 05.09.2026").status, "unclear");
+  assert.equal(check("MHD: 04.09.2026\n\nMHD 10/2026").status, "unclear");
+});
+
+test("unmögliche Kalenderdaten und unbeschriftete Stempel werden nicht bestätigt", () => {
+  const check = text => checkNumericLabelRule("art17_002_complementary",
+    `Ergänzungsfuttermittel für Pferde.\n${text}`, "MHD", "keyword", 0.7);
+  for (const text of ["MHD: 29.02.2027", "MHD: 31.04.2027", "MHD 99.2027", "MHD 00/2027"]) {
+    assert.equal(check(text).status, "unclear", text);
+    assert.match(check(text).note, /Kalenderdatum/);
+  }
+  assert.equal(check("09.2027 C06A\n12:33").status, "missing");
+});
+
+test("Nettomengen vergleichen dieselbe Dimension und halten Gewicht und Volumen getrennt", () => {
+  const check = text => checkNumericLabelRule("art15_003", `Alleinfuttermittel für Zierfische.\n${text}`, "Nettogewicht", "keyword", 0.7);
+  assert.equal(check("Nettogewicht: 1 kg\n\nNet weight: 1000 g").status, "found");
+  const conflict = check("Nettogewicht: 1 kg\n\nNet weight: 1100 g");
+  assert.equal(conflict.status, "unclear");
+  assert.match(conflict.matchedText, /1 kg.*1100 g/);
+  assert.equal(check("64g/250ml℮").matchedText, "64 g / 250 ml");
+  assert.notEqual(check("64g/250g℮").status, "found");
+  assert.notEqual(check("Nettogewicht: 57 g x 2").status, "found");
+});
+
+test("eine separat gedruckte metrische Nettomenge ist aus dem englischen Doppelaufdruck lesbar", () => {
+  assert.equal(Labeling.declaredNetAmount("Net Weight 50 Ib (22.67 kg) Or As Invoiced"), "22.67 kg");
+  assert.equal(Labeling.declaredNetAmount("Net Weight 50 lb (22.67 l)"), null);
+  assert.equal(Labeling.declaredNetAmount("Net Weight 50 lb (32.67 kg)"), null);
+  assert.equal(Labeling.declaredNetAmount("50 lb (22.67 kg)"), null);
+});
