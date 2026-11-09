@@ -91,9 +91,18 @@ const LabelHistory = (() => {
       async save({ entry, photos = [] }) {
         const db = await open();
         const tx = db.transaction(["entries", "photos"], "readwrite");
-        tx.objectStore("entries").put(entry);
-        for (const p of photos) tx.objectStore("photos").put(p);
-        await done(tx);
+        const finished = done(tx);
+        try {
+          tx.objectStore("entries").put(entry);
+          for (const p of photos) tx.objectStore("photos").put(p);
+        } catch (e) {
+          // Eine synchrone Ausnahme (z. B. DataCloneError) bricht die Transaktion nicht ab:
+          // ohne abort() bliebe der Eintrag ohne die genannten Fotos stehen.
+          try { tx.abort(); } catch { /* bereits beendet */ }
+          await finished.catch(() => {});
+          throw e;
+        }
+        await finished;
       },
       async getEntry(id) {
         const db = await open();

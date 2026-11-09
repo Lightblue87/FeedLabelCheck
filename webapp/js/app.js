@@ -419,6 +419,7 @@
     } catch { history = null; }
 
     let current = null;         // Metadaten des geöffneten Eintrags (oder null)
+    let viewEpoch = 0;          // zählt Wechsel des geöffneten Eintrags (Herkunft von OCR-Ergebnissen)
     let currentPhotos = [];     // Fotodatensätze des geöffneten Eintrags
     let photoUrls = [];
     let listUrls = [];
@@ -501,7 +502,10 @@
         await refreshPhotos();
         refreshHistoryCount();
         return current.id;
-      }).catch(e => { reportError("Fotos konnten nicht im Verlauf gespeichert werden", e); return null; });
+      }).catch(e => {
+        reportError("Fotos konnten nicht im Verlauf gespeichert werden", e);
+        return current?.id ?? null;   // der Eintrag, zu dem die Aufnahme gehört (falls schon angelegt)
+      });
     }
 
     async function refreshPhotos() {
@@ -702,6 +706,7 @@
       await saveText();                        // offene Eingabe des bisherigen Eintrags sichern
       const e = await history.get(id);
       if (!e) { toast("Eintrag nicht mehr vorhanden.", "warn", true); await renderHistory(); return; }
+      viewEpoch++;
       current = e;
       rememberCurrent(id);
       textEl.value = e.text;
@@ -716,6 +721,7 @@
     }
 
     function resetCurrent() {
+      viewEpoch++;
       current = null;
       rememberCurrent(null);
       textEl.value = "";
@@ -751,22 +757,26 @@
     }
 
     // ── OCR ───────────────────────────────────────────────────────
-    async function appendOcrText(targetId, ocrText) {
+    /** @returns {boolean} false, wenn der Text keinem Eintrag zugeordnet werden konnte und verworfen wurde */
+    async function appendOcrText(targetId, ocrText, epoch) {
       const join = (old) => (old.trim() ? old + "\n\n" : "") + ocrText;
+      // Ohne Eintrag (Speichern fehlgeschlagen) gehört der Text nur zur Ansicht, in der er gestartet wurde.
+      if (history && !targetId && epoch !== viewEpoch) return false;
       if (!history || !targetId || current?.id === targetId) {
         textEl.value = join(textEl.value);
         if (!viewer.hidden) $("#viewer-text").value = textEl.value;   // Betrachter ist gerade offen
         saveText();
-        return;
+        return true;
       }
       // Der Nutzer hat inzwischen einen anderen Eintrag geöffnet: Text gehört zum alten.
       await enqueue(async () => {
         const e = await history.get(targetId);
         if (e) await history.update(targetId, { text: join(e.text) });
       });
+      return true;
     }
 
-    async function doOcr(files, targetId) {
+    async function doOcr(files, targetId, epoch) {
       const status = $("#l-ocr-status");
       status.className = "ocr-status busy";
       let worker = null;
@@ -782,9 +792,11 @@
           const { data } = await worker.recognize(files[i], {}, { text: true, blocks: true });
           allText += (allText ? "\n\n" : "") + Ocr.textFromResult(data);
         }
-        await appendOcrText(targetId, allText);
+        const applied = await appendOcrText(targetId, allText, epoch);
         status.className = "ocr-status";
-        status.textContent = `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}) – Text bitte kurz prüfen.`;
+        status.textContent = applied
+          ? `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}) – Text bitte kurz prüfen.`
+          : "OCR abgeschlossen, aber der Text wurde verworfen: Die Fotos konnten nicht gespeichert werden und es wurde inzwischen ein anderer Eintrag geöffnet.";
       } catch (e) {
         status.className = "ocr-status error";
         status.textContent = "OCR-Fehler: " + e.message
@@ -796,14 +808,15 @@
 
     // Mehrere Auswahlen laufen nacheinander, nie parallel.
     let ocrQueue = Promise.resolve();
-    const runOcr = (files, targetId) => (ocrQueue = ocrQueue.then(() => doOcr(files, targetId)));
+    const runOcr = (files, targetId, epoch) => (ocrQueue = ocrQueue.then(() => doOcr(files, targetId, epoch)));
 
     for (const id of ["#l-files", "#l-camera"]) {
       $(id).addEventListener("change", async (ev) => {
         const files = [...ev.target.files];
         if (!files.length) return;
+        const epoch = viewEpoch;                      // Ansicht, zu der diese Aufnahme gehört
         const targetId = await attachPhotos(files);   // Originale zuerst sichern
-        await runOcr(files, targetId);
+        await runOcr(files, targetId, epoch);
         ev.target.value = "";   // dasselbe Bild später erneut wählbar
       });
     }
