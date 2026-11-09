@@ -769,10 +769,9 @@
         return true;
       }
       // Der Nutzer hat inzwischen einen anderen Eintrag geöffnet: Text gehört zum alten.
-      await enqueue(async () => {
-        const e = await history.get(targetId);
-        if (e) await history.update(targetId, { text: join(e.text) });
-      });
+      // Atomar anhängen (nicht lesen und neu schreiben): eine Korrektur aus einem anderen Tab
+      // zwischen Lesen und Schreiben ginge sonst verloren.
+      await enqueue(() => history.appendText(targetId, ocrText));
       return true;
     }
 

@@ -287,3 +287,22 @@ test("Bereinigung berücksichtigt \"Behalten\" aus einem anderen Tab (frischer S
   assert.ok(await a.get(e.id));
   assert.equal(store._countPhotos(), 1);
 });
+
+test("appendText hängt an den frischen Text an (Korrektur aus anderem Tab bleibt erhalten)", async () => {
+  const { a, b } = twoTabs();
+  const e = await a.startEntry({ text: "alt" });
+  await a.update(e.id, { text: "alt", lastCheck: { overall: "unklar" } });
+
+  await b.update(e.id, { text: "Korrektur aus Tab B" });     // anderer Tab speichert vor dem Anhängen
+  const entry = await a.appendText(e.id, "OCR-Ergebnis");     // Tab A kennt die Korrektur nicht
+  assert.equal(entry.text, "Korrektur aus Tab B\n\nOCR-Ergebnis");
+  assert.equal((await a.get(e.id)).text, "Korrektur aus Tab B\n\nOCR-Ergebnis");
+  assert.equal(entry.lastCheck, null, "Ergebnis gilt für den geänderten Text nicht mehr");
+});
+
+test("appendText bei leerem Text ohne führende Leerzeilen; unbekannter Eintrag gibt null", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "  " });
+  assert.equal((await history.appendText(e.id, "A")).text, "A");
+  assert.equal(await history.appendText("nope", "x"), null);
+});

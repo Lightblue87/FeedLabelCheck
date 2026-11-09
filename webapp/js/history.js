@@ -249,6 +249,19 @@ const LabelHistory = (() => {
       });
     }
 
+    /**
+     * Hängt Text (z. B. ein OCR-Ergebnis) an den gespeicherten Text an. Der Anhang wird im
+     * atomaren Schritt an den frisch gelesenen Text gefügt: eine inzwischen anderswo gespeicherte
+     * Korrektur geht nicht verloren. Das Prüfergebnis gilt danach nicht mehr (Text geändert).
+     */
+    async function appendText(id, addition) {
+      return store.update(id, (entry) => {
+        entry.text = (entry.text.trim() ? entry.text + "\n\n" : "") + addition;
+        entry.lastCheck = null;
+        entry.updatedAt = now();
+      });
+    }
+
     async function setKeep(id, keep) {
       return store.update(id, (entry) => {
         entry.keep = !!keep;
@@ -307,7 +320,7 @@ const LabelHistory = (() => {
       return removed;
     }
 
-    return { startEntry, update, setKeep, addPhotos, get, photos, list, remove, purgeExpired };
+    return { startEntry, update, appendText, setKeep, addPhotos, get, photos, list, remove, purgeExpired };
   }
 
   return {
