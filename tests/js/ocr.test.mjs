@@ -1012,3 +1012,24 @@ test("die französische Typzeile aus einer Nachbarspalte gehört nicht zur deuts
   const result = checkNumericLabelRule("art17_003_complete", text, "Zusammensetzung", "keyword", 0.7);
   assert.equal(result.matchedText, "Zusammensetzung: Fleisch und tierische Nebenerzeugnisse (32 % davon 18 % Huhn), Zucker, Mineralstoffe.");
 });
+
+test("Diabetes und Aufbaukur erhalten ihren ausdrücklich deklarierten Ernährungszweck", () => {
+  const field = (text, id) => Labeling.check(text, FEED_TYPES[0], []).ruleResults.find(r => r.rule.id === id);
+  const base = "Diät-Alleinfuttermittel für ausgewachsene Katzen. ";
+  const diabetes = field(base + "Zur Regulierung der Glucoseversorgung (Diabetes mellitus).", "art18_purpose");
+  assert.equal(diabetes.status, "found");
+  assert.match(diabetes.matchedText, /Glucoseversorgung \(Diabetes mellitus\)/);
+  assert.equal(field(base + "Diabetes steht im Produktnamen.", "art18_purpose").status, "unclear");
+  const recovery = base + "Zur ernährungsphysiologischen Wiederherstellung, Rekonvaleszenz. Empfohlene Dauer der Fütterung: Bis zur voll\nStändigen Genesung.";
+  assert.equal(field(recovery, "art18_purpose").status, "found");
+  assert.equal(field(recovery, "art18_duration").matchedText, "Bis zur vollständigen Genesung");
+  assert.equal(field(recovery, "art18_review").status, "unclear");
+});
+
+test("Feuchte über 100 Prozent bleibt sichtbar und erhält einen konkreten Korrekturhinweis", () => {
+  const text = "Diät-Alleinfuttermittel für Katzen. Feuchtegehalt 80%. Humidite 809%.";
+  const result = checkNumericLabelRule("art15_005", text, "Feuchtigkeit", "keyword", 0.7);
+  assert.equal(result.status, "unclear");
+  assert.match(result.matchedText, /80%.*809%/);
+  assert.match(result.note, /über 100 %/);
+});

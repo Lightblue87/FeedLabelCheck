@@ -652,10 +652,13 @@ const Labeling = (() => {
     const operatorRule = rule.id === "art15_002" || rule.id.startsWith("art17_005_");
     const moisture = rule.id === "art15_005" ? declaredMoisture(text) : [];
     const humidityHints = rule.id === "art15_005" ? moistureHints(text) : [];
-    if (moistureConflict(moisture, humidityHints)) {
+    const invalidMoisture = [...moisture, ...humidityHints].some(evidence => moistureValue(evidence) > 100);
+    if (invalidMoisture || moistureConflict(moisture, humidityHints)) {
       return { rule, status: "unclear", matchedText: [...moisture, ...humidityHints].join(" / "),
                matchedLanguage: null, confidence: 0.3,
-               note: "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
+               note: invalidMoisture
+                 ? "Ein erkannter Feuchtewert liegt über 100 %. Bitte den OCR-Text am Originalfoto prüfen und korrigieren."
+                 : "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
     }
     if (!moisture.length && humidityHints.length) {
       return { rule, status: "probablyFound", matchedText: humidityHints[0],
@@ -742,7 +745,10 @@ const Labeling = (() => {
   const STRUVITE_DISSOLUTION = /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i;
   const STRUVITE_RECURRENCE = /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i;
   const INTOLERANCE_PURPOSE = /\b(?:Minderung|Verringerung)\s+von\s+Ausgangs?erzeugnis\s*[-‐‑–]\s+und\s+Nährstoffintoleranz(?:en|erscheinungen)\b|\breduction\s+of\s+ingredient\s+and\s+nutrient\s+intolerances\b/i;
+  const RECOVERY_PURPOSE = /\bernährungsphysiologische[nr]?\s+Wiederherstellung\s*[,/]\s*Rekonvaleszenz\b|\bnutritional\s+restoration\s*[,/]\s*convalescence\b/i;
   const DIET_PURPOSES = [
+    /\bRegulierung\s+der\s+Glu[ck]oseversorgung(?:\s*\(Diabetes\s+mellitus\))?|\bregulation\s+of\s+glucose\s+supply(?:\s*\(diabetes\s+mellitus\))?/i,
+    RECOVERY_PURPOSE,
     RENAL_PURPOSE,
     /\bVerringerung\s+(?:der\s+|von\s+)?Oxalsteinbildung\b|\breduction\s+of\s+oxalate\s+stone\s+formation\b/i,
     DIGESTION_PURPOSE,
@@ -1001,9 +1007,13 @@ const Labeling = (() => {
     const recurrence = dogOrCat && purposes.has(STRUVITE_RECURRENCE);
     const intolerance = dogOrCat && purposes.has(INTOLERANCE_PURPOSE);
     const extendedAdvice = renal || dissolution || recurrence || intolerance;
+    const recoveryDuration = purposes.has(RECOVERY_PURPOSE)
+      ? text.match(/\bbis\s+zur\s+voll(?:-?\s*)ständigen\s+Genesung\b|\buntil\s+(?:complete|full)\s+recovery\b/i)?.[0]
+      : null;
     const durations = [...new Set([...text.matchAll(DIET_DURATION), ...text.matchAll(DIET_DURATION_FOLLOWUP)]
       .sort((a, b) => a.index - b.index)
       .map(([wording]) => wording.replace(/\s+/g, " ")))];
+    if (recoveryDuration) durations.push(recoveryDuration.replace(/voll-?\s+ständigen/i, "vollständigen").replace(/\s+/g, " "));
     const advice = [...text.matchAll(DIET_ADVICE)].map(([wording]) => wording.replace(/\s+/g, " "));
     const vetAdvice = advice.find(wording => /Tierarzt|Tierärztin|veterinarian/i.test(wording)
       && /Verlängerung|extending/i.test(wording)
