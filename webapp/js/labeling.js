@@ -623,8 +623,16 @@ const Labeling = (() => {
     const head = `${text.slice(heading, headingEnd).trim()}${first ? ` ${first}` : ""}`;
     const lines = [head, ...rows.filter(Boolean)].slice(0, MAX_SECTION_LINES);
     // Tabellen und Messwerte enden mit einer Zeile, die eine Ziffer trägt; Logo- und Siegeltext danach gehört nicht dazu.
-    while (lines.length > 1 && !/\d/.test(lines[lines.length - 1])) lines.pop();
-    return lines.join("\n");
+    // Ausnahme: eine einzelne Fortsetzungszeile eines umgebrochenen Namens („100 mg Vitamin⏎A“, „…sulfat,⏎pentahydrat“).
+    let end = lines.length;
+    while (end > 1 && !/\d/.test(lines[end - 1])) end--;
+    if (end < lines.length) {
+      const next = lines[end];
+      const previous = lines[end - 1];
+      const continuation = (/^\S{1,6}$/u.test(next) && !/[)]$/.test(previous)) || (/^\p{Ll}/u.test(next) && !/[)\d]$/.test(previous));
+      if (continuation) end++;
+    }
+    return lines.slice(0, end).join("\n");
   }
   function analyticalSection(text) {
     const heading = ANALYTICAL_HEADING.exec(text);

@@ -829,6 +829,13 @@ test("Abschnitte werden vollständig und zeilenweise als Beleg gezeigt (Zusammen
   // Logo- und Siegeltext nach der letzten Messwertzeile gehört nicht zum Abschnitt
   const trailing = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n10 mg Vitamin E\n5 mg Zink\nA VLOG\nAMA-Gütesiegel tauglich", FEED_TYPES[2], rules).ruleResults[2];
   assert.equal(trailing.matchedText, "Zusatzstoffe je kg:\n10 mg Vitamin E\n5 mg Zink");
+  // umgebrochene Namen: genau eine Fortsetzungszeile bleibt erhalten, Siegeltext danach nicht
+  const rule2 = rules[2];
+  const wrapped = (...lines) => Labeling.check(`Mineralfutter für Rinder\nZusatzstoffe je kg:\n${lines.join("\n")}`, FEED_TYPES[2], [rule2]).ruleResults[0].matchedText;
+  assert.equal(wrapped("250 mg Vitamin E", "100 mg Vitamin", "A"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n100 mg Vitamin\nA");
+  assert.equal(wrapped("250 mg Vitamin E", "100 mg Kupfer als Kupfer-(II)-sulfat,", "pentahydrat"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n100 mg Kupfer als Kupfer-(II)-sulfat,\npentahydrat");
+  assert.equal(wrapped("250 mg Vitamin E", "100 mg Vitamin", "A", "AMA-Gütesiegel tauglich"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n100 mg Vitamin\nA");
+  assert.equal(wrapped("250 mg Vitamin E", "40 mg Selen als Natriumselenit (3b801)", "A VLOG", "utter, gepru"), "Zusatzstoffe je kg:\n250 mg Vitamin E\n40 mg Selen als Natriumselenit (3b801)");
   // eine fünfstellige Menge mit großgeschriebener Einheit ist keine Postleitzahl
   const fiveDigits = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n25000 IE Vitamin A\n300 mg Vitamin E", FEED_TYPES[2], rules).ruleResults[2];
   assert.equal(fiveDigits.matchedText, "Zusatzstoffe je kg:\n25000 IE Vitamin A\n300 mg Vitamin E");
