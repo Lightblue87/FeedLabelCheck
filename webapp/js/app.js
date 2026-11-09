@@ -420,6 +420,7 @@
 
     let current = null;         // Metadaten des geöffneten Eintrags (oder null)
     let viewEpoch = 0;          // zählt Wechsel des geöffneten Eintrags (Herkunft von OCR-Ergebnissen)
+    let navSeq = 0;             // zählt Navigationen (Eintrag öffnen, Neuer Check): eine ältere, noch wartende verfällt
     let currentPhotos = [];     // Fotodatensätze des geöffneten Eintrags
     let photoUrls = [];
     let listUrls = [];
@@ -433,6 +434,7 @@
     // Foto- und Ergebnis-Updates desselben Eintrags gegenseitig).
     let queue = Promise.resolve();
     const enqueue = (fn) => { const p = queue.then(fn); queue = p.catch(() => {}); return p; };
+
     const reportError = (what, e) => toast(`${what}: ${e?.message || e}`, "error", true);
 
     const retentionText = (e) => {
@@ -441,38 +443,85 @@
       return d <= 0 ? "Löschung heute" : d === 1 ? "Löschung in 1 Tag" : `Löschung in ${d} Tagen`;
     };
 
-    /** Legt beim ersten Inhalt (Text oder Foto) den Eintrag an. Nur innerhalb von enqueue aufrufen. */
-    async function ensureEntry() {
+    /**
+     * Legt beim ersten Inhalt (Text oder Foto) den Eintrag an. Nur innerhalb von enqueue aufrufen.
+     * Der Eintrag wird nur dann zum angezeigten (current), wenn die Ansicht seit dem Start unverändert
+     * ist; wurde inzwischen ein anderer Eintrag geöffnet oder neu begonnen, bleibt er für sich, und
+     * die Ansicht wird nicht angetastet. Aufrufer verwenden deshalb den zurückgegebenen Eintrag.
+     */
+    async function ensureEntry({ text = textEl.value, feedType = sel.value } = {}) {
       if (!history) return null;
-      if (!current) {
-        current = await history.startEntry({ text: textEl.value, feedType: sel.value });
-        rememberCurrent(current.id);
-        // Bittet den Browser, den Verlauf nicht bei Speichermangel zu räumen (Fotos!).
-        try { navigator.storage?.persist?.(); } catch { /* optional */ }
-        renderEntryBar();
-        refreshHistoryCount();
-      }
-      return current;
+      if (current) return current;
+      const epoch = viewEpoch;
+      const entry = await history.startEntry({ text, feedType });
+      if (epoch !== viewEpoch || current) return entry;
+      current = entry;
+      rememberCurrent(current.id);
+      // Bittet den Browser, den Verlauf nicht bei Speichermangel zu räumen (Fotos!).
+      try { navigator.storage?.persist?.(); } catch { /* optional */ }
+      renderEntryBar();
+      refreshHistoryCount();
+      return entry;
     }
 
+    // Nur lokal geänderten Text speichern: Ein unberührter Tab darf beim Ausblenden, Wechseln oder
+    // "Neuer Check" nicht seinen (womöglich veralteten) Text über eine Korrektur aus einem anderen
+    // Tab schreiben. textVersion zählt lokale Änderungen, savedVersion den zuletzt gesicherten Stand.
+    let textVersion = 0;
+    let savedVersion = 0;
+    const markTextEdited = () => { textVersion++; };          // vor saveText() aufrufen
+    const markTextLoaded = () => { savedVersion = textVersion; }; // Text stammt aus dem Speicher
+
     function saveText() {
-      if (!history) return;
+      if (!history || textVersion === savedVersion) return;
       return enqueue(async () => {
         const text = textEl.value;
-        if (!current && !text.trim()) return;
-        await ensureEntry();
-        const e = await history.update(current.id, { text });
-        if (e) current = e;
+        const version = textVersion;          // beides im selben synchronen Schritt lesen
+        if (version === savedVersion) return;
+        if (!current && !text.trim()) { savedVersion = version; return; }
+        const id = (await ensureEntry({ text })).id;
+        const e = await history.update(id, { text });
+        if (e && current?.id === id) current = e;
+        savedVersion = Math.max(savedVersion, version);
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
     }
 
+    /**
+     * Sichert alle ungesicherten Änderungen des Editors, bevor die Ansicht gewechselt wird. Ein einzelnes
+     * saveText() sichert nur den Stand beim Aufruf; was während des Wartens getippt wird, würde der Wechsel
+     * überschreiben und trotzdem als gesichert gelten. Daher wiederholen, bis der Editor sauber ist.
+     * @returns {Promise<boolean>} false, wenn inzwischen eine neuere Navigation begonnen wurde oder das
+     *   Sichern nicht gelingt – dann darf die Ansicht nicht gewechselt werden (nichts geht verloren).
+     */
+    async function flushPendingEdits(nav) {
+      if (!history) return true;
+      for (let i = 0; i < 20; i++) {
+        if (nav !== navSeq) return false;
+        if (textVersion === savedVersion) return true;
+        clearTimeout(textTimer);
+        await saveText();
+      }
+      return nav === navSeq && textVersion === savedVersion;
+    }
+
     let textTimer = null;
-    textEl.addEventListener("input", () => { clearTimeout(textTimer); textTimer = setTimeout(saveText, 400); });
+    textEl.addEventListener("input", () => {
+      markTextEdited();
+      clearTimeout(textTimer);
+      textTimer = setTimeout(saveText, 400);
+    });
     sel.addEventListener("change", () => {
-      if (!history || !current) return;
+      if (!history) return;
+      const idAtEvent = current?.id ?? null;
+      const epoch = viewEpoch;
+      const feedType = sel.value;
       enqueue(async () => {
-        const e = await history.update(current.id, { feedType: sel.value });
-        if (e) current = e;
+        // Wird der Eintrag gerade erst angelegt (current noch leer), gilt der danach vorhandene
+        // Eintrag derselben Ansicht; ohne Eintrag greift die Auswahl beim Anlegen (ensureEntry).
+        const id = idAtEvent ?? (epoch === viewEpoch ? (current?.id ?? null) : null);
+        if (!id) return;
+        const e = await history.update(id, { feedType });
+        if (e && current?.id === id) current = e;
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
     });
     // iOS beendet PWAs ohne Vorwarnung: ausstehende Eingabe beim Ausblenden sofort sichern.
@@ -496,15 +545,26 @@
     /** Legt die unveränderten Originale beim Eintrag ab (bevor die OCR startet). */
     function attachPhotos(files) {
       if (!history) return Promise.resolve(null);
+      // Zu welchem Eintrag gehört die Aufnahme? Beim Auswählen festhalten, nicht erst beim Ausführen:
+      // die Warteschlange kann hängen, während der Nutzer bereits einen anderen Eintrag geöffnet hat.
+      const originId = current?.id ?? null;
+      const originEpoch = viewEpoch;
       return enqueue(async () => {
-        await ensureEntry();
-        current = await history.addPhotos(current.id, files, { makeThumb });
-        await refreshPhotos();
+        // Noch kein Eintrag: ist die Ansicht inzwischen gewechselt, bekommt die Aufnahme einen eigenen
+        // Eintrag, statt in den (neuen, fremden) Eintrag der jetzigen Ansicht zu geraten.
+        const id = originId ?? (originEpoch === viewEpoch
+          ? (await ensureEntry()).id
+          : (await history.startEntry({ text: "", feedType: "auto" })).id);
+        const updated = await history.addPhotos(id, files, { makeThumb });
+        if (current?.id === id) {            // nur in die Ansicht übernehmen, wenn derselbe Eintrag noch offen ist
+          if (updated) current = updated;
+          await refreshPhotos();
+        }
         refreshHistoryCount();
-        return current.id;
+        return id;
       }).catch(e => {
         reportError("Fotos konnten nicht im Verlauf gespeichert werden", e);
-        return current?.id ?? null;   // der Eintrag, zu dem die Aufnahme gehört (falls schon angelegt)
+        return originId ?? current?.id ?? null;   // der Eintrag, zu dem die Aufnahme gehört (falls schon angelegt)
       });
     }
 
@@ -512,7 +572,10 @@
       photoUrls.forEach(u => URL.revokeObjectURL(u));
       photoUrls = [];
       const box = $("#l-photos");
-      currentPhotos = history && current ? await history.photos(current.id) : [];
+      const id = history && current ? current.id : null;
+      const loaded = id ? await history.photos(id) : [];
+      if ((current?.id ?? null) !== id) return;     // Ansicht inzwischen gewechselt: das Neuere zeichnet
+      currentPhotos = loaded;
       box.hidden = currentPhotos.length === 0;
       box.innerHTML = currentPhotos.length
         ? `<span class="photos-label">Originalfotos (${currentPhotos.length}) – antippen zum Vergleichen</span>`
@@ -691,9 +754,11 @@
 
     $("#l-keep").addEventListener("click", async () => {
       if (!current) return;
+      const id = current.id;
+      const keep = !current.keep;
       try {
-        const e = await enqueue(() => history.setKeep(current.id, !current.keep));
-        if (e) { current = e; renderEntryBar(); }
+        const e = await enqueue(() => history.setKeep(id, keep));
+        if (e && current?.id === id) { current = e; renderEntryBar(); }
       } catch (e) { reportError("Verlauf", e); }
     });
 
@@ -702,19 +767,24 @@
     }
 
     async function openEntry(id) {
-      clearTimeout(textTimer);
-      await saveText();                        // offene Eingabe des bisherigen Eintrags sichern
+      const nav = ++navSeq;
+      if (!(await flushPendingEdits(nav))) return;   // offene Eingabe des bisherigen Eintrags sichern
       const e = await history.get(id);
+      if (nav !== navSeq) return;              // inzwischen wurde etwas anderes angesteuert
+      // Während des Ladens getippt: auch das noch beim bisherigen Eintrag sichern, bevor die Ansicht wechselt
+      if (!(await flushPendingEdits(nav))) return;
       if (!e) { toast("Eintrag nicht mehr vorhanden.", "warn", true); await renderHistory(); return; }
       viewEpoch++;
       current = e;
       rememberCurrent(id);
       textEl.value = e.text;
+      markTextLoaded();
       setFeedType(e.feedType);
       $("#l-result").hidden = true;
       $("#l-ocr-status").className = "ocr-status";
       $("#l-ocr-status").textContent = "Die Texterkennung (OCR, Deutsch) läuft lokal auf dem Gerät.";
       await refreshPhotos();
+      if (nav !== navSeq) return;
       renderEntryBar();
       setHistoryOpen(false);
       if (e.lastCheck) runLabelCheck({ scroll: false, save: false });   // aktuelle Regeln, gleicher Text
@@ -725,6 +795,7 @@
       current = null;
       rememberCurrent(null);
       textEl.value = "";
+      markTextLoaded();
       setFeedType("auto");
       $("#l-result").hidden = true;
       $("#l-ocr-status").className = "ocr-status";
@@ -734,8 +805,8 @@
     }
 
     $("#l-new").addEventListener("click", async () => {
-      clearTimeout(textTimer);
-      await saveText();
+      const nav = ++navSeq;
+      if (!(await flushPendingEdits(nav))) return;   // ein neueres Öffnen hat Vorrang; ungesichert: nicht wechseln
       resetCurrent();
       setHistoryOpen(false);
     });
@@ -760,18 +831,37 @@
     /** @returns {boolean} false, wenn der Text keinem Eintrag zugeordnet werden konnte und verworfen wurde */
     async function appendOcrText(targetId, ocrText, epoch) {
       const join = (old) => (old.trim() ? old + "\n\n" : "") + ocrText;
+      const syncViewer = () => { if (!viewer.hidden) $("#viewer-text").value = textEl.value; };
       // Ohne Eintrag (Speichern fehlgeschlagen) gehört der Text nur zur Ansicht, in der er gestartet wurde.
       if (history && !targetId && epoch !== viewEpoch) return false;
-      if (!history || !targetId || current?.id === targetId) {
+
+      const showsTarget = !history || !targetId || current?.id === targetId;
+      if (!history || !targetId || (showsTarget && textVersion !== savedVersion)) {
+        // Kein Verlauf, kein Eintrag oder ungesicherte lokale Eingabe: an den sichtbaren Text anhängen
+        // und speichern (die lokale Eingabe darf nicht verloren gehen).
         textEl.value = join(textEl.value);
-        if (!viewer.hidden) $("#viewer-text").value = textEl.value;   // Betrachter ist gerade offen
+        syncViewer();
+        markTextEdited();
         saveText();
         return true;
       }
-      // Der Nutzer hat inzwischen einen anderen Eintrag geöffnet: Text gehört zum alten.
-      // Atomar anhängen (nicht lesen und neu schreiben): eine Korrektur aus einem anderen Tab
-      // zwischen Lesen und Schreiben ginge sonst verloren.
-      await enqueue(() => history.appendText(targetId, ocrText));
+      // Sonst atomar an den zuletzt GESPEICHERTEN Text anhängen (eine Korrektur aus einem anderen Tab
+      // bleibt erhalten, egal ob der Eintrag noch angezeigt wird) und die Anzeige daran angleichen.
+      const e = await enqueue(() => history.appendText(targetId, ocrText));
+      if (e && current?.id === targetId) {
+        current = e;
+        if (textVersion === savedVersion) {
+          textEl.value = e.text;
+          syncViewer();
+          markTextLoaded();
+        } else {
+          // Der Nutzer hat während des Anhängens getippt: Anhang auch dort ergänzen und mitspeichern.
+          textEl.value = join(textEl.value);
+          syncViewer();
+          markTextEdited();
+          saveText();
+        }
+      }
       return true;
     }
 
@@ -885,6 +975,7 @@
     $("#l-clear").addEventListener("click", () => {
       textEl.value = "";
       $("#l-result").hidden = true;
+      markTextEdited();
       saveText();
       textEl.focus();
     });
@@ -944,15 +1035,16 @@
         const checkedText = textEl.value;
         const checkedType = sel.value;
         const checkedId = current?.id ?? null;
-        const epoch = viewEpoch;
+        const checkVersion = textVersion;
+        const unsavedAtCheck = textVersion !== savedVersion;
         enqueue(async () => {
-          let id = checkedId;
-          if (!id) {
-            if (epoch !== viewEpoch) return;       // Ansicht wurde inzwischen gewechselt
-            await ensureEntry();
-            id = current.id;
-          }
-          const e = await history.update(id, { text: checkedText, feedType: checkedType, lastCheck: summary });
+          const id = checkedId ?? (await ensureEntry({ text: checkedText, feedType: checkedType })).id;
+          // Den geprüften Stand nur als Eingabe speichern, wenn er in diesem Tab ungesichert war und der
+          // Editor seither unverändert ist; sonst nie einen neueren Autosave oder eine fremde Korrektur
+          // überschreiben. Das Ergebnis wird nur angehängt, wenn die gespeicherten Eingaben dazu passen.
+          const writeInputs = unsavedAtCheck && textVersion === checkVersion && sel.value === checkedType;
+          const e = await history.applyCheck(id, { text: checkedText, feedType: checkedType, lastCheck: summary, writeInputs });
+          if (writeInputs) savedVersion = Math.max(savedVersion, checkVersion);
           if (e && current?.id === id) current = e;
         }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
       }

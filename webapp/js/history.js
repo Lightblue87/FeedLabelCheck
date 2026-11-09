@@ -262,6 +262,20 @@ const LabelHistory = (() => {
       });
     }
 
+    /**
+     * Hängt ein Prüfergebnis an den Eintrag, aber nur, wenn die gespeicherten Eingaben noch zum
+     * geprüften Stand passen: ein inzwischen anderswo (anderer Tab, späterer Autosave) gespeicherter
+     * Text wird nie durch den geprüften Stand ersetzt. writeInputs speichert den geprüften Stand
+     * vorher als Eingabe (nur sinnvoll, wenn der Editor seither unverändert und ungesichert war).
+     */
+    async function applyCheck(id, { text, feedType, lastCheck, writeInputs = false }) {
+      return store.update(id, (entry) => {
+        if (writeInputs) { entry.text = text; entry.feedType = feedType; }
+        if (entry.text === text && entry.feedType === feedType) entry.lastCheck = lastCheck;
+        entry.updatedAt = now();
+      });
+    }
+
     async function setKeep(id, keep) {
       return store.update(id, (entry) => {
         entry.keep = !!keep;
@@ -320,7 +334,7 @@ const LabelHistory = (() => {
       return removed;
     }
 
-    return { startEntry, update, appendText, setKeep, addPhotos, get, photos, list, remove, purgeExpired };
+    return { startEntry, update, appendText, applyCheck, setKeep, addPhotos, get, photos, list, remove, purgeExpired };
   }
 
   return {
