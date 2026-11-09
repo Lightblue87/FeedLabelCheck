@@ -888,6 +888,20 @@ test("Mengenangaben aus einer Nachbarspalte sind keine Losnummer", () => {
   assert.match(reference.note, /Verweis auf Aufdruck erkannt/);
 });
 
+test("Zeilenweise vermischte Spalten: Zutaten und Analytik werden getrennt belegt", () => {
+  const rules = [
+    { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+    { id: "art17_004_mineral", severity: "critical", patterns: [{ patternValue: "Analytische Bestandteile", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+  ];
+  const label = "Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium\nMonocalciumphosphat 4% Natrium\nNatriumchlorid 2% Magnesium\nMagnesiumoxid\nRübenmelasse\npflanzliches Fett aus Raps, raffiniert, gehärtet\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)";
+  const [composition, analysis] = Labeling.check(label, FEED_TYPES[2], rules).ruleResults;
+  assert.equal(composition.status, "found");
+  assert.equal(composition.matchedText.split("\n").slice(1).join("|"),
+    "Weizengrießkleie|Calciumcarbonat|Monocalciumphosphat|Natriumchlorid|Magnesiumoxid|Rübenmelasse|pflanzliches Fett aus Raps, raffiniert, gehärtet");
+  assert.equal(analysis.status, "found");
+  assert.equal(analysis.matchedText.split("\n").slice(1).join("|"), "4% Phosphor|10% Calcium|4% Natrium|2% Magnesium");
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];
