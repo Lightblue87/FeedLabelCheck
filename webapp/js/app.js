@@ -891,10 +891,11 @@
         const draw = (turn, scale) => {
           const width = Math.max(1, Math.round(image.width * scale));
           const height = Math.max(1, Math.round(image.height * scale));
-          canvas.width = height;
-          canvas.height = width;
+          const swapsAxes = Math.abs(turn) === 1;
+          canvas.width = swapsAxes ? height : width;
+          canvas.height = swapsAxes ? width : height;
           const ctx = canvas.getContext("2d");
-          ctx.translate(height / 2, width / 2);
+          ctx.translate(canvas.width / 2, canvas.height / 2);
           ctx.rotate(turn * Math.PI / 2);
           ctx.drawImage(image, -width / 2, -height / 2, width, height);
         };
@@ -903,7 +904,7 @@
         const scale = Math.min(1, 2100 / Math.max(image.width, image.height));
         let best = original;
         let turn = 0;
-        for (const direction of [-1, 1]) {
+        for (const direction of [-1, 1, 2]) {
           draw(direction, scale);
           const { data } = await worker.recognize(canvas, {}, output);
           if (Ocr.orientationScore(data) > Ocr.orientationScore(best)) {
