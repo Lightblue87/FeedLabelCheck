@@ -571,41 +571,119 @@ const Labeling = (() => {
     return "keineAuffaelligkeit";
   }
 
-  // Erfasst die auf dem Etikett sichtbaren Angaben. Die Tabellenmerkmale je
-  // Verwendungszweck (einschließlich bedingter Angaben und Gehalte) bleiben offen.
+  const RENAL_PURPOSE = /\bUnterstützung\s+der\s+Nierenfunktion\s+bei\s+(?:akuter\s+und\s+)?chronischer\s+Niereninsuffizienz\b|\bsupport\s+of\s+renal\s+function\s+in\s+(?:the\s+)?case\s+of\s+(?:acute\s+and\s+)?chronic\s+renal\s+insufficiency\b/i;
+  const DIGESTION_PURPOSE = /\bAusgleich\s+unzureichender\s+Verdauung\b|\bcompensation\s+for\s+maldigestion\b/i;
   const DIET_PURPOSES = [
-    /\bUnterstützung\s+der\s+Nierenfunktion\s+bei\s+(?:akuter\s+und\s+)?chronischer\s+Niereninsuffizienz\b|\bsupport\s+of\s+renal\s+function\s+in\s+(?:the\s+)?case\s+of\s+(?:acute\s+and\s+)?chronic\s+renal\s+insufficiency\b/i,
+    RENAL_PURPOSE,
     /\bVerringerung\s+(?:der\s+|von\s+)?Oxalsteinbildung\b|\breduction\s+of\s+oxalate\s+stone\s+formation\b/i,
-    /\bAusgleich\s+unzureichender\s+Verdauung\b|\bcompensation\s+for\s+maldigestion\b/i,
+    DIGESTION_PURPOSE,
     /\bLinderung\s+(?:(?:akuter|von)\s+)?Resorptionsstörungen\s+des\s+Darms\b|\breduction\s+of\s+(?:acute\s+)?intestinal\s+absorptive\s+disorders\b/i,
     /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i,
     /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i,
   ];
   const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
   const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "i");
-  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)\b/i;
+  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+or\s+(?:before\s+)?extending\b)?\b/gi;
+
+  const DIET_SPECIES = /^\s+(?:für\s+(?:(?:ausgewachsene|adulte|erwachsene)\s+)?(?:Hunde|Katzen)|for\s+(?:adult\s+)?(?:dogs|cats)|pour\s+(?:chiens|chats))\b/i;
+  const ANALYSIS_HEADING = /\b(?:Analytische (?:Bestandteile|Inhaltsstoffe)|Analytical (?:constituents|components)|Constituants analytiques)\b[ \t:]*/gi;
+  const NEXT_LABEL_SECTION = /\n[ \t]*\n|\b(?:Zusatzstoffe|Additives|Additifs|Fütterungsempfehlung|Feeding (?:recommendation|instructions)|Zusammensetzung|Composition|Mindestens haltbar bis|MHD)\b/i;
+
+  function dietField(id, titleDe, legalBasis, evidence, note, status = evidence ? "found" : "unclear") {
+    return {
+      rule: { id, titleDe, legalBasis, severity: "critical" },
+      status,
+      matchedText: evidence || null,
+      matchedLanguage: null,
+      confidence: status === "found" ? 1 : 0.3,
+      note: status === "found" ? null : note,
+    };
+  }
+
+  function analyticalMineral(sections, names) {
+    const massUnit = String.raw`(?:%|(?:mg|g)[ \t]*\/[ \t]*kg\b)`;
+    const value = String.raw`(${DECIMAL})[ \t]*(${massUnit})`;
+    const named = new RegExp(String.raw`\b(?:${names})\b[ \t:;=]*${value}`, "gi");
+    const preceding = new RegExp(String.raw`(?:^|[,;][ \t]+)\s*(${value}[ \t]+(?:${names})\b)(?![ \t:;=]*\d)`, "gim");
+    const matches = new Map();
+    for (const section of sections) {
+      const direct = [...section.matchAll(named)];
+      const values = direct.length ? direct : [...section.matchAll(preceding)].map(match => match.slice(1));
+      for (const [evidence, amount, unit] of values) {
+        const gramsPerKg = amountNumber(amount) * (unit === "%" ? 10 : /^mg/i.test(unit) ? 0.001 : 1);
+        const key = gramsPerKg.toPrecision(12);
+        if (!matches.has(key)) matches.set(key, evidence);
+      }
+    }
+    return [...matches.values()];
+  }
+
+  function renalDietFields(text, legalBasis) {
+    const sources = /\b(?:Proteinquellen?|protein sources?)\b[ \t:;]*\s*/i.exec(text);
+    const sourceText = sources ? text.slice(sources.index + sources[0].length, sources.index + sources[0].length + 300)
+      .split(ANALYSIS_HEADING, 1)[0].split(NEXT_LABEL_SECTION, 1)[0].trim() : "";
+    const sourceEvidence = /\p{L}{3}/u.test(sourceText) && !/^(?:keine|nicht|siehe|see|not)\b/i.test(sourceText)
+      ? `${sources[0].trim()} ${sourceText}`.replace(/\s+/g, " ") : null;
+    const water = text.match(/\bWasser\s+zur\s+freien\s+Aufnahme\s+anbieten\b|\b(?:fresh\s+)?water\s+should\s+be\s+available\s+at\s+all\s+times\b/i)?.[0];
+    const sections = [...text.matchAll(ANALYSIS_HEADING)].map(match =>
+      text.slice(match.index + match[0].length, match.index + match[0].length + 1800).split(NEXT_LABEL_SECTION, 1)[0]);
+    const minerals = [
+      ["calcium", "Calcium", "Calcium|Kalzium"],
+      ["phosphor", "Phosphor", "Phosphor|phosphorus|phosphore"],
+      ["kalium", "Kalium", "Kalium|potassium"],
+      ["natrium", "Natrium", "Natrium|sodium"],
+    ].map(([id, label, names]) => {
+      const values = analyticalMineral(sections, names);
+      return dietField(`art18_renal_${id}`, label, legalBasis, values.join(" / "), values.length > 1
+        ? "Widersprüchliche Gehalte im Prüftext. Bitte Originaletikett prüfen."
+        : "Kein eindeutig zugeordneter Gehalt unter den analytischen Bestandteilen erkannt.",
+      values.length === 1 ? "found" : "unclear");
+    });
+    return [
+      dietField("art18_renal_protein", "Proteinquellen", legalBasis, sourceEvidence,
+        "Keine ausdrücklich genannten Proteinquellen im Prüftext erkannt."),
+      ...minerals,
+      dietField("art18_renal_water", "Hinweis zur freien Wasseraufnahme", legalBasis, water,
+        "Kein eindeutiger Hinweis zur freien Wasseraufnahme im Prüftext erkannt."),
+    ];
+  }
 
   function dietRuleResults(text) {
     const article = "Art. 18 VO (EG) Nr. 767/2009";
     const annex = "Anhang Teil B VO (EU) 2020/354";
     const purposes = DIET_PURPOSES.map(pattern => text.match(pattern)?.[0].replace(/\s+/g, " ")).filter(Boolean);
-    const make = (id, titleDe, legalBasis, evidence, note) => ({
-      rule: { id, titleDe, legalBasis, severity: "critical" },
-      status: evidence ? "found" : "unclear",
-      matchedText: evidence || null,
-      matchedLanguage: null,
-      confidence: evidence ? 1 : 0.3,
-      note: evidence ? null : note,
-    });
+    const dogOrCat = [...text.matchAll(DIET_DECLARATION)].some(match =>
+      DIET_SPECIES.test(text.slice(match.index + match[0].length, match.index + match[0].length + 80)));
+    const renal = dogOrCat && RENAL_PURPOSE.test(text);
+    const digestion = dogOrCat && DIGESTION_PURPOSE.test(text);
+    const advice = [...text.matchAll(DIET_ADVICE)].map(([wording]) => wording.replace(/\s+/g, " "));
+    const renalAdvice = advice.find(wording => /Tierarzt|Tierärztin|veterinarian/i.test(wording)
+      && /Verlängerung|extending/i.test(wording)
+      && /\b(?:vor\s+(?:der\s+)?(?:Verwendung|Anwendung|Fütterung)|before\s+(?:use|feeding))\b/i.test(wording));
+    const extra = [];
+    if (renal) extra.push(...renalDietFields(text, `${annex}, Eintrag 10`));
+    if (digestion) {
+      extra.push(dietField("art18_digestible_diet", "Hinweis auf leichtverdauliche Ernährung", `${annex}, Eintrag 19`,
+        text.match(/\bleichtverdauliche\s+Ernährung\b|\bhighly\s+digestible\s+diet\b/i)?.[0],
+        "Kein eindeutiger Hinweis auf leichtverdauliche Ernährung im Prüftext erkannt."));
+    }
     return [
-      make("art18_purpose", "Besonderer Ernährungszweck", `${article} Buchst. b · ${annex}`,
+      dietField("art18_purpose", "Besonderer Ernährungszweck", `${article} Buchst. b · ${annex}`,
         purposes.join(" / "), "Kein Ernährungszweck aus der hinterlegten Liste im Prüftext erkannt. Bitte Deklaration am Etikett prüfen."),
-      make("art18_duration", "Empfohlene Fütterungsdauer", `${article} Buchst. b · ${annex}`,
+      dietField("art18_duration", "Empfohlene Fütterungsdauer", `${article} Buchst. b · ${annex}`,
         text.match(DIET_DURATION)?.[0].replace(/\s+/g, " "), "Keine zuordenbare Fütterungsdauer im Prüftext erkannt."),
-      make("art18_advice", "Hinweis auf fachlichen Rat", `${article} Buchst. c`,
-        text.match(DIET_ADVICE)?.[0].replace(/\s+/g, " "), "Kein zuordenbarer Beratungshinweis im Prüftext erkannt."),
-      make("art18_review", "Weitere Angaben zum Ernährungszweck", annex, null,
-        "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."),
+      dietField("art18_advice", "Hinweis auf fachlichen Rat",
+        renal ? `${article} Buchst. c · ${annex}, Eintrag 10` : `${article} Buchst. c`,
+        renalAdvice || advice[0], renal
+          ? "Bei Nierendiät den Tierarzthinweis für Verwendung und Verlängerung der Fütterungsdauer prüfen."
+          : "Kein zuordenbarer Beratungshinweis im Prüftext erkannt.",
+        (renal ? renalAdvice : advice[0]) ? "found" : "unclear"),
+      ...extra,
+      dietField("art18_review", "Weitere Angaben zum Ernährungszweck", annex, null,
+        "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."
+          + (renal ? " Bei Nierendiät auch die zutreffende Variante in Eintrag 10, zugesetzte essentielle Fettsäuren und gegebenenfalls Lanthancarbonat prüfen." : "")
+          + (digestion ? " Beim Ausgleich unzureichender Verdauung auch die leichtverdaulichen Ausgangsquellen und gegebenenfalls deren Behandlung prüfen." : "")),
+
     ];
   }
 

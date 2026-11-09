@@ -650,3 +650,54 @@ test("Produktnamen und Nierenwerbung lösen keine Diätfutter-Prüfung aus", () 
   assert.equal(Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id, "complete_feed");
   assert.equal(Labeling.check(text, FEED_TYPES[0], []).dietary, false);
 });
+
+test("Nierendiät zeigt Proteinquellen, zugeordnete Mineralstoffgehalte und Wasserhinweis", () => {
+  const text = "Diät-Alleinfuttermittel für ausgewachsene Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n"
+    + "Zusammensetzung: Huhn, Reis. Proteinquellen; 7% Huhn, 12% Leber\n"
+    + "Analytische Bestandteile: Calcium 0,18 %, Phosphor 0,12%, Kalium 0,25%, Natrium 0,15 %.\n"
+    + "Bitte Wasser zur freien Aufnahme anbieten.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === `art18_renal_${id}`);
+  assert.match(field("protein").matchedText, /7% Huhn, 12% Leber$/);
+  assert.equal(field("calcium").matchedText, "Calcium 0,18 %");
+  assert.equal(field("phosphor").matchedText, "Phosphor 0,12%");
+  assert.equal(field("kalium").matchedText, "Kalium 0,25%");
+  assert.equal(field("natrium").matchedText, "Natrium 0,15 %");
+  assert.equal(field("water").status, "found");
+  assert.equal(result.overallStatus, "unklar");
+});
+
+test("Nierendiät übernimmt keine Gehalte aus Werbung oder aus einer Nachbarspalte", () => {
+  const label = "Diät-Alleinfuttermittel für Hunde. Zur Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.";
+  const result = Labeling.check(label + " Neu: Phosphor 20 % reduziert. Proteinquellen: siehe Rückseite.\n"
+    + "Analytische Bestandteile: Calcium 0,35%, Phosphor, 0,25% Kalium, Natrium 0,15%.\n"
+    + "Zusatzstoffe: Phosphor 1 g/kg. Es wird empfohlen, vor der Verwendung den Rat eines Tierarztes einzuholen.", FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === id);
+  assert.equal(field("art18_renal_phosphor").status, "unclear");
+  assert.equal(field("art18_renal_kalium").matchedText, "0,25% Kalium");
+  assert.equal(field("art18_renal_protein").status, "unclear");
+  assert.equal(field("art18_advice").status, "unclear");
+  assert.match(field("art18_advice").matchedText, /Tierarztes/);
+  const after = Labeling.check(label + " Vor Verlängerung der Fütterung den Rat eines Tierarztes einzuholen.", FEED_TYPES[0], []);
+  assert.equal(after.ruleResults.find(r => r.rule.id === "art18_advice").status, "unclear");
+});
+
+test("Mineralstoffwerte aus mehreren Ansichten werden verglichen und Widersprüche bleiben offen", () => {
+  const text = "Complete dietetic pet food for adult cats. Support of renal function in case of chronic renal insufficiency.\n"
+    + "Analytical constituents: Phosphorus 0.12%, Potassium 0.25%.\n\nAnalytische Bestandteile: Phosphor 1,2 g/kg, Kalium 0,29%.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === `art18_renal_${id}`);
+  assert.equal(field("phosphor").status, "found");
+  assert.equal(field("kalium").status, "unclear");
+  assert.match(field("kalium").matchedText, /0.25%.*0,29%/);
+  assert.match(field("kalium").note, /Widersprüchliche/);
+});
+
+test("Der Hinweis auf leichtverdauliche Ernährung gehört zum ausdrücklich deklarierten Verdauungszweck", () => {
+  const text = "Diät-Alleinfuttermittel für Katzen. Zum Ausgleich unzureichender Verdauung. Leichtverdauliche Ernährung.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const check = result.ruleResults.find(r => r.rule.id === "art18_digestible_diet");
+  assert.equal(check.status, "found");
+  assert.match(check.rule.legalBasis, /Eintrag 19/);
+  assert.ok(!result.ruleResults.some(r => r.rule.id.startsWith("art18_renal_")));
+});
