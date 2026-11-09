@@ -46,28 +46,6 @@ jobs:
             && echo "DLG PDF downloaded ($(wc -c < dist/dlg_positivliste.pdf) bytes)" \
             || echo "::warning::DLG PDF download failed – building without DLG data"
 
-      - name: Build labeling rules database
-        run: |
-          if [ -f dist/dlg_positivliste.pdf ]; then
-            python scripts/build_labeling_db.py --out dist/labeling.sqlite --dlg-pdf dist/dlg_positivliste.pdf
-          else
-            python scripts/build_labeling_db.py --out dist/labeling.sqlite
-          fi
-
-      - name: Build data manifest
-        run: python scripts/build_data_manifest.py --json Data/zusatzstoffe.json --sqlite dist/feedlabelcheck.sqlite --labeling-sqlite dist/labeling.sqlite --out dist/manifest.json
-
-      - name: Upload data artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: feedlabelcheck-data
-          path: |
-            Data/zusatzstoffe.json
-            dist/feedlabelcheck.sqlite
-            dist/labeling.sqlite
-            dist/manifest.json
-          retention-days: 30
-
       - name: Check data repository deploy key
         env:
           DATA_REPO_DEPLOY_KEY: ${{ secrets.FEEDLABELCHECK_DATA_DEPLOY_KEY }}
@@ -85,20 +63,43 @@ jobs:
           ssh-key: ${{ secrets.FEEDLABELCHECK_DATA_DEPLOY_KEY }}
           path: public-data
 
+      - name: Build labeling rules database
+        run: |
+          if [ -f dist/dlg_positivliste.pdf ]; then
+            python scripts/build_labeling_db.py --out dist/labeling.sqlite --previous public-data/labeling.sqlite --dlg-pdf dist/dlg_positivliste.pdf
+          else
+            python scripts/build_labeling_db.py --out dist/labeling.sqlite --previous public-data/labeling.sqlite
+          fi
+
+      - name: Build data manifest
+        run: python scripts/build_data_manifest.py --json Data/zusatzstoffe.json --sqlite dist/feedlabelcheck.sqlite --labeling-sqlite dist/labeling.sqlite --out dist/manifest.json
+
+      - name: Upload data artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedlabelcheck-data
+          path: |
+            Data/zusatzstoffe.json
+            dist/feedlabelcheck.sqlite
+            dist/labeling.sqlite
+            dist/manifest.json
+          retention-days: 30
+
       - name: Publish SQLite databases
         run: |
           cp dist/feedlabelcheck.sqlite public-data/feedlabelcheck.sqlite
           cp dist/labeling.sqlite public-data/labeling.sqlite
           cp Data/zusatzstoffe.json public-data/zusatzstoffe.json
-          cp dist/manifest.json public-data/manifest.json
-          cp dist/manifest.json public-data/manifest-v2.json
           cd public-data
+          git add feedlabelcheck.sqlite labeling.sqlite zusatzstoffe.json
+          if git diff --cached --quiet && [ -f manifest.json ] && [ -f manifest-v2.json ]; then
+            echo "No data changes to publish."
+            exit 0
+          fi
+          cp ../dist/manifest.json manifest.json
+          cp ../dist/manifest.json manifest-v2.json
+          git add manifest.json manifest-v2.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add feedlabelcheck.sqlite labeling.sqlite zusatzstoffe.json manifest.json manifest-v2.json
-          if git diff --cached --quiet; then
-            echo "No data changes to publish."
-          else
-            git commit -m "Update generated FeedLabelCheck data (incl. labeling rules)"
-            git push
-          fi
+          git commit -m "Update generated FeedLabelCheck data (incl. labeling rules)"
+          git push

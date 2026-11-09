@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
+import shutil
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1889,6 +1891,18 @@ def build(out_path: Path, dlg_pdf_path: Path | None = None) -> int:
     return rule_count
 
 
+def labeling_content(path: Path) -> list[str]:
+    """Compare labeling databases without build timestamps and their derived hash."""
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as source:
+        with closing(sqlite3.connect(":memory:")) as snapshot:
+            source.backup(snapshot)
+            snapshot.execute("UPDATE labeling_regulations SET created_at = ''")
+            snapshot.execute(
+                "DELETE FROM labeling_metadata WHERE key IN ('labeling_created_at', 'labeling_sha256')"
+            )
+            return list(snapshot.iterdump())
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1910,9 +1924,24 @@ def main() -> int:
         default=None,
         help="Path to DLG Positivliste PDF (optional; skips DLG data if not provided)",
     )
+    parser.add_argument(
+        "--previous", type=Path,
+        help="Reuse this published database if only build metadata changed",
+    )
     args = parser.parse_args()
+    if args.previous and args.previous.resolve() == args.out.resolve():
+        parser.error("--previous must differ from --out")
 
     rule_count = build(args.out, dlg_pdf_path=args.dlg_pdf)
+    if args.previous and args.previous.is_file():
+        try:
+            unchanged = labeling_content(args.out) == labeling_content(args.previous)
+        except sqlite3.Error as error:
+            print(f"Could not compare labeling databases: {error}")
+        else:
+            if unchanged:
+                shutil.copyfile(args.previous, args.out)
+                print(f"Reused {args.previous}: labeling content unchanged")
     print(f"Wrote {args.out}, {rule_count} rules")
     return 0
 
