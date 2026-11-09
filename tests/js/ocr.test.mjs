@@ -668,6 +668,29 @@ test("Belegausschnitt zeigt die ganze Zeile und kürzt nur an Wortgrenzen", () =
   assert.equal(check("Mars PF France - CS 20001 - 45550 Saint-Denis-de-l'Hôtel", " KG"), null);
 });
 
+test("Mineralfutter-Überschrift gewinnt gegen den vorgeschriebenen Hinweis „Dieses Ergänzungsfutter darf …“", () => {
+  const note = "Dieses Ergänzungsfutter darf wegen der gegenüber Alleinfuttermitteln höheren Gehalte an Vitaminen nur an Rinder verfüttert werden.";
+  const detect = text => Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id ?? null;
+  assert.equal(detect(`Mineralfuttermittel für Rinder\n${note}`), "mineral_feed");
+  assert.equal(detect(`Salesta\nMineralfutter für Rinder N & Co\nZusatzstoffe je kg: 8 g\n${note}`), "mineral_feed");
+  // nur als Überschrift, nicht als Erwähnung im Fließtext
+  assert.equal(detect("Ergänzungsfuttermittel für Pferde. Kann mit Mineralfutter für Pferde kombiniert werden."), "complementary_feed");
+  assert.equal(detect(`Ergänzungsfuttermittel für Pferde\n${note}`), "complementary_feed");
+});
+
+test("Zusatzstoffe: Überschrift mit Mengenangabe im eigenen Abschnitt ist ein Beleg", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = text => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${text}`, FEED_TYPES[1], [rule]).ruleResults[0];
+  const real = check("Zusatzstoffe je kg: Vitamin A 12.000 I.E., Vitamin E 50 mg");
+  assert.equal(real.status, "found");
+  assert.match(real.matchedText, /Zusatzstoffe je kg.*12\.000 I\.E\./);
+  assert.equal(check("Ernährungsphysiologische Zusatzstoffe (je kg):\nVitamin D3 3.200 I.E.").status, "found");
+  for (const text of ["Zusatzstoffe:\nFütterungsempfehlung: 100 g täglich", "Zusatzstoffe: keine", "Zusatzstoffe je kg:\n\nVitamin A 100 mg",
+                      "Zusatzstoffe: Fütterung 100 g", "Ohne Zusatzstoffe. Rohprotein 12 %"]) {
+    assert.notEqual(check(text).status, "found", text);
+  }
+});
+
 test("Herstelleranschrift mit gängigen Straßenformen bleibt ein Firmenbeleg", () => {
   const legacy = String.raw`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b`;
   for (const id of ["art15_002", "art17_005_complete"]) {

@@ -235,6 +235,8 @@ const Labeling = (() => {
     return [...declarations.values()];
   }
 
+  const MINERAL_HEADING = /^[ \t]*Mineral(?:futter|futtermittel|-Futtermittel)[ \t]+für[ \t]+\p{L}{3,}/imu;
+
   function detectFeedType(ocrText, feedTypes) {
     const diets = declaredDiet(ocrText, feedTypes);
     if (diets.length > 1) return null;
@@ -246,6 +248,13 @@ const Labeling = (() => {
     const candidates = rankedCandidates(normalized, feedTypes);
     const best = candidates[0];
     if (!best) return null;
+    // „Mineralfuttermittel für Rinder“ als eigene Zeile ist die Bezeichnung. Der vorgeschriebene Hinweis
+    // „Dieses Ergänzungsfutter darf wegen …“ im selben Etikett nennt dagegen nur die Oberart.
+    const mineral = candidates.find(c => c.feedType.id === "mineral_feed");
+    if (mineral && MINERAL_HEADING.test(ocrText)
+        && candidates.every(c => ["mineral_feed", "complementary_feed"].includes(c.feedType.id) || !hasDirectLegalMatch(c))) {
+      return mineral;
+    }
     const milk = candidates.find(c => c.feedType.id === "milk_replacer" && hasDirectLegalMatch(c));
     if (milk && candidates.every(c => ["milk_replacer", "complete_feed"].includes(c.feedType.id)
         || !hasDirectLegalMatch(c))) return milk;
@@ -531,6 +540,24 @@ const Labeling = (() => {
     return match ? evidenceSnippet(text, match.index, match[0].length) : null;
   }
 
+  // „Zusatzstoffe je kg: Vitamin A 12.000 I.E.“: Überschrift mit mindestens einer Mengenangabe im
+  // eigenen Abschnitt. Eine leere Überschrift oder eine Menge aus dem Nachbarabschnitt genügt nicht.
+  const ADDITIVES_HEADING = /\b(?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)[ \t]+)?Zusatzstoffe(?:[ \t]+(?:je|pro)[ \t]*kg)?[ \t]*(?:\([^)\n]{0,20}\))?[ \t]*:/giu;
+  const ADDITIVE_AMOUNT = /\d[\d.,]*[ \t]*(?:mg|µg|μg|mcg|g|I\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}])/u;
+  const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer)\b/i;
+  function additivesEvidence(text) {
+    for (const heading of text.matchAll(ADDITIVES_HEADING)) {
+      const start = heading.index + heading[0].length;
+      const section = text.slice(start, start + 400).split(ADDITIVES_END, 1)[0];
+      const amount = ADDITIVE_AMOUNT.exec(section);
+      if (!amount) continue;
+      const head = evidenceSnippet(text, heading.index, heading[0].length);
+      const line = evidenceSnippet(text, start + amount.index, amount[0].length);
+      return line === head || head.includes(line) ? head : `${head} … ${line}`;
+    }
+    return null;
+  }
+
   function structuredEvidence(ruleId, text) {
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? postalAddressEvidence(text);
@@ -539,6 +566,7 @@ const Labeling = (() => {
       return text.match(DIET_DECLARATION)?.[0] ?? text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? null;
     }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
+    if (ruleId === "art15_006") return additivesEvidence(text);
     if (ruleId.startsWith("art17_004_")) {
       const fields = moistureConflict(declaredMoisture(text), moistureHints(text)) ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
       return percentageEvidence(text, fields);
