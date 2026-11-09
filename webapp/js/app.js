@@ -390,13 +390,13 @@
 
   // ── Kennzeichnungs-Check ──────────────────────────────────────
   const STATUS_LABELS = {
-    found: "Gefunden", probablyFound: "Wahrscheinlich", missing: "Fehlt",
+    found: "Gefunden", probablyFound: "Wahrscheinlich", missing: "Nicht erkannt",
     unclear: "Unklar", notCheckable: "Nicht prüfbar",
   };
   const OVERALL = {
     keineAuffaelligkeit: { cls: "ok", text: "Keine Auffälligkeit – alle Pflichtangaben gefunden." },
     unklar: { cls: "warn", text: "Unklar – einzelne Angaben bitte manuell prüfen." },
-    auffaellig: { cls: "bad", text: "Auffällig – Pflichtangaben fehlen." },
+    auffaellig: { cls: "bad", text: "Pflichtangaben im Prüftext nicht erkannt – Etikett prüfen." },
     nichtPruefbar: { cls: "info", text: "Nicht prüfbar – zu wenig Text." },
   };
 
