@@ -913,6 +913,19 @@ test("Vermischte Spalten: Abschnittsüberschrift beendet die Zutaten, Messwert n
   assert.doesNotMatch(interleaved.matchedText, /% Natrium/);
 });
 
+test("Vermischte Spalten: Feuchte-Zeile, längere Analytikspalte und unbekannte Zeilen", () => {
+  const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = body => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\n${body}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  const head = "Weizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium\nMonocalciumphosphat 4% Natrium\n";
+  const moisture = check(`${head}Rübenmelasse 5% Feuchte\nMagnesiumoxid\nNatriumchlorid\nZusatzstoffe (je kg):\n1 mg Vitamin A`);
+  assert.equal(moisture.status, "found");
+  assert.match(moisture.matchedText, /Rübenmelasse\nMagnesiumoxid|Rübenmelasse$|Rübenmelasse\n/);
+  const longer = check(`${head}Magnesiumoxid\nRübenmelasse\n5% Rohasche\n2% Rohfaser\nZusatzstoffe (je kg):\n1 mg Vitamin A`);
+  assert.equal(longer.status, "found");
+  const unknown = check(`${head}Magnesiumoxid\nRübenmelasse\n**§§ 12 ??\nZusatzstoffe (je kg):`);
+  assert.equal(unknown.status, "probablyFound");
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];

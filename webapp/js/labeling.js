@@ -517,6 +517,10 @@ const Labeling = (() => {
   // Abschnittsgrenzen: eine dieser Überschriften beendet die linke Spalte.
   const MIXED_STOP = /\b(?:Zusatzstoffe|Hersteller|Inverkehrbringer|Vertrieb|Importeur|F[üu]tterung\w*|Einsatzempfehlung|Dosierung|Anwendung|Tagesration|Futtermenge|Feeding|Lagerung\w*|Hinweise?|Analytische|Inhaltsstoffe|Feuchte\w*|Nett(?:o\w*)|Inhalt|Chargen?|Losnummer|Partie|Kennnummer|MHD|haltbar|Gehalt)\b/i;
 
+  const MIXED_VALUE_ONLY = /^\d+(?:[.,]\d+)?[ \t]*%[ \t]+\p{L}[\p{L} -]{1,30}$/u;
+
+  // Die Rekonstruktion gilt nur, wenn jede Zeile eingeordnet ist und der Abschnitt an einer echten
+  // Überschrift (oder am Textende) endet. Sonst fehlen Zutaten oder Messwerte stillschweigend.
   function mixedColumns(text) {
     const heading = MIXED_COMPOSITION_HEADING.exec(text);
     if (!heading) return null;
@@ -526,8 +530,9 @@ const Labeling = (() => {
     let plain = false;
     for (const raw of text.slice(heading.index + heading[0].length).split("\n")) {
       const line = raw.trim();
+      if (!line) break;
       const pair = line.match(MIXED_ANALYSIS_VALUE);
-      if (pair && !MIXED_STOP.test(line)) {
+      if (pair) {
         // Ein Messwert nach einer Zeile ohne Messwert: die Zuordnung ist nicht eindeutig.
         if (plain) return null;
         items.push(pair[1].trim());
@@ -535,12 +540,11 @@ const Labeling = (() => {
         pairs += 1;
         continue;
       }
-      if (pairs >= 2 && MIXED_INGREDIENT.test(line) && !MIXED_STOP.test(line)) {
-        items.push(line);
-        plain = true;
-        continue;
-      }
-      break;
+      if (pairs >= 2 && MIXED_STOP.test(line)) break;
+      if (pairs >= 2 && /:$/.test(line)) break;
+      if (pairs >= 2 && MIXED_VALUE_ONLY.test(line)) { values.push(line); continue; }
+      if (pairs >= 2 && MIXED_INGREDIENT.test(line)) { items.push(line); plain = true; continue; }
+      return null;
     }
     return pairs >= 2 && items.length >= 3 ? { items, values } : null;
   }
