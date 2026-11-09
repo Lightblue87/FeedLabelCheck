@@ -96,3 +96,27 @@ test("unitOptions: Masseeinheiten zuerst, Datenwerte ohne Duplikate", () => {
   assert.deepEqual(opts.slice(0, 4), ["mg/kg", "g/kg", "µg/kg", "%"]);
   assert.deepEqual(opts.slice(4), ["KBE/kg", "FTU/kg"]);
 });
+
+test("Umrechnung bei nur angenommener Datensatz-Einheit ist nicht bewertbar", () => {
+  const [a] = LavesEval.loadAdditives([
+    { kennnummer: "4b1823i", name: "Test", min_mg_kg: "1" },
+  ]);
+  assert.equal(a.unitAssumed, true);
+  const res = LavesEval.evaluateSingleValue(0.001, a, "g/kg");
+  assert.equal(res.ok, null);
+  assert.ok(res.msgs[0].includes("nicht belegt"));
+  // gleiche Einheit wie angenommen: weiter bewertbar (mit Hinweis)
+  assert.equal(LavesEval.evaluateSingleValue(2, a, "mg/kg").ok, true);
+});
+
+test("Werte exakt auf dem Grenzwert sind nach Umrechnung nicht durch Rundung nicht konform", () => {
+  assert.equal(LavesEval.convertToLimitUnit(0.0012, "%", "mg/kg").value, 12);
+  const minRec = rec({ min_value: 12, max_value: null });
+  assert.equal(LavesEval.evaluateSingleValue(0.0012, minRec, "%").ok, true);
+  assert.equal(LavesEval.evaluateSingleValue(0.00119, minRec, "%").ok, false);
+  const maxRec = rec({ max_value: 10 });
+  assert.equal(LavesEval.evaluateSingleValue(0.001, maxRec, "%").ok, true);
+  assert.equal(LavesEval.evaluateSingleValue(0.01, maxRec, "g/kg").ok, true);
+  assert.equal(LavesEval.evaluateSingleValue(0.0101, maxRec, "g/kg").ok, false);
+  assert.equal(LavesEval.evaluateSingleValue(10, maxRec, "µg/kg").ok, true);
+});
