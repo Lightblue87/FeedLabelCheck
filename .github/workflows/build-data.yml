@@ -10,6 +10,10 @@ permissions:
   contents: read
   actions: write   # required by upload-artifact
 
+concurrency:
+  group: publish-feedlabelcheck-data
+  cancel-in-progress: false
+
 jobs:
   build-data:
     runs-on: ubuntu-latest
@@ -42,12 +46,29 @@ jobs:
             && echo "DLG PDF downloaded ($(wc -c < dist/dlg_positivliste.pdf) bytes)" \
             || echo "::warning::DLG PDF download failed – building without DLG data"
 
+      - name: Check data repository deploy key
+        env:
+          DATA_REPO_DEPLOY_KEY: ${{ secrets.FEEDLABELCHECK_DATA_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DATA_REPO_DEPLOY_KEY" ]; then
+            echo "::error::Secret FEEDLABELCHECK_DATA_DEPLOY_KEY is required to publish data."
+            exit 1
+          fi
+
+      - name: Checkout public data repository
+        uses: actions/checkout@v4
+        with:
+          repository: Lightblue87/FeedLabelCheck-Data
+          ref: main
+          ssh-key: ${{ secrets.FEEDLABELCHECK_DATA_DEPLOY_KEY }}
+          path: public-data
+
       - name: Build labeling rules database
         run: |
           if [ -f dist/dlg_positivliste.pdf ]; then
-            python scripts/build_labeling_db.py --out dist/labeling.sqlite --dlg-pdf dist/dlg_positivliste.pdf
+            python scripts/build_labeling_db.py --out dist/labeling.sqlite --previous public-data/labeling.sqlite --dlg-pdf dist/dlg_positivliste.pdf
           else
-            python scripts/build_labeling_db.py --out dist/labeling.sqlite
+            python scripts/build_labeling_db.py --out dist/labeling.sqlite --previous public-data/labeling.sqlite
           fi
 
       - name: Build data manifest
@@ -64,41 +85,21 @@ jobs:
             dist/manifest.json
           retention-days: 30
 
-      - name: Check data repository token
-        id: check-token
-        env:
-          DATA_REPO_TOKEN: ${{ secrets.FEEDLABELCHECK_DATA_REPO_TOKEN }}
-        run: |
-          if [ -z "$DATA_REPO_TOKEN" ]; then
-            echo "::warning::Secret FEEDLABELCHECK_DATA_REPO_TOKEN not set — skipping publish to data repository."
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout public data repository
-        if: steps.check-token.outputs.has_token == 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: Lightblue87/FeedLabelCheck-Data
-          token: ${{ secrets.FEEDLABELCHECK_DATA_REPO_TOKEN }}
-          path: public-data
-
       - name: Publish SQLite databases
-        if: steps.check-token.outputs.has_token == 'true'
         run: |
           cp dist/feedlabelcheck.sqlite public-data/feedlabelcheck.sqlite
           cp dist/labeling.sqlite public-data/labeling.sqlite
           cp Data/zusatzstoffe.json public-data/zusatzstoffe.json
-          cp dist/manifest.json public-data/manifest.json
-          cp dist/manifest.json public-data/manifest-v2.json
           cd public-data
+          git add feedlabelcheck.sqlite labeling.sqlite zusatzstoffe.json
+          if git diff --cached --quiet && [ -f manifest.json ] && [ -f manifest-v2.json ]; then
+            echo "No data changes to publish."
+            exit 0
+          fi
+          cp ../dist/manifest.json manifest.json
+          cp ../dist/manifest.json manifest-v2.json
+          git add manifest.json manifest-v2.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add feedlabelcheck.sqlite labeling.sqlite zusatzstoffe.json manifest.json manifest-v2.json
-          if git diff --cached --quiet; then
-            echo "No data changes to publish."
-          else
-            git commit -m "Update generated FeedLabelCheck data (incl. labeling rules)"
-            git push
-          fi
+          git commit -m "Update generated FeedLabelCheck data (incl. labeling rules)"
+          git push

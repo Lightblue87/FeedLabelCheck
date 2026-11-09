@@ -3,6 +3,22 @@
 Browser-Portierung der FeedLabelCheck-App. Alle Prüfungen laufen vollständig
 clientseitig – es wird kein Server benötigt und keine Daten verlassen den Browser.
 
+## Bedienung
+
+App-Shell wie bei einer nativen App: kompakte App-Leiste oben, Navigation unten
+in der Daumenzone (ab 900 px Breite als Seitenleiste), Hell-/Dunkelmodus folgt
+dem System.
+
+| Tab | Inhalt |
+|---|---|
+| **Grenzwerte** | Gemeinsamer *Prüfkontext* (Kategorie, Tierart, Alter) + Umschalter **Einzelwert** / **Mehrere Werte** (Batch als Karten statt Tabelle) |
+| **Etikett** | Foto aufnehmen oder Bilder wählen → OCR → Text prüfen → Kennzeichnung prüfen |
+| **Futtermittel** | Suche im EU-Katalog und der DLG-Positivliste |
+| **Daten** | Datenstand, Update-Status, Hinweise |
+
+Direktsprünge per Hash (`#check`, `#labeling`, `#materials`, `#status`); das
+Manifest enthält dafür App-Shortcuts (Langdruck auf das Home-Bildschirm-Icon).
+
 ## Funktionen
 
 | Funktion | Entspricht (iOS/Desktop) | Umsetzung |
