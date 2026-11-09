@@ -580,12 +580,20 @@ const Labeling = (() => {
     return null;
   }
 
-  function structuredEvidence(ruleId, text) {
+  // Kurzform der Bezeichnung als eigene Zeile („Mineralfutter für Rinder“): gilt nur für den gewählten Typ.
+  const COMPLEMENT_HEADING = /^[ \t]*Ergänzungsfutter(?:mittel)?[ \t]+für[ \t]+\p{L}{3,}/imu;
+  function designationHeading(text, feedType) {
+    const heading = feedType?.id === "mineral_feed" ? MINERAL_HEADING : feedType?.id === "complementary_feed" ? COMPLEMENT_HEADING : null;
+    const match = heading ? heading.exec(text) : null;
+    return match ? evidenceSnippet(text, match.index, match[0].length) : null;
+  }
+
+  function structuredEvidence(ruleId, text, feedType = null) {
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? postalAddressEvidence(text);
     }
     if (ruleId === "art15_001") {
-      return text.match(DIET_DECLARATION)?.[0] ?? text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? null;
+      return text.match(DIET_DECLARATION)?.[0] ?? text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? designationHeading(text, feedType);
     }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
     if (ruleId === "art15_006") return additivesEvidence(text);
@@ -603,10 +611,10 @@ const Labeling = (() => {
   const LOT_LABEL = /\b(?:chargen?(?:[ \t-]*(?:nummer|nr))?|los(?:[ \t-]*(?:nummer|nr))?|(?:zulassungsnummer|kennnummer|bezugsnr\.?)\s+der\s+partie|partie(?:[ \t-]*(?:nummer|nr))?|lot(?:[ \t]+(?:no|number(?=[ \t]*[:#\n])))?|batch(?:[ \t]+(?:number|no))?|L(?=[ \t]*:)|^L(?=[ \t]+[A-Z0-9]))\b\.?[ \t]*(?:[:#\-–][ \t]*\n?[ \t]*|\n[ \t]*)?/gim;
   const LOT_SEGMENT = String.raw`(?=[A-Za-z0-9./-]*\d)[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)*`;
   const LOT_VALUE = new RegExp(String.raw`^(?:[A-Z]{1,5}[ \t]+)?${LOT_SEGMENT}(?:[ \t]+${LOT_SEGMENT})*(?:[ \t]+[A-Z]{1,5}(?=[ \t]*(?:[;,.\n]|$)))?`);
-  const IMPRINT_REFERENCE = /\b(?:mhd|mindestens\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer))(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i;
+  const IMPRINT_REFERENCE = /\b(?:mhd|mind(?:estens|\.)?\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer))(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i;
 
   const LOT_PRINT_FIELD = String.raw`chargen?(?:[ \t-]*(?:nr\.?|nummer))?|los(?:[ \t-]*(?:nr\.?|nummer))?|bezugs(?:nummer|nr\.?)\s+der\s+partie|lot[ \t]+(?:no\.?|number)|batch(?:[ \t]+(?:no\.?|number))?`;
-  const DATE_PRINT_FIELD = String.raw`mhd|mindestens\s+haltbar\s+bis|best\s+before(?:\s+end)?|expiry\s+date`;
+  const DATE_PRINT_FIELD = String.raw`mhd|mind(?:estens|\.)?\s+haltbar\s+bis|best\s+before(?:\s+end)?|expiry\s+date`;
   const PRINT_FIELD = String.raw`(?:${LOT_PRINT_FIELD}|${DATE_PRINT_FIELD})`;
   const PRINT_REFERENCE = new RegExp(String.raw`\b(${PRINT_FIELD})(?:[ \t]*(?:[,/]|und\b|and\b)[ \t]*(${PRINT_FIELD}))?[ \t:.]*\n?[ \t]*(?:siehe|s\.|see)\s+(aufdruck|stempel|(?:behälter|packungs)?boden|(?:container|packaging)\s+(?:bottom|base)|imprint|stamp)\b`, "gi");
 
@@ -704,7 +712,7 @@ const Labeling = (() => {
       ? candidate : null;
   }
 
-  function checkRule(rule, text, normText) {
+  function checkRule(rule, text, normText, feedType = null) {
     const positive = rule.patterns.filter(p => !p.isNegativePattern);
     const negative = rule.patterns.filter(p => p.isNegativePattern);
 
@@ -754,7 +762,7 @@ const Labeling = (() => {
     }
     const evidence = lotRule ? lots[0]
       : expiry?.evidence ?? moisture[0] ?? (netQuantity ? netAmounts.map(amount => amount.evidence).join(" / ") || null
-        : structuredEvidence(rule.id, text));
+        : structuredEvidence(rule.id, text, feedType));
     const po = lotRule && !evidence ? possibleLotCode(text) : null;
     const hasNumericEvidence = netQuantity || rule.id.startsWith("art17_004_");
     const packageHint = netQuantity && !evidence
@@ -1193,7 +1201,7 @@ const Labeling = (() => {
       };
     }
     const normText = normalizeText(ocrText);
-    const ruleResults = rules.map(rule => checkRule(rule, ocrText, normText));
+    const ruleResults = rules.map(rule => checkRule(rule, ocrText, normText, feedType));
     const dietary = ocrText.match(DIET_DECLARATION) !== null;
     if (dietary) ruleResults.push(...dietRuleResults(ocrText));
     return { feedType, ruleResults, overallStatus: overallStatus(ruleResults), dietary };

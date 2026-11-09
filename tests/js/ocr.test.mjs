@@ -682,6 +682,30 @@ test("Mineralfutter-Überschrift gewinnt gegen den vorgeschriebenen Hinweis „D
   assert.equal(detect(`Mineralfutter für Rinder\nFütterungsempfehlung: 100 g\n${note}`), "mineral_feed");
 });
 
+test("Kurzform „Mineralfutter für Rinder“ belegt die Futtermittelart nur für den passenden Typ", () => {
+  const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Mineralfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
+  const check = (text, type) => Labeling.check(text, FEED_TYPES.find(f => f.id === type), [rule]).ruleResults[0];
+  const label = "Carolina\nMineralfutter für Rinder\nDieses Ergänzungsfutter darf wegen der gegenüber Alleinfuttermitteln höheren Gehalte an Rinder gefüttert werden.";
+  const found = check(label, "mineral_feed");
+  assert.equal(found.status, "found");
+  assert.equal(found.matchedText, "Mineralfutter für Rinder");
+  assert.equal(check(label, "complete_feed").status, "missing");
+  assert.equal(check("Ergänzungsfutter für Pferde\nZusammensetzung: Hafer", "complementary_feed").status, "found");
+  // Fließtext und Anweisungen im Satz sind keine Bezeichnung
+  assert.equal(check("Zusammensetzung: Hafer. Man kann Mineralfutter für Rinder zusätzlich anbieten.", "mineral_feed").status, "missing");
+});
+
+test("„mind. haltbar bis: Siehe Aufdruck“ ist ein Verweis auf den Aufdruck", () => {
+  const rule = { id: "art17_002_complementary", severity: "critical", patterns: [{ patternValue: "MHD", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const result = Labeling.check("Mineralfutter für Rinder\nEinschließlich Vitamine mind.\nhaltbar bis: Siehe Aufdruck\nSechs Monate vor MHD hergestellt.", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(result.status, "probablyFound");
+  assert.match(result.matchedText, /mind\. haltbar bis: Siehe Aufdruck/);
+  assert.match(result.note, /Verweis auf Aufdruck erkannt/);
+  const dated = Labeling.check("Mineralfutter\nmind. haltbar bis: 12/2027", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(dated.status, "found");
+  assert.match(dated.matchedText, /12\/2027/);
+});
+
 test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
   const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
   const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
