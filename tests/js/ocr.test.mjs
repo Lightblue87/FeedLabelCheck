@@ -662,7 +662,8 @@ test("Herstelleranschrift mit gängigen Straßenformen bleibt ein Firmenbeleg", 
     const check = text => checkNumericLabelRule(id, `Alleinfuttermittel für Legehennen.\n${text}`, legacy);
     for (const address of ["Hersteller: Geflügelfutter eG, Am Markt 3, 31000 Hildesheim", "Salinenallee 4, 74000 Heilbronn",
                            "Vertrieb: Futterhof OHG, Dorfring 2, 50000 Köln", "Im Gewerbepark 7, 90000 Nürnberg",
-                           "Hersteller: Muster, 12345 Musterstadt"]) {
+                           "Hersteller: Muster, 12345 Musterstadt", "Mars PF France - CS 20001 - 45550 Saint-Denis-de-l'Hôtel",
+                           "Postfach 1234, 49000 Osnabrück", "Mars PF France - C$ 20001 - 45550 Saint-Denis-de-VHötel"]) {
       assert.equal(check(address).status, "found", address);
     }
     // weiterhin kein Firmenbeleg ohne Adresskontext
