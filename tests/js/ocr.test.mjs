@@ -780,6 +780,9 @@ test("Phosphor und Rohprotein werden aus einem beschrifteten Abschnitt auf 12 % 
   assert.match(calc("phosphorus").matchedText, /^5,28 g\/kg/);
   assert.match(calc("protein").matchedText, /^264 g\/kg/);
   assert.equal(result.overallStatus, "unklar");
+  // eine vorangestellte Prozentzahl einer Nachbarangabe ist keine zweite Feuchteangabe
+  const adjacent = Labeling.check(text.replace("Rohproteln 6%,", "Rohasche 7 %"), FEED_TYPES[0], []);
+  assert.match(adjacent.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^5,28 g\/kg/);
   const at12 = Labeling.check(text.replace("80%", "12%"), FEED_TYPES[0], []);
   assert.match(at12.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").matchedText, /^1,2 g\/kg/);
 });
@@ -810,6 +813,7 @@ test("Feuchteumrechnung bleibt bei widersprüchlicher oder nicht zuordenbarer Ba
     "Analytische Bestandteile: Phosphor 1.200 mg/kg, Feuchte 80%.",
     "Analytische Bestandteile: Phosphor 1200 mg/kg TM, Feuchte 80%.",
     "Analytische Bestandteile: Phosphor 0,12%; 0,25% phosphorus; Feuchte 80%.",
+    "Analytische Bestandteile: Phosphor 0,12%; Feuchte 80%; 83% moisture.",
   ]) {
     const result = Labeling.check(label + body, FEED_TYPES[0], []);
     assert.equal(result.ruleResults.find(r => r.rule.id === "art18_renal_12pct_phosphorus").status, "unclear", body);

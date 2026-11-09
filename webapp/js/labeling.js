@@ -417,7 +417,9 @@ const Labeling = (() => {
 
   function declaredMoisture(text) {
     const matches = new Map();
-    for (const [evidence, amount] of text.matchAll(new RegExp(MOISTURE_READING, "giu"))) {
+    // Nachgestellte („Feuchte 80 %“) und vorangestellte („83 % moisture“) Angaben zählen für Widersprüche.
+    const preceding = new RegExp(String.raw`\b(?<![\p{L}\p{N},.])(${DECIMAL})[ \t|]*%[ \t|]*(?:${MOISTURE_NAME})(?![\p{L}\p{N}])(?![ \t:.;·|]*\d)`, "giu");
+    for (const [evidence, amount] of [...text.matchAll(new RegExp(MOISTURE_READING, "giu")), ...text.matchAll(preceding)]) {
       const key = amountNumber(amount);
       if (!matches.has(key)) matches.set(key, evidence);
     }
