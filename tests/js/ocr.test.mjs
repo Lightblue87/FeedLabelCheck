@@ -701,3 +701,39 @@ test("Der Hinweis auf leichtverdauliche Ernährung gehört zum ausdrücklich dek
   assert.match(check.rule.legalBasis, /Eintrag 19/);
   assert.ok(!result.ruleResults.some(r => r.rule.id.startsWith("art18_renal_")));
 });
+
+test("Diät-Nachsuche braucht einen konkreten Zweck und eine separat lesbare Deklaration", () => {
+  assert.equal(Labeling.needsDietDeclaration("Zur Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz"), true);
+  assert.equal(Labeling.needsDietDeclaration("Renal, unterstützt die Nieren"), false);
+  assert.equal(Labeling.needsDietDeclaration("Diät-Alleinfuttermittel für Katzen. Zur Unterstützung der Nierenfunktion."), false);
+  assert.equal(Labeling.dietDeclarationHint("Zusatzprüfung: DIÄT-ALLEINFUTTERMITTEL FÜR AUSGEWACHSENE KATZEN. Beschreibung."),
+    "DIÄT-ALLEINFUTTERMITTEL FÜR AUSGEWACHSENE KATZEN");
+  assert.equal(Labeling.dietDeclarationHint("Renal. Zur Unterstützung der Nierenfunktion bei Katzen"), "");
+  const renal = "Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz";
+  assert.equal(Labeling.dietPurposeHint(`${renal} und zur Verringerung von Oxalsteinbildung.`, renal),
+    "Verringerung von Oxalsteinbildung");
+});
+
+test("OCR-Ausschnitt verwendet die Wörter der passenden Phrase und ignoriert Randtext", () => {
+  const bounds = x0 => ({ x0, x1: x0 + 8, y0: 20, y1: 30 });
+  const data = { blocks: [{ paragraphs: [{ lines: [{ words: ["Rand", "Nettogewicht", "500g"].map((text, i) => ({
+    text, confidence: 90, bbox: bounds(i * 10),
+  })) }] }] }] };
+  assert.deepEqual(Ocr.findTextRegion(data, Labeling.matchNetHeading), { first: bounds(10), last: bounds(10) });
+  assert.equal(Ocr.findTextRegion(data, Labeling.matchDietPurposeAnchor), null);
+});
+
+test("ein getrennt gedruckter Calciumgehalt bleibt eine zweifach gelesene Zusatzangabe", () => {
+  const broken = "Diät-Alleinfuttermittel für Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n"
+    + "Analytische Bestandteile: Rohasche 1,8%, Calci-\n‚um 0,189, Phosphor 0,12%, Kalium 0,25%.";
+  assert.equal(Labeling.needsSplitCalcium(broken), true);
+  assert.equal(Labeling.needsSplitCalcium(broken.replace("Calci-\n‚um 0,189,", "Calcium 0,18%,")), false);
+  const hint = Labeling.matchingSplitCalcium("ım 0,18%, Phosphor 0,12%", "m 0,18%, Phosphor 0,12%");
+  assert.equal(hint, "OCR-Nachprüfung Calcium: 0,18 %");
+  assert.equal(Labeling.matchingSplitCalcium("m 0,18%, Phosphor 0,12%", "m 0,16%, Phosphor 0,12%"), "");
+  assert.equal(Labeling.matchingSplitCalcium("m 0,18%, Phosphor 0,12%", "m 0,18%, Phosphor 0,17%"), "");
+  const result = Labeling.check(broken + "\n\n" + hint, FEED_TYPES[0], []);
+  const calcium = result.ruleResults.find(r => r.rule.id === "art18_renal_calcium");
+  assert.equal(calcium.status, "probablyFound");
+  assert.match(calcium.note, /Originaletikett/);
+});

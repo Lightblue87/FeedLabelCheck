@@ -586,8 +586,52 @@ const Labeling = (() => {
   const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+or\s+(?:before\s+)?extending\b)?\b/gi;
 
   const DIET_SPECIES = /^\s+(?:für\s+(?:(?:ausgewachsene|adulte|erwachsene)\s+)?(?:Hunde|Katzen)|for\s+(?:adult\s+)?(?:dogs|cats)|pour\s+(?:chiens|chats))\b/i;
+  const DIET_PURPOSE_ANCHOR = /\b(?:Zur[ \t]+Unterstützung[ \t]+der[ \t]+Nierenfunktion|Zum[ \t]+Ausgleich[ \t]+unzureichender[ \t]+Verdauung|Zur[ \t]+Auflösung[ \t]+von[ \t]+Struvitsteinen|Zur[ \t]+Verringerung[ \t]+von[ \t]+Struvitsteinrezidiven)\b/i;
+
+  function needsDietDeclaration(text) {
+    return !text.match(DIET_DECLARATION) && DIET_PURPOSE_ANCHOR.test(text);
+  }
+
+  function dietDeclarationHint(text) {
+    for (const match of text.matchAll(DIET_DECLARATION)) {
+      const species = text.slice(match.index + match[0].length, match.index + match[0].length + 80).match(DIET_SPECIES);
+      if (species) return match[0] + species[0];
+    }
+    return "";
+  }
+
+  function dietPurposeHint(text, primary) {
+    return DIET_PURPOSES.filter(pattern => !pattern.test(primary))
+      .map(pattern => text.match(pattern)?.[0].replace(/\s+/g, " "))
+      .filter(Boolean).join(" / ");
+  }
+
   const ANALYSIS_HEADING = /\b(?:Analytische (?:Bestandteile|Inhaltsstoffe)|Analytical (?:constituents|components)|Constituants analytiques)\b[ \t:]*/gi;
   const NEXT_LABEL_SECTION = /\n[ \t]*\n|\b(?:Zusatzstoffe|Additives|Additifs|Fütterungsempfehlung|Feeding (?:recommendation|instructions)|Zusammensetzung|Composition|Mindestens haltbar bis|MHD)\b/i;
+
+  const SPLIT_CALCIUM_LINE = /^[^\p{L}\p{N}\n]*um[ \t]+\S+[ \t]+Phosphor[ \t]+\S+/iu;
+  const OCR_CALCIUM_HINT = "OCR-Nachprüfung Calcium: ";
+  const CALCIUM_LINE_VALUE = new RegExp(String.raw`^(?:[\p{L}\p{P}]{1,4}\s+)?(${DECIMAL})[ \t]*%[ \t]*[,;]?[ \t]*Phosphor[ \t:]+(${DECIMAL})[ \t]*%`, "iu");
+
+  function needsSplitCalcium(text) {
+    if (!text.match(DIET_DECLARATION) || !RENAL_PURPOSE.test(text)) return false;
+    const sections = analyticalSections(text);
+    return sections.some(section => /\bCalci-[ \t]*\n/i.test(section)
+      && section.split("\n").some(line => SPLIT_CALCIUM_LINE.test(line)))
+      && analyticalMineral(sections, "Calcium|Kalzium").length === 0;
+  }
+
+  function matchingSplitCalcium(first, second) {
+    const a = first.match(CALCIUM_LINE_VALUE);
+    const b = second.match(CALCIUM_LINE_VALUE);
+    if (!a || !b || amountNumber(a[1]) !== amountNumber(b[1]) || amountNumber(a[2]) !== amountNumber(b[2])) return "";
+    return `${OCR_CALCIUM_HINT}${a[1]} %`;
+  }
+
+  function analyticalSections(text) {
+    return [...text.matchAll(ANALYSIS_HEADING)].map(match =>
+      text.slice(match.index + match[0].length, match.index + match[0].length + 1800).split(NEXT_LABEL_SECTION, 1)[0]);
+  }
 
   function dietField(id, titleDe, legalBasis, evidence, note, status = evidence ? "found" : "unclear") {
     return {
@@ -595,7 +639,7 @@ const Labeling = (() => {
       status,
       matchedText: evidence || null,
       matchedLanguage: null,
-      confidence: status === "found" ? 1 : 0.3,
+      confidence: status === "found" ? 1 : status === "probablyFound" ? 0.7 : 0.3,
       note: status === "found" ? null : note,
     };
   }
@@ -625,8 +669,13 @@ const Labeling = (() => {
     const sourceEvidence = /\p{L}{3}/u.test(sourceText) && !/^(?:keine|nicht|siehe|see|not)\b/i.test(sourceText)
       ? `${sources[0].trim()} ${sourceText}`.replace(/\s+/g, " ") : null;
     const water = text.match(/\bWasser\s+zur\s+freien\s+Aufnahme\s+anbieten\b|\b(?:fresh\s+)?water\s+should\s+be\s+available\s+at\s+all\s+times\b/i)?.[0];
-    const sections = [...text.matchAll(ANALYSIS_HEADING)].map(match =>
-      text.slice(match.index + match[0].length, match.index + match[0].length + 1800).split(NEXT_LABEL_SECTION, 1)[0]);
+    const sections = analyticalSections(text);
+    const calciumHints = new Map();
+    for (const line of text.split("\n")) {
+      if (!line.startsWith(OCR_CALCIUM_HINT)) continue;
+      const amount = line.slice(OCR_CALCIUM_HINT.length).match(new RegExp(String.raw`^(${DECIMAL})[ \t]*%$`));
+      if (amount) calciumHints.set(amountNumber(amount[1]), line);
+    }
     const minerals = [
       ["calcium", "Calcium", "Calcium|Kalzium"],
       ["phosphor", "Phosphor", "Phosphor|phosphorus|phosphore"],
@@ -634,6 +683,12 @@ const Labeling = (() => {
       ["natrium", "Natrium", "Natrium|sodium"],
     ].map(([id, label, names]) => {
       const values = analyticalMineral(sections, names);
+      if (id === "calcium" && !values.length && calciumHints.size) {
+        return dietField("art18_renal_calcium", label, legalBasis, [...calciumHints.values()].join(" / "),
+          calciumHints.size === 1 ? "Zusatzlesung eines getrennt gedruckten Gehalts. Bitte am Originaletikett bestätigen."
+            : "Widersprüchliche Zusatzlesungen. Bitte am Originaletikett prüfen.",
+          calciumHints.size === 1 ? "probablyFound" : "unclear");
+      }
       return dietField(`art18_renal_${id}`, label, legalBasis, values.join(" / "), values.length > 1
         ? "Widersprüchliche Gehalte im Prüftext. Bitte Originaletikett prüfen."
         : "Kein eindeutig zugeordneter Gehalt unter den analytischen Bestandteilen erkannt.",
@@ -709,6 +764,9 @@ const Labeling = (() => {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
     searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, declaredNetAmount,
     matchNetHeading: text => text.match(NET_HEADING),
+    needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
+    matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
+    matchDietPurposeAnchor: text => text.match(DIET_PURPOSE_ANCHOR),
     needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
   };
 })();

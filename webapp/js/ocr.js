@@ -57,6 +57,24 @@ const Ocr = (() => {
     return lines;
   }
 
+  function findTextRegion(data, matchLine) {
+    for (const words of flattenLines(data.blocks)) {
+      const match = matchLine(words.map(word => word.text).join(" "));
+      if (!match) continue;
+      let offset = 0;
+      const positions = [];
+      for (const word of words) {
+        const start = offset;
+        offset += word.text.length + 1;
+        if (word.bbox && start < match.index + match[0].length && offset > match.index) {
+          positions.push(word.bbox);
+        }
+      }
+      if (positions.length) return { first: positions[0], last: positions[positions.length - 1] };
+    }
+    return null;
+  }
+
   function filterLine(words) {
     const solid = words.filter(w => w.confidence >= LINE_SOLID_WORD_CONFIDENCE).length;
     const maxConfidence = Math.max(...words.map(w => w.confidence));
@@ -128,7 +146,7 @@ const Ocr = (() => {
     return cleaned;
   }
 
-  return { textFromResult, cleanText, flattenLines, filterLine, orientationScore, needsOrientationCheck, isBetterOrientation };
+  return { textFromResult, cleanText, flattenLines, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
