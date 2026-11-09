@@ -156,11 +156,18 @@ const LabelHistory = (() => {
       return entry;
     }
 
-    /** Ändert Text, Futtermitteltyp oder Prüfergebnis; "Behalten" nur über setKeep. */
+    /**
+     * Ändert Text, Futtermitteltyp oder Prüfergebnis; "Behalten" nur über setKeep.
+     * Ein gespeichertes Ergebnis gilt nur für die geprüften Eingaben: ändern sich Text
+     * oder Futtermitteltyp, ohne dass ein neues Ergebnis mitgegeben wird, wird es verworfen.
+     */
     async function update(id, patch) {
       const entry = await store.getEntry(id);
       if (!entry) return null;
+      const inputsChanged = ("text" in patch && patch.text !== entry.text)
+        || ("feedType" in patch && patch.feedType !== entry.feedType);
       for (const k of ["text", "feedType", "lastCheck"]) if (k in patch) entry[k] = patch[k];
+      if (inputsChanged && !("lastCheck" in patch)) entry.lastCheck = null;
       entry.updatedAt = now();
       await store.save({ entry });
       return entry;

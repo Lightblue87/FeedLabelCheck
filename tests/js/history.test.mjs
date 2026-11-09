@@ -190,3 +190,35 @@ test("Operationen auf unbekannte Einträge geben null zurück", async () => {
   assert.equal(await history.setKeep("nope", true), null);
   assert.equal(await history.addPhotos("nope", []), null);
 });
+
+test("gespeichertes Ergebnis wird verworfen, wenn sich der Text ändert", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "Alt" });
+  await history.update(e.id, { text: "Alt", lastCheck: { overall: "keineAuffaelligkeit" } });
+  assert.equal((await history.get(e.id)).lastCheck.overall, "keineAuffaelligkeit");
+
+  await history.update(e.id, { text: "Alt" });                 // unverändert: bleibt
+  assert.equal((await history.get(e.id)).lastCheck.overall, "keineAuffaelligkeit");
+
+  await history.update(e.id, { text: "" });                    // geleert: Ergebnis passt nicht mehr
+  assert.equal((await history.get(e.id)).lastCheck, null);
+});
+
+test("gespeichertes Ergebnis wird verworfen, wenn sich der Futtermitteltyp ändert", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "x", feedType: "auto" });
+  await history.update(e.id, { lastCheck: { overall: "unklar" } });
+  await history.update(e.id, { feedType: "auto" });            // unverändert: bleibt
+  assert.equal((await history.get(e.id)).lastCheck.overall, "unklar");
+  await history.update(e.id, { feedType: "pet_feed" });
+  assert.equal((await history.get(e.id)).lastCheck, null);
+});
+
+test("neues Ergebnis zusammen mit geändertem Text bleibt erhalten", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "alt" });
+  await history.update(e.id, { text: "neu", lastCheck: { overall: "unklar", at: 1 } });
+  const entry = await history.get(e.id);
+  assert.equal(entry.text, "neu");
+  assert.equal(entry.lastCheck.overall, "unklar");
+});
