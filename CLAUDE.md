@@ -142,6 +142,25 @@ Prüfe pro Foto nur Angaben, die darauf sichtbar sind. Nutze zulässige öffentl
 
 Weitere sieben öffentliche Bilder mit Kälber- und Pferdefutter sowie Legehennenfutter geprüft. Nutze als Regressionen die ausgeschriebene Milchaustauscher-Deklaration, OCR-Leerzeichen innerhalb eines Futtermitteltyps, Legehennen und Aufzuchtkälber als Zielgruppen sowie Zutatenlisten mit Schrägstrichen und Semikolons. Die nächste Überschrift, etwa „Inhaltsstoffe“ oder „Einsatzempfehlung“, beendet den Zutatenabschnitt. Allgemeine Werbe- und Tränkehinweise reichen nicht für die automatische Typwahl. Die polnische Deklaration und die zweispaltige Zutatenliste bleiben offene OCR-Fälle. [Testfälle und Quellen in Entwurf #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
 
+### Weitere Testquellen
+
+Ausgewählte Etikettenansichten aus den folgenden öffentlichen Quellen wurden im Rahmen von PR #41 im Foto-Upload geprüft. Die Befunde gelten für die jeweils verwendete Ansicht.
+
+| Quelle | Prüffall und beobachtetes Ergebnis |
+| --- | --- |
+| [Josera Milk&Fat](https://www.daboshop.de/Milchaustauscher-Josera-Kaelbermilch-Laemmermilch-Milk-Magermilchpulver-25-kg-250/Kg) und [deuka Körner Deluxe](https://www.deuka-companion.com/products/deuka-koerner-deluxe) | Die Typwahl erkennt Milchaustauscher. Die Zusammensetzung bei deuka bleibt auch mit Schrägstrichen vollständig. |
+| [De Heus Bestermine Biocomplex WRC](https://www.aldomarket.pl/product-pol-1856-Bestermine-Biocomplex-WRC-mieszanka-paszowa-mineralno-witaminowa-De-Heus-25kg.html) | Der polnische Sackanhänger belegt Mineralfutter. Die Zahl vor „Klinoptylolit“ ist keine Adresse. |
+| [AniForte Leinöl](https://www.aniforte.de/products/leinoel) | Die PWA erkennt Einzelfutter und gibt den Verweis auf den Behälterboden für die Charge aus. |
+| [Tetra Menu](https://www.tetra.net/tr-tr/ueruen/tetra-menu) und [Sera Raffy P Nature](https://www.gosupps.com/media/catalog/product/cache/25/image/1500x/040ec09b1e35df139433887a97daa66f/9/1/91ULIfsr_lL._AC_SL1500_.jpg) | Bei Tetra darf `17000 IE` nicht als Firmenadresse gelten. Bei Sera werden Wasserschildkröten und Echsen als Zielgruppe erkannt. Die `1000 ml` erscheinen mit einem zusätzlichen Mengenausschnitt als wahrscheinlich. |
+| [Kattovit Renal Ente](https://kattovit.com/en/products/nassfutter-ente-frischebeutel-24-x-85g-niere-renal) und [Kattovit Gastro Pute](https://kattovit.com/products/nassfutter-pute-dose-12-x-185g-gastro) | Beim Renal-Beutel lassen sich Nierenzweck, Fütterungsdauer und Tierarzthinweis prüfen. Bei der Gastro-Dosenansicht wurde der Verdauungszweck erkannt. Dauer und Beratungshinweis blieben offen. |
+| [Kattovit Urinary Lachs](https://kattovit.com/en/products/nassfutter-lachs-frischebeutel-24-x-85g-urinary) und [Kattovit Urinary Spezial-Cream](https://kattovit.com/products/snack-spezial-cream-schachtel-11-x-6-x-15g-urinary) | Der Beutel belegt die Verringerung von Struvitsteinrezidiven. Die Spezial-Cream bleibt trotz ähnlichem Produktnamen Ergänzungsfutter. |
+| [Kattovit Sensitive Huhn und Pute](https://kattovit.com/products/nassfutter-huhn-pute-frischebeutel-24-x-85g-sensitive) | Prüfe getrennte Eiweiß- und Kohlenhydratquellen sowie die erste und die bedingte weitere Fütterungsdauer. Einzelne OCR-Ziffern müssen am Bild abgeglichen werden. |
+
+**Noch nicht im Foto-Upload geprüft.** Verwende Produkttexte und Deklarationsblätter als Referenz für den Sollwert. Für einen OCR-Test brauchst du eine lesbare Verpackungsansicht oder ein separat gekennzeichnetes gerendertes Deklarationsblatt.
+
+- **Mineralfutter für Rinder und Diätergänzungsfutter für Kälber.** Der Downloadbereich enthält Deklarationen für TMR-Mineral und BEWI-SAN Bewilyt. Damit lassen sich tabellarische Gehalte und die Abgrenzung zum Milchaustauscher vorbereiten. [Weissachmühle – Deklarationen und Downloads](https://www.weissachmuehle.de/downloads/)
+- **Weitere Diätzwecke bei Katzen.** Die Produktseiten bieten Referenzen für Glucoseversorgung und ernährungsphysiologische Wiederherstellung. [Kattovit Diabetes Lachs](https://kattovit.com/en/products/nassfutter-lachs-frischebeutel-24-x-85g-diabetes) · [Kattovit Aufbaukur Huhn](https://kattovit.com/products/nassfutter-huhn-frischebeutel-24-x-85g-aufbaukur)
+
 ## Abnahme mit Nutzerfotos
 
 - Neun Fotos ergeben sechs Etikettenfälle. Prüfe mehrere Ansichten desselben Produkts gemeinsam. Bei schlecht lesbarem Erstlauf vergleicht der Entwurf #41 Drehungen um 90, 180 und 270 Grad. Nutze die Drehung nur bei deutlich mehr sicher erkannten Wörtern. Das Originalfoto bleibt im Prüfverlauf erhalten.
