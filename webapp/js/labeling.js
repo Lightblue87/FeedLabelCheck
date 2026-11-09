@@ -1074,12 +1074,15 @@ const Labeling = (() => {
 
   // Eintrag 72 verlangt Bezeichnung UND zugesetzte Menge des Darmflorastabilisators. Beides muss im
   // Abschnitt unter der Überschrift stehen; fehlt eines, bleibt das Feld unklar (mit dem erkannten Teil als Beleg).
-  const STABILISER_SECTION = /\bDarmflorastabilisatoren?[ \t]*:[ \t]*(?:\n(?![ \t]*\n))?[^\n]*(?:\n(?![ \t]*\n)[^\n]*)?/i;
+  const STABILISER_SECTION = /\bDarmflorastabilisator(?:en)?[ \t]*:[ \t]*(?:\n(?![ \t]*\n))?[^\n]*(?:\n(?![ \t]*\n)[^\n]*)?/i;
+  const STABILISER_END = new RegExp(`${ADDITIVES_END.source}|\\b(?:Zusatzstoffe|Inhaltsstoffe|Mindesthaltbarkeit|Best[ \\t]+before|Rohprotein|Rohfett|Rohasche|Rohfaser)\\b`, "i");
   const STABILISER_AMOUNT = /\d[\d.,]*(?:[ \t]*[x×*][ \t]*10[ \t]*[\^⁰¹²³⁴⁵⁶⁷⁸⁹°º]?[ \t]*\d*)?[ \t]*(?:KBE|CFU)\b/i;
   const STABILISER_NAME = /\b[A-Z][a-z]{3,}[ \t]+[a-z]{4,}\b|\b4b\d{3,4}[a-z]?\b/;
   function stabiliserField(text, source) {
     const label = "Darmflorastabilisator mit Bezeichnung und zugesetzter Menge";
-    const section = text.match(STABILISER_SECTION)?.[0]?.replace(/\s+/g, " ").trim();
+    const raw = text.match(STABILISER_SECTION)?.[0];
+    // Nur der Teil hinter der Überschrift bis zum nächsten Etikettenfeld zählt (MHD, Hersteller, Nettomenge …).
+    const section = raw ? `${raw.slice(0, raw.indexOf(":") + 1)} ${raw.slice(raw.indexOf(":") + 1).split(STABILISER_END, 1)[0]}`.replace(/\s+/g, " ").trim() : undefined;
     const hasAmount = section ? STABILISER_AMOUNT.test(section) : false;
     const hasName = section ? STABILISER_NAME.test(section) : false;
     if (hasAmount && hasName) {

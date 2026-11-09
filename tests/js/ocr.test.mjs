@@ -850,12 +850,16 @@ test("Diätzwecke Eintrag 72 und 55 für Kälber werden erkannt und zweckbezogen
   // Name oder Menge allein genügen nicht
   const stabiliser = body => field(Labeling.check(`Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.\n${body}`, FEED_TYPES[1], []), "stabiliser");
   for (const body of ["Darmflorastabilisatoren: Enterococcus faecium (KBE)", "Darmflorastabilisatoren: 100 KBE", "Darmflorastabilisatoren: Enterococcus faecium NCIMB 11181",
-                      "Darmflorastabilisatoren:\n\n1 x 10^9 KBE Enterococcus faecium"]) {
+                      "Darmflorastabilisatoren:\n\n1 x 10^9 KBE Enterococcus faecium",
+                      "Darmflorastabilisatoren: 100 KBE\nMindestens haltbar bis: 12.12.2026", "Darmflorastabilisatoren: 100 KBE\nHersteller: Muster GmbH",
+                      "Darmflorastabilisator: 100 KBE\nNettogewicht: 400 g", "Darmflorastabilisatoren: Enterococcus faecium\nMHD 12.12.2026 5 KBE"]) {
     assert.equal(stabiliser(body).status, "unclear", body);
   }
   assert.match(stabiliser("Darmflorastabilisatoren: 100 KBE").note, /Bezeichnung/);
   assert.equal(stabiliser("Darmflorastabilisatoren: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg").status, "found");
   assert.equal(stabiliser("Darmflorastabilisatoren:\n1 x 10° KBE Enterococcus faecium").status, "found");
+  assert.equal(stabiliser("Darmflorastabilisator: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg").status, "found");
+  assert.equal(stabiliser("Darmflorastabilisator: Enterococcus faecium (4b1708) 5,0 x 10^8 KBE/kg\nMindestens haltbar bis: 12.12.2026").status, "found");
   // ohne ausgewiesenen Stabilisator bleibt das Feld offen
   const noStabiliser = Labeling.check("Diätergänzungsfuttermittel für Aufzuchtkälber\nZur Stabilisierung der physiologischen Verdauung.", FEED_TYPES[1], []);
   assert.equal(field(noStabiliser, "stabiliser").status, "unclear");
