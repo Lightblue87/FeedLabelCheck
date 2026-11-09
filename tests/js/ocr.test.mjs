@@ -357,3 +357,25 @@ test("KG nach Zahl mit Leerzeichen/Tab wird weiter als Menge, davor als Rechtsfo
   assert.equal(check("Beispiel GmbH & Co. KG").status, "found");
   assert.equal(check("1,5 KG und danach Beispiel GmbH & Co. KG").status, "found");
 });
+
+test("bisher erkannte Losnummer-Schreibweisen bleiben erkennbar (Bindestrich, Zeilenumbruch, L hinter Datum)", () => {
+  for (const [lot, expected] of [
+    ["MHD 20.12.2026 L 123456", /L 123456/],
+    ["MHD 12/2027 L AB123456", /L AB123456/],
+    ["Charge - A12345", /Charge - A12345/],
+    ["Charge – A12345", /Charge – A12345/],
+    ["Charge\nA12345", /Charge\s+A12345/],
+    ["Los-Nr.\n20240915", /20240915/],
+  ]) {
+    const result = checkNumericLabelRule("art15_004", `Ergänzungsfuttermittel für Pferde.\n${lot}`, legacyLotPattern);
+    assert.equal(result.status, "found", JSON.stringify(lot));
+    assert.match(result.matchedText, expected, JSON.stringify(lot));
+  }
+});
+
+test("ein loses L ohne Datum davor und Mengenangaben mit L belegen keine Losnummer", () => {
+  for (const noise of ["Inhalt 10 L 50 Stück", "Rezeptur 2 L 4", "20.12.2026 L 5", "Packung 5 L 12 kg"]) {
+    const result = checkNumericLabelRule("art15_004", `Ergänzungsfuttermittel für Pferde.\n${noise}`, legacyLotPattern);
+    assert.notEqual(result.status, "found", noise);
+  }
+});
