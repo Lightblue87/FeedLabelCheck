@@ -775,3 +775,50 @@ test("Ein Calciumhinweis stimmt mit derselben Menge in einer anderen Einheit üb
   assert.equal(status("1,8 g/kg"), "found");
   assert.equal(status("0,16 %"), "unclear");
 });
+
+test("Struvitrezidive lösen ihre eigenen Angaben und die Magnesiumrechnung aus", () => {
+  const text = "Diät-Alleinfuttermittel für ausgewachsene Katzen. Zur Verringerung von Struvitsteinrezidiven.\n"
+    + "Es wird empfohlen, vor der Verwendung oder Verlängerung der Fütterungsdauer den Rat eines Tierarztes einzuholen. "
+    + "Metastabilisierende Eigenschaften in Bezug auf Struvit. Wasser zur freien Aufnahme anbieten.\n"
+    + "Analytische Bestandteile: Feuchtegehalt 80%, Calcium\n0,15%, Phosphor 0,12%, Magnesium 0,02%, "
+    + "Kalium 0,15%, Natrium 0,09%, Chlorid 0,15%, Schwefel 0,2%.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === `art18_struvite_${id}`);
+  assert.equal(field("dissolution_effect"), undefined);
+  assert.equal(field("recurrence_effect").status, "found");
+  assert.match(field("recurrence_effect").rule.legalBasis, /Eintrag 18/);
+  assert.equal(field("calcium").matchedText, "Calcium 0,15%");
+  assert.equal(field("chlorid").status, "found");
+  assert.equal(field("schwefel").status, "found");
+  assert.equal(field("water").status, "found");
+  assert.match(field("12pct_magnesium").matchedText, /^0,88 g\/kg/);
+  assert.equal(result.ruleResults.find(r => r.rule.id === "art18_advice").status, "found");
+});
+
+test("Metastabilisierende Eigenschaften allein belegen die Auflösung nicht", () => {
+  const label = "Diät-Alleinfuttermittel für Hunde. Zur Auflösung von Struvitsteinen. ";
+  const check = wording => Labeling.check(label + wording, FEED_TYPES[0], []).ruleResults
+    .find(r => r.rule.id === "art18_struvite_dissolution_effect");
+  assert.equal(check("Metastabilisierende Eigenschaften in Bezug auf Struvit.").status, "unclear");
+  assert.equal(check("Ohne harnsäuernde Eigenschaften.").status, "unclear");
+  const acidifying = check("Harnsäuernde Eigenschaften.");
+  assert.equal(acidifying.status, "found");
+  assert.match(acidifying.rule.legalBasis, /Eintrag 17/);
+});
+
+test("Urinary-Werbung auf einem Ergänzungsfutter belegt keinen Struvit-Ernährungszweck", () => {
+  const label = "Ergänzungsfuttermittel für Katzen. Urinary-Snack, Magnesium reduziert.";
+  const result = Labeling.check(label, FEED_TYPES[1], []);
+  assert.equal(result.dietary, false);
+  assert.ok(!result.ruleResults.some(r => r.rule.id.startsWith("art18_struvite_")));
+});
+
+test("mehrere Fütterungsdauern werden angezeigt und bleiben der manuellen Zuordnung vorbehalten", () => {
+  const text = "Diät-Alleinfuttermittel für Katzen. Auflösung von Struvitsteinen und Verringerung von Struvitsteinrezidiven. "
+    + "Fütterungsdauer: fünf bis zwölf Wochen. Bei Rückfällen zunächst bis zu sechs Monaten.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const duration = result.ruleResults.find(r => r.rule.id === "art18_duration");
+  assert.equal(duration.status, "probablyFound");
+  assert.match(duration.matchedText, /fünf bis zwölf Wochen.*zunächst bis zu sechs Monaten/);
+  assert.match(duration.note, /Zuordnung/);
+});

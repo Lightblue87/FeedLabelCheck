@@ -573,16 +573,18 @@ const Labeling = (() => {
 
   const RENAL_PURPOSE = /\bUnterstützung\s+der\s+Nierenfunktion\s+bei\s+(?:akuter\s+und\s+)?chronischer\s+Niereninsuffizienz\b|\bsupport\s+of\s+renal\s+function\s+in\s+(?:the\s+)?case\s+of\s+(?:acute\s+and\s+)?chronic\s+renal\s+insufficiency\b/i;
   const DIGESTION_PURPOSE = /\bAusgleich\s+unzureichender\s+Verdauung\b|\bcompensation\s+for\s+maldigestion\b/i;
+  const STRUVITE_DISSOLUTION = /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i;
+  const STRUVITE_RECURRENCE = /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i;
   const DIET_PURPOSES = [
     RENAL_PURPOSE,
     /\bVerringerung\s+(?:der\s+|von\s+)?Oxalsteinbildung\b|\breduction\s+of\s+oxalate\s+stone\s+formation\b/i,
     DIGESTION_PURPOSE,
     /\bLinderung\s+(?:(?:akuter|von)\s+)?Resorptionsstörungen\s+des\s+Darms\b|\breduction\s+of\s+(?:acute\s+)?intestinal\s+absorptive\s+disorders\b/i,
-    /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i,
-    /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i,
+    STRUVITE_DISSOLUTION,
+    STRUVITE_RECURRENCE,
   ];
   const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
-  const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "i");
+  const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "gi");
   const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+or\s+(?:before\s+)?extending\b)?\b/gi;
 
   const DIET_SPECIES = /^\s+(?:für\s+(?:(?:ausgewachsene|adulte|erwachsene)\s+)?(?:Hunde|Katzen)|for\s+(?:adult\s+)?(?:dogs|cats)|pour\s+(?:chiens|chats))\b/i;
@@ -648,16 +650,17 @@ const Labeling = (() => {
     const massUnit = String.raw`(?:%(?![\p{L}\p{N}/])|(?:mg|g)[ \t]*\/[ \t]*kg\b)`;
     const value = String.raw`(${DECIMAL})[ \t]*(${massUnit})`;
     const named = new RegExp(String.raw`\b(?:${names})\b[ \t:;=]*${value}`, "giu");
+    const wrapped = new RegExp(String.raw`\b(?:${names})\b[ \t:;=]*\n[ \t]*${value}(?=[ \t]*(?:[,;.\n]|$))`, "giu");
     const preceding = new RegExp(String.raw`(?:^|[,;][ \t]+)\s*(${value}[ \t]+(?:${names})\b)(?![ \t:;=]*\d)`, "gimu");
     const matches = new Map();
     for (const section of sections) {
-      const direct = [...section.matchAll(named)];
+      const direct = [...section.matchAll(named), ...section.matchAll(wrapped)];
       const values = direct.length ? direct : [...section.matchAll(preceding)].map(match => match.slice(1));
       for (const [evidence, amount, unit] of values) {
         const ambiguousDecimal = /^[1-9]\d*\.\d{3}$/.test(amount);
         const gramsPerKg = ambiguousDecimal ? null : amountNumber(amount) * (unit === "%" ? 10 : /^mg/i.test(unit) ? 0.001 : 1);
         const key = gramsPerKg === null ? evidence : gramsPerKg.toPrecision(12);
-        if (!matches.has(key)) matches.set(key, { evidence, gramsPerKg });
+        if (!matches.has(key)) matches.set(key, { evidence: evidence.replace(/\s+/g, " "), gramsPerKg });
       }
     }
     return [...matches.values()];
@@ -666,14 +669,23 @@ const Labeling = (() => {
   const ALTERNATE_ANALYSIS_BASIS = /\b(?:Trockenmasse|Trockensubstanz|dry matter)\b|(?:%|\b(?:mg|g)\s*\/\s*kg)\s+(?:TS|TM|DM)\b|\b(?:bezogen auf|normiert auf|bei|based on|at|Basis:)\s*\d+(?:[,.]\d+)?\s*%\s*(?:Feuchte(?:gehalt)?|Feuchtigkeit(?:sgehalt)?|moisture|water content)\b/i;
   const PHOSPHOR_NAMES = "Phosphor|phosphorus|phosphore";
   const CRUDE_PROTEIN_NAMES = "Rohprotein|Rohproteln|crude protein";
+  const DIET_MINERALS = [
+    ["calcium", "Calcium", "Calcium|Kalzium"],
+    ["phosphor", "Phosphor", PHOSPHOR_NAMES],
+    ["kalium", "Kalium", "Kalium|potassium"],
+    ["natrium", "Natrium", "Natrium|sodium"],
+  ];
+  const STRUVITE_MINERALS = [
+    ...DIET_MINERALS,
+    ["magnesium", "Magnesium", "Magnesium|magnésium"],
+    ["chlorid", "Chlorid", "Chloride?|chlorures?"],
+    ["schwefel", "Schwefel", "Schwefel|sul(?:f|ph)ur|soufre"],
+  ];
+  const FREE_WATER = /\bWasser\s+zur\s+freien\s+Aufnahme\s+anbieten\b|\b(?:fresh\s+)?water\s+should\s+be\s+available\s+at\s+all\s+times\b/i;
   const formatDietNumber = value => value.toLocaleString("de-DE", { maximumFractionDigits: 3, useGrouping: false });
 
-  function dietAmountsAt12Percent(text, sections, legalBasis) {
+  function dietAmountsAt12Percent(text, sections, legalBasis, prefix, fields) {
     const ruleSource = `${legalBasis} · VO (EG) Nr. 152/2009, Anhang III`;
-    const fields = [
-      ["phosphorus", "Phosphor", PHOSPHOR_NAMES],
-      ["protein", "Rohprotein", CRUDE_PROTEIN_NAMES],
-    ];
     const moistureValues = new Set(sections.flatMap(declaredMoisture)
       .map(evidence => amountNumber(evidence.match(/\d+(?:[,.]\d+)?(?=[ \t|]*%)/)[0])));
     const [moisture] = moistureValues;
@@ -687,11 +699,41 @@ const Labeling = (() => {
       const canConvert = ordinaryBasis && moistureValues.size === 1 && moisture >= 0 && moisture < 100
         && value?.gramsPerKg != null && value.gramsPerKg <= (100 - moisture) * 10 && sameSection;
       const result = canConvert ? formatDietNumber(value.gramsPerKg * 88 / (100 - moisture)) : null;
-      return dietField(`art18_renal_12pct_${id}`, `${title} rechnerisch bei 12 % Feuchte`, ruleSource,
+      return dietField(`art18_${prefix}_12pct_${id}`, `${title} rechnerisch bei 12 % Feuchte`, ruleSource,
         result === null ? null : `${result} g/kg (aus „${value.evidence}“ und ${formatDietNumber(moisture)} % Feuchte)`,
         result === null ? "Feuchte, Gehalt oder Bezugsbasis im selben Analyseabschnitt nicht eindeutig."
-          : "Berechnet aus den Etikettangaben. Ausgangswerte und Bezugsbasis am Original prüfen. Die zutreffende Variante in Eintrag 10 ist fachlich zu klären.",
+          : "Berechnet aus den Etikettangaben. Ausgangswerte und Bezugsbasis am Original prüfen. Die zutreffende Anforderung ist fachlich zu prüfen.",
         result === null ? "unclear" : "probablyFound");
+    });
+  }
+
+  function dietMineralFields(text, sections, minerals, prefix, legalBasis) {
+    const calciumHints = new Map();
+    for (const line of text.split("\n")) {
+      if (!line.startsWith(OCR_CALCIUM_HINT)) continue;
+      const amount = line.slice(OCR_CALCIUM_HINT.length).match(new RegExp(String.raw`^(${DECIMAL})[ \t]*%$`));
+      if (amount) calciumHints.set(amountNumber(amount[1]), line);
+    }
+    return minerals.map(([id, label, names]) => {
+      const ruleId = `art18_${prefix}_${id}`;
+      const values = analyticalAmounts(sections, names);
+      if (id === "calcium" && calciumHints.size) {
+        const conflicting = calciumHints.size > 1 || (values.length > 0
+          && [...calciumHints.keys()].some(hint => values.some(value => value.gramsPerKg === null || Math.abs(value.gramsPerKg - hint * 10) > 1e-8)));
+        if (conflicting || !values.length) {
+          const evidence = [...values.map(value => value.evidence), ...calciumHints.values()];
+          return dietField(ruleId, label, legalBasis, evidence.join(" / "),
+            conflicting ? "Widersprüchliche Zusatzlesungen. Bitte am Originaletikett prüfen."
+              : "Zusatzlesung eines getrennt gedruckten Gehalts. Bitte am Originaletikett bestätigen.",
+            conflicting ? "unclear" : "probablyFound");
+        }
+      }
+      const ambiguous = values.some(value => value.gramsPerKg === null);
+      return dietField(ruleId, label, legalBasis, values.map(value => value.evidence).join(" / "),
+        values.length > 1 ? "Widersprüchliche Gehalte im Prüftext. Bitte Originaletikett prüfen."
+          : ambiguous ? "Dezimal- oder Tausendertrennzeichen im Prüftext nicht eindeutig."
+          : "Kein eindeutig zugeordneter Gehalt unter den analytischen Bestandteilen erkannt.",
+        values.length === 1 && !ambiguous ? "found" : "unclear");
     });
   }
 
@@ -701,45 +743,45 @@ const Labeling = (() => {
       .split(ANALYSIS_HEADING, 1)[0].split(NEXT_LABEL_SECTION, 1)[0].trim() : "";
     const sourceEvidence = /\p{L}{3}/u.test(sourceText) && !/^(?:keine|nicht|siehe|see|not)\b/i.test(sourceText)
       ? `${sources[0].trim()} ${sourceText}`.replace(/\s+/g, " ") : null;
-    const water = text.match(/\bWasser\s+zur\s+freien\s+Aufnahme\s+anbieten\b|\b(?:fresh\s+)?water\s+should\s+be\s+available\s+at\s+all\s+times\b/i)?.[0];
     const sections = analyticalSections(text);
-    const calciumHints = new Map();
-    for (const line of text.split("\n")) {
-      if (!line.startsWith(OCR_CALCIUM_HINT)) continue;
-      const amount = line.slice(OCR_CALCIUM_HINT.length).match(new RegExp(String.raw`^(${DECIMAL})[ \t]*%$`));
-      if (amount) calciumHints.set(amountNumber(amount[1]), line);
-    }
-    const minerals = [
-      ["calcium", "Calcium", "Calcium|Kalzium"],
-      ["phosphor", "Phosphor", PHOSPHOR_NAMES],
-      ["kalium", "Kalium", "Kalium|potassium"],
-      ["natrium", "Natrium", "Natrium|sodium"],
-    ].map(([id, label, names]) => {
-      const values = analyticalAmounts(sections, names);
-      if (id === "calcium" && calciumHints.size) {
-        const conflicting = calciumHints.size > 1 || (values.length > 0
-          && [...calciumHints.keys()].some(hint => values.some(value => value.gramsPerKg === null || Math.abs(value.gramsPerKg - hint * 10) > 1e-8)));
-        if (conflicting || !values.length) {
-          const evidence = [...values.map(value => value.evidence), ...calciumHints.values()];
-          return dietField("art18_renal_calcium", label, legalBasis, evidence.join(" / "),
-            conflicting ? "Widersprüchliche Zusatzlesungen. Bitte am Originaletikett prüfen."
-              : "Zusatzlesung eines getrennt gedruckten Gehalts. Bitte am Originaletikett bestätigen.",
-            conflicting ? "unclear" : "probablyFound");
-        }
-      }
-      const ambiguous = values.some(value => value.gramsPerKg === null);
-      return dietField(`art18_renal_${id}`, label, legalBasis, values.map(value => value.evidence).join(" / "),
-        values.length > 1 ? "Widersprüchliche Gehalte im Prüftext. Bitte Originaletikett prüfen."
-          : ambiguous ? "Dezimal- oder Tausendertrennzeichen im Prüftext nicht eindeutig."
-          : "Kein eindeutig zugeordneter Gehalt unter den analytischen Bestandteilen erkannt.",
-        values.length === 1 && !ambiguous ? "found" : "unclear");
-    });
     return [
       dietField("art18_renal_protein", "Proteinquellen", legalBasis, sourceEvidence,
         "Keine ausdrücklich genannten Proteinquellen im Prüftext erkannt."),
-      ...minerals,
-      ...dietAmountsAt12Percent(text, sections, legalBasis),
-      dietField("art18_renal_water", "Hinweis zur freien Wasseraufnahme", legalBasis, water,
+      ...dietMineralFields(text, sections, DIET_MINERALS, "renal", legalBasis),
+      ...dietAmountsAt12Percent(text, sections, legalBasis, "renal", [
+        ["phosphorus", "Phosphor", PHOSPHOR_NAMES],
+        ["protein", "Rohprotein", CRUDE_PROTEIN_NAMES],
+      ]),
+      dietField("art18_renal_water", "Hinweis zur freien Wasseraufnahme", legalBasis, text.match(FREE_WATER)?.[0],
+        "Kein eindeutiger Hinweis zur freien Wasseraufnahme im Prüftext erkannt."),
+    ];
+  }
+
+  function struviteFields(text, legalBasis, dissolution, recurrence) {
+    const sections = analyticalSections(text);
+    const urinaryEffect = /\b(?:harnsäuernde\s+Eigenschaften|urine\s+acidifying\s+properties|Eigenschaften\s+zur\s+Bildung\s+eines\s+an\s+Struvit\s+untersättigten\s+Harns|urine\s+undersaturating\s+properties)\b/gi;
+    const recurringEffect = /\b(?:harnuntersättigende|metastabilisierende)\s+Eigenschaften\s+(?:in\s+Bezug\s+auf|für)\s+Struvit\b/gi;
+    const positiveClaim = pattern => [...text.matchAll(pattern)].find(match =>
+      !/\b(?:keine?|ohne|nicht|no|without)\s*$/i.test(text.slice(Math.max(0, match.index - 20), match.index)))?.[0];
+    const general = positiveClaim(urinaryEffect);
+    const recurrenceEvidence = [positiveClaim(recurringEffect), general].filter(Boolean).join(" / ");
+    const effects = [];
+    if (dissolution) {
+      effects.push(dietField("art18_struvite_dissolution_effect", "Eigenschaften zur Auflösung von Struvitsteinen",
+        `${legalBasis}, Eintrag 17`, general, "Kein eindeutiger Hinweis auf harnuntersättigende oder harnsäuernde Eigenschaften erkannt."));
+    }
+    if (recurrence) {
+      effects.push(dietField("art18_struvite_recurrence_effect", "Eigenschaften zur Verringerung von Struvitsteinrezidiven",
+        `${legalBasis}, Eintrag 18`, recurrenceEvidence, "Kein eindeutiger Hinweis auf die geforderten Eigenschaften erkannt."));
+    }
+    const source = `${legalBasis}, ${dissolution && recurrence ? "Einträge 17 und 18" : dissolution ? "Eintrag 17" : "Eintrag 18"}`;
+    return [
+      ...effects,
+      ...dietMineralFields(text, sections, STRUVITE_MINERALS, "struvite", source),
+      ...dietAmountsAt12Percent(text, sections, source, "struvite", [
+        ["magnesium", "Magnesium", "Magnesium|magnésium"],
+      ]),
+      dietField("art18_struvite_water", "Hinweis zur freien Wasseraufnahme", source, text.match(FREE_WATER)?.[0],
         "Kein eindeutiger Hinweis zur freien Wasseraufnahme im Prüftext erkannt."),
     ];
   }
@@ -752,12 +794,17 @@ const Labeling = (() => {
       DIET_SPECIES.test(text.slice(match.index + match[0].length, match.index + match[0].length + 80)));
     const renal = dogOrCat && RENAL_PURPOSE.test(text);
     const digestion = dogOrCat && DIGESTION_PURPOSE.test(text);
+    const dissolution = dogOrCat && STRUVITE_DISSOLUTION.test(text);
+    const recurrence = dogOrCat && STRUVITE_RECURRENCE.test(text);
+    const extendedAdvice = renal || dissolution || recurrence;
+    const durations = [...new Set([...text.matchAll(DIET_DURATION)].map(([wording]) => wording.replace(/\s+/g, " ")))];
     const advice = [...text.matchAll(DIET_ADVICE)].map(([wording]) => wording.replace(/\s+/g, " "));
-    const renalAdvice = advice.find(wording => /Tierarzt|Tierärztin|veterinarian/i.test(wording)
+    const vetAdvice = advice.find(wording => /Tierarzt|Tierärztin|veterinarian/i.test(wording)
       && /Verlängerung|extending/i.test(wording)
       && /\b(?:vor\s+(?:der\s+)?(?:Verwendung|Anwendung|Fütterung)|before\s+(?:use|feeding))\b/i.test(wording));
     const extra = [];
     if (renal) extra.push(...renalDietFields(text, `${annex}, Eintrag 10`));
+    if (dissolution || recurrence) extra.push(...struviteFields(text, annex, dissolution, recurrence));
     if (digestion) {
       extra.push(dietField("art18_digestible_diet", "Hinweis auf leichtverdauliche Ernährung", `${annex}, Eintrag 19`,
         text.match(/\bleichtverdauliche\s+Ernährung\b|\bhighly\s+digestible\s+diet\b/i)?.[0],
@@ -767,17 +814,20 @@ const Labeling = (() => {
       dietField("art18_purpose", "Besonderer Ernährungszweck", `${article} Buchst. b · ${annex}`,
         purposes.join(" / "), "Kein Ernährungszweck aus der hinterlegten Liste im Prüftext erkannt. Bitte Deklaration am Etikett prüfen."),
       dietField("art18_duration", "Empfohlene Fütterungsdauer", `${article} Buchst. b · ${annex}`,
-        text.match(DIET_DURATION)?.[0].replace(/\s+/g, " "), "Keine zuordenbare Fütterungsdauer im Prüftext erkannt."),
+        durations.join(" / "), durations.length > 1 ? "Mehrere Zeitangaben erkannt. Zuordnung zum Ernährungszweck prüfen."
+          : "Keine zuordenbare Fütterungsdauer im Prüftext erkannt.",
+        durations.length > 1 ? "probablyFound" : durations.length === 1 ? "found" : "unclear"),
       dietField("art18_advice", "Hinweis auf fachlichen Rat",
         renal ? `${article} Buchst. c · ${annex}, Eintrag 10` : `${article} Buchst. c`,
-        renalAdvice || advice[0], renal
-          ? "Bei Nierendiät den Tierarzthinweis für Verwendung und Verlängerung der Fütterungsdauer prüfen."
+        vetAdvice || advice[0], extendedAdvice
+          ? "Den Tierarzthinweis für Verwendung und Verlängerung der Fütterungsdauer prüfen."
           : "Kein zuordenbarer Beratungshinweis im Prüftext erkannt.",
-        (renal ? renalAdvice : advice[0]) ? "found" : "unclear"),
+        (extendedAdvice ? vetAdvice : advice[0]) ? "found" : "unclear"),
       ...extra,
       dietField("art18_review", "Weitere Angaben zum Ernährungszweck", annex, null,
         "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."
           + (renal ? " Bei Nierendiät auch die zutreffende Variante in Eintrag 10, zugesetzte essentielle Fettsäuren und gegebenenfalls Lanthancarbonat prüfen." : "")
+          + (dissolution || recurrence ? " Bei Struvitdiät auch den Magnesiumhöchstwert und den Nachweis der angegebenen Harneigenschaften prüfen." : "")
           + (digestion ? " Beim Ausgleich unzureichender Verdauung auch die leichtverdaulichen Ausgangsquellen und gegebenenfalls deren Behandlung prüfen." : "")),
 
     ];
