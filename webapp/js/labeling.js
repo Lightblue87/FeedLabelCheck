@@ -321,14 +321,15 @@ const Labeling = (() => {
   const DECIMAL = String.raw`\d+(?:[,.]\d+)?`;
   const PACKAGE_AMOUNT = String.raw`(${DECIMAL})[ \t]*(kg|g|t|ml|l|Liter|Kilogramm|Gramm)\b`;
   const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Nettoinhalt|Nettovolumen|Packungsinhalt|Füllmenge|Inhalt|Netto|net weight|net contents|net volume|net quantity|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
-  const NET_PREFIX = String.raw`\b(?:${NET_LABEL})\b[ \t:)]*\n?[ \t]*`;
+  const NET_PREFIX = String.raw`\b(?:${NET_LABEL})\b[ \t:)]*(?:/[ \t]*)?\n?[ \t]*`;
   const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*[/=×])`, "i");
-  const PACK_TOTAL = new RegExp(String.raw`${NET_PREFIX}(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*=[ \t]*${PACKAGE_AMOUNT}`, "i");
+  const PACK_TOTAL = new RegExp(String.raw`${NET_PREFIX}(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e©]?[ \t]*=[ \t]*${PACKAGE_AMOUNT}`, "i");
   const amountNumber = value => Number(value.replace(",", "."));
   const AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*$`, "im");
   const AMOUNT_LINE_ALL = new RegExp(AMOUNT_LINE.source, "gim");
   const PACK_COUNT = new RegExp(String.raw`\([ \t]*(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*\)`, "i");
-  const NET_HEADING = new RegExp(String.raw`\b(?:${NET_LABEL})\b`, "i");
+  const NET_TERM = String.raw`\b(?:${NET_LABEL})\b`;
+  const NET_HEADING = new RegExp(String.raw`${NET_TERM}(?:[ \t]*/[ \t]*${NET_TERM})*`, "i");
   const OCR_AMOUNT_HINT = "OCR-Kandidat Packungsmenge: ";
   const MOISTURE_NAME = "Feuchtegehalt|Feuchtigkeitsgehalt|Feuchtigkeit|Feuchte|Wassergehalt|moisture(?: content)?|humidit[ée6]";
   const ANALYTICAL_NAME = "Rohprotein|Rohfett|Rohfaser|Rohasche|Fettgehalt|Calcium|Phosphor|crude protein|crude fat|crude fib(?:re|er)|crude ash";
@@ -372,14 +373,41 @@ const Labeling = (() => {
     return text.match(pattern)?.[0] ?? null;
   }
 
+  const MOISTURE_READING = String.raw`\b(?:${MOISTURE_NAME})(?![\p{L}\p{N}])[ \t:.;·|]*(${DECIMAL})[ \t|]*%`;
+  const OCR_MOISTURE_HINT = "OCR-Nachprüfung Feuchtewert: ";
+
   function declaredMoisture(text) {
-    const pattern = new RegExp(String.raw`\b(?:${MOISTURE_NAME})(?![\p{L}\p{N}])[ \t:.;·|]*(${DECIMAL})[ \t|]*%`, "giu");
     const matches = new Map();
-    for (const [evidence, amount] of text.matchAll(pattern)) {
+    for (const [evidence, amount] of text.matchAll(new RegExp(MOISTURE_READING, "giu"))) {
       const key = amountNumber(amount);
       if (!matches.has(key)) matches.set(key, evidence);
     }
     return [...matches.values()];
+  }
+
+  function moistureCropHint(primary, first, second) {
+    const pattern = new RegExp(MOISTURE_READING, "iu");
+    const a = first.match(pattern);
+    const b = second.match(pattern);
+    const previous = primary.match(pattern);
+    if (!a || !b || !previous) return "";
+    const value = amountNumber(a[1]);
+    return value >= 0 && value < 100 && value === amountNumber(b[1]) && value !== amountNumber(previous[1])
+      ? `${OCR_MOISTURE_HINT}${a[1]} %` : "";
+  }
+
+  function moistureHints(text) {
+    return [...new Set(text.split("\n").filter(line => line.startsWith(OCR_MOISTURE_HINT)
+      && /^\d+(?:[,.]\d+)?[ \t]*%$/.test(line.slice(OCR_MOISTURE_HINT.length))))];
+  }
+
+
+  function moistureValue(evidence) {
+    return amountNumber(evidence.match(/\d+(?:[,.]\d+)?(?=[ \t|]*%)/)[0]);
+  }
+
+  function moistureConflict(declared, hints) {
+    return new Set([...declared, ...hints].map(moistureValue)).size > 1;
   }
 
   // Obergrenze je Überschrift: ohne sie kopiert jede Überschrift den Resttext (quadratischer Aufwand).
@@ -426,7 +454,7 @@ const Labeling = (() => {
     }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
     if (ruleId.startsWith("art17_004_")) {
-      const fields = declaredMoisture(text).length > 1 ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
+      const fields = moistureConflict(declaredMoisture(text), moistureHints(text)) ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
       return percentageEvidence(text, fields);
     }
     if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {
@@ -498,9 +526,16 @@ const Labeling = (() => {
     const lotRule = rule.id === "art15_004";
     const operatorRule = rule.id === "art15_002" || rule.id.startsWith("art17_005_");
     const moisture = rule.id === "art15_005" ? declaredMoisture(text) : [];
-    if (moisture.length > 1) {
-      return { rule, status: "unclear", matchedText: moisture.join(" / "), matchedLanguage: null,
-               confidence: 0.3, note: "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
+    const humidityHints = rule.id === "art15_005" ? moistureHints(text) : [];
+    if (moistureConflict(moisture, humidityHints)) {
+      return { rule, status: "unclear", matchedText: [...moisture, ...humidityHints].join(" / "),
+               matchedLanguage: null, confidence: 0.3,
+               note: "Widersprüchliche Feuchtewerte erkannt. Bitte am Originalfoto prüfen." };
+    }
+    if (!moisture.length && humidityHints.length) {
+      return { rule, status: "probablyFound", matchedText: humidityHints[0],
+               matchedLanguage: null, confidence: 0.7,
+               note: "Feuchtewert aus Zusatzlesung. Bitte am Originalfoto bestätigen." };
     }
     const evidence = lotRule ? declaredLot(text) : moisture[0] ?? structuredEvidence(rule.id, text);
     const po = lotRule && !evidence ? possibleLotCode(text) : null;
@@ -575,17 +610,20 @@ const Labeling = (() => {
   const DIGESTION_PURPOSE = /\bAusgleich\s+unzureichender\s+Verdauung\b|\bcompensation\s+for\s+maldigestion\b/i;
   const STRUVITE_DISSOLUTION = /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i;
   const STRUVITE_RECURRENCE = /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i;
+  const INTOLERANCE_PURPOSE = /\b(?:Minderung|Verringerung)\s+von\s+Ausgangs?erzeugnis\s*[-‐‑–]\s+und\s+Nährstoffintoleranz(?:en|erscheinungen)\b|\breduction\s+of\s+ingredient\s+and\s+nutrient\s+intolerances\b/i;
   const DIET_PURPOSES = [
     RENAL_PURPOSE,
     /\bVerringerung\s+(?:der\s+|von\s+)?Oxalsteinbildung\b|\breduction\s+of\s+oxalate\s+stone\s+formation\b/i,
     DIGESTION_PURPOSE,
+    INTOLERANCE_PURPOSE,
     /\bLinderung\s+(?:(?:akuter|von)\s+)?Resorptionsstörungen\s+des\s+Darms\b|\breduction\s+of\s+(?:acute\s+)?intestinal\s+absorptive\s+disorders\b/i,
     STRUVITE_DISSOLUTION,
     STRUVITE_RECURRENCE,
   ];
   const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
   const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "gi");
-  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+or\s+(?:before\s+)?extending\b)?\b/gi;
+  const DIET_DURATION_FOLLOWUP = /\b(?:wenn\s+(?:die\s+)?Anzeichen\s+von\s+Intoleranzen\s+verschwinden|if\s+signs\s+of\s+intolerance\s+disappear)\b[^.!?;]{0,125}?\b(?:bis\s+zu\s+(?:einem|1)\s+Jahr|up\s+to\s+(?:one|1)\s+year)\b|\b(?:bei\s+chronischer\s+Insuffizienz\s+der\s+Bauchspeicheldrüse|in\s+case\s+of\s+chronic\s+pancreatic\s+insufficiency)\s*[, ]*\s*(?:lebenslang|for\s+life)\b/gi;
+  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)(?:\s+(?:or|and)\s+(?:before\s+)?extending\b)?\b/gi;
 
   const DIET_SPECIES = /^\s+(?:für\s+(?:(?:ausgewachsene|adulte|erwachsene)\s+)?(?:Hunde|Katzen)|for\s+(?:adult\s+)?(?:dogs|cats)|pour\s+(?:chiens|chats))\b/i;
   const DIET_PURPOSE_ANCHOR = /\b(?:Zur[ \t]+Unterstützung[ \t]+der[ \t]+Nierenfunktion|Zum[ \t]+Ausgleich[ \t]+unzureichender[ \t]+Verdauung|Zur[ \t]+Auflösung[ \t]+von[ \t]+Struvitsteinen|Zur[ \t]+Verringerung[ \t]+von[ \t]+Struvitsteinrezidiven)\b/i;
@@ -686,10 +724,10 @@ const Labeling = (() => {
 
   function dietAmountsAt12Percent(text, sections, legalBasis, prefix, fields) {
     const ruleSource = `${legalBasis} · VO (EG) Nr. 152/2009, Anhang III`;
-    const moistureValues = new Set(sections.flatMap(declaredMoisture)
-      .map(evidence => amountNumber(evidence.match(/\d+(?:[,.]\d+)?(?=[ \t|]*%)/)[0])));
+    const moistureValues = new Set(sections.flatMap(declaredMoisture).map(moistureValue));
     const [moisture] = moistureValues;
-    const ordinaryBasis = !ALTERNATE_ANALYSIS_BASIS.test(text);
+    const ordinaryBasis = !ALTERNATE_ANALYSIS_BASIS.test(text)
+      && !moistureConflict(declaredMoisture(text), moistureHints(text));
     return fields.map(([id, title, names]) => {
       const values = analyticalAmounts(sections, names);
       const value = values.length === 1 ? values[0] : null;
@@ -737,12 +775,27 @@ const Labeling = (() => {
     });
   }
 
+  const PROTEIN_SOURCE = String.raw`(?:ausgewählte\s+)?(?:Proteinquellen?|Eiweißquellen?|protein sources?)`;
+  const CARBOHYDRATE_SOURCE = String.raw`(?:ausgewählte\s+)?(?:Kohlenhydrat(?:quellen?|auellen?)|carbohydrate sources?)`;
+  const DIET_SOURCE_HEADING = new RegExp(String.raw`\b(?:${PROTEIN_SOURCE}|${CARBOHYDRATE_SOURCE})\b[ \t]*[:;]`, "i");
+
+  function dietSourceEvidence(text, label) {
+    const heading = new RegExp(String.raw`\b(?:${label})\b[ \t]*(?:[:;][ \t]*\n?|\n)[ \t]*`, "i");
+    for (const block of text.split(/\n[ \t]*\n/)) {
+      const match = block.match(heading);
+      if (!match) continue;
+      const start = match.index + match[0].length;
+      const body = block.slice(start, start + 300).split(ANALYSIS_HEADING, 1)[0]
+        .split(NEXT_LABEL_SECTION, 1)[0].split(DIET_SOURCE_HEADING, 1)[0].trim();
+      if (/\p{L}{3}/u.test(body) && !/^(?:keine|nicht|siehe|see|not)\b/i.test(body)) {
+        return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
+      }
+    }
+    return null;
+  }
+
   function renalDietFields(text, legalBasis) {
-    const sources = /\b(?:Proteinquellen?|protein sources?)\b[ \t:;]*\s*/i.exec(text);
-    const sourceText = sources ? text.slice(sources.index + sources[0].length, sources.index + sources[0].length + 300)
-      .split(ANALYSIS_HEADING, 1)[0].split(NEXT_LABEL_SECTION, 1)[0].trim() : "";
-    const sourceEvidence = /\p{L}{3}/u.test(sourceText) && !/^(?:keine|nicht|siehe|see|not)\b/i.test(sourceText)
-      ? `${sources[0].trim()} ${sourceText}`.replace(/\s+/g, " ") : null;
+    const sourceEvidence = dietSourceEvidence(text, PROTEIN_SOURCE);
     const sections = analyticalSections(text);
     return [
       dietField("art18_renal_protein", "Proteinquellen", legalBasis, sourceEvidence,
@@ -796,8 +849,11 @@ const Labeling = (() => {
     const digestion = dogOrCat && DIGESTION_PURPOSE.test(text);
     const dissolution = dogOrCat && STRUVITE_DISSOLUTION.test(text);
     const recurrence = dogOrCat && STRUVITE_RECURRENCE.test(text);
-    const extendedAdvice = renal || dissolution || recurrence;
-    const durations = [...new Set([...text.matchAll(DIET_DURATION)].map(([wording]) => wording.replace(/\s+/g, " ")))];
+    const intolerance = dogOrCat && INTOLERANCE_PURPOSE.test(text);
+    const extendedAdvice = renal || dissolution || recurrence || intolerance;
+    const durations = [...new Set([...text.matchAll(DIET_DURATION), ...text.matchAll(DIET_DURATION_FOLLOWUP)]
+      .sort((a, b) => a.index - b.index)
+      .map(([wording]) => wording.replace(/\s+/g, " ")))];
     const advice = [...text.matchAll(DIET_ADVICE)].map(([wording]) => wording.replace(/\s+/g, " "));
     const vetAdvice = advice.find(wording => /Tierarzt|Tierärztin|veterinarian/i.test(wording)
       && /Verlängerung|extending/i.test(wording)
@@ -810,11 +866,20 @@ const Labeling = (() => {
         text.match(/\bleichtverdauliche\s+Ernährung\b|\bhighly\s+digestible\s+diet\b/i)?.[0],
         "Kein eindeutiger Hinweis auf leichtverdauliche Ernährung im Prüftext erkannt."));
     }
+    if (intolerance) {
+      const source = `${annex}, Eintrag 13`;
+      extra.push(
+        dietField("art18_intolerance_protein", "Ausgewählte Proteinquellen", source,
+          dietSourceEvidence(text, PROTEIN_SOURCE), "Proteinquellen und gegebenenfalls deren Behandlung bei Zusatz am Etikett prüfen."),
+        dietField("art18_intolerance_carbohydrates", "Ausgewählte Kohlenhydratquellen", source,
+          dietSourceEvidence(text, CARBOHYDRATE_SOURCE), "Kohlenhydratquellen und gegebenenfalls deren Behandlung bei Zusatz am Etikett prüfen."),
+      );
+    }
     return [
       dietField("art18_purpose", "Besonderer Ernährungszweck", `${article} Buchst. b · ${annex}`,
         purposes.join(" / "), "Kein Ernährungszweck aus der hinterlegten Liste im Prüftext erkannt. Bitte Deklaration am Etikett prüfen."),
       dietField("art18_duration", "Empfohlene Fütterungsdauer", `${article} Buchst. b · ${annex}`,
-        durations.join(" / "), durations.length > 1 ? "Mehrere Zeitangaben erkannt. Zuordnung zum Ernährungszweck prüfen."
+        durations.join(" / "), durations.length > 1 ? "Mehrere Zeitangaben erkannt. Bedingungen und Zuordnung zum Ernährungszweck prüfen."
           : "Keine zuordenbare Fütterungsdauer im Prüftext erkannt.",
         durations.length > 1 ? "probablyFound" : durations.length === 1 ? "found" : "unclear"),
       dietField("art18_advice", "Hinweis auf fachlichen Rat",
@@ -828,6 +893,7 @@ const Labeling = (() => {
         "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."
           + (renal ? " Bei Nierendiät auch die zutreffende Variante in Eintrag 10, zugesetzte essentielle Fettsäuren und gegebenenfalls Lanthancarbonat prüfen." : "")
           + (dissolution || recurrence ? " Bei Struvitdiät auch den Magnesiumhöchstwert und den Nachweis der angegebenen Harneigenschaften prüfen." : "")
+          + (intolerance ? " Bei Futtermittelintoleranzen auch die Kombination der ernährungsphysiologischen Merkmale und bedingte Angaben prüfen." : "")
           + (digestion ? " Beim Ausgleich unzureichender Verdauung auch die leichtverdaulichen Ausgangsquellen und gegebenenfalls deren Behandlung prüfen." : "")),
 
     ];
@@ -855,6 +921,8 @@ const Labeling = (() => {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
     searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, declaredNetAmount,
     matchNetHeading: text => text.match(NET_HEADING),
+    matchMoistureReading: text => text.match(new RegExp(MOISTURE_READING, "iu")),
+    needsMoistureCrop: text => declaredMoisture(text).length === 1, moistureCropHint,
     needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
     matchDietPurposeAnchor: text => text.match(DIET_PURPOSE_ANCHOR),

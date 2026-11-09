@@ -914,31 +914,45 @@
         }
         if (!turn || !Ocr.isBetterOrientation(best, original)) return null;
         draw(turn, 1);
+        let dataScale = 1;
         if (scale < 1) {
           const { data } = await worker.recognize(canvas, {}, output);
           if (Ocr.orientationScore(data) >= Ocr.orientationScore(best)) best = data;
-          else draw(turn, scale);
+          else {
+            draw(turn, scale);
+            dataScale = scale;
+          }
         }
-        return { input: canvas, data: best };
+        return { input: canvas, data: best, turn, dataScale };
       } finally {
         image.close();
       }
     }
 
-    async function readLabelCrop(worker, input, output, rect, mode, scale = 1) {
+    async function readLabelCrop(worker, input, output, rect, mode, scale = 1, turn = 0) {
       const image = await createImageBitmap(input);
       try {
         const x = Math.max(0, rect.x);
         const y = Math.max(0, rect.y);
-        const width = Math.min(image.width, rect.right) - x;
-        const height = Math.min(image.height, rect.bottom) - y;
+        const swapsAxes = Math.abs(turn) === 1;
+        const sourceWidth = swapsAxes ? image.height : image.width;
+        const sourceHeight = swapsAxes ? image.width : image.height;
+        const width = Math.min(sourceWidth, rect.right) - x;
+        const height = Math.min(sourceHeight, rect.bottom) - y;
         if (width < 1 || height < 1) return "";
         const crop = document.createElement("canvas");
         crop.width = Math.ceil(width * scale);
         crop.height = Math.ceil(height * scale);
         const ctx = crop.getContext("2d");
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(image, x, y, width, height, 0, 0, crop.width, crop.height);
+        if (turn) {
+          ctx.scale(crop.width / width, crop.height / height);
+          ctx.translate(sourceWidth / 2 - x, sourceHeight / 2 - y);
+          ctx.rotate(turn * Math.PI / 2);
+          ctx.drawImage(image, -image.width / 2, -image.height / 2);
+        } else {
+          ctx.drawImage(image, x, y, width, height, 0, 0, crop.width, crop.height);
+        }
         await worker.setParameters({ tessedit_pageseg_mode: mode });
         const result = await worker.recognize(crop, {}, output);
         return Ocr.textFromResult(result.data);
@@ -947,18 +961,27 @@
       }
     }
 
-    async function readAmountNearHeading(worker, input, data, output) {
+    async function readAmountNearHeading(worker, input, data, output, primary) {
       const region = Ocr.findTextRegion(data, Labeling.matchNetHeading);
       if (!region) return "";
       const { first, last } = region;
       const height = Math.max(1, first.y1 - first.y0);
-      const text = await readLabelCrop(worker, input, output, {
+      const rect = {
         x: first.x0 - height * 0.5,
         y: first.y0 - height * 0.5,
         right: last.x1 + height * 6,
         bottom: Math.max(0, first.y0 - height * 0.5) + height * 4,
+      };
+      const text = await readLabelCrop(worker, input, output, rect, Tesseract.PSM.SINGLE_BLOCK);
+      if (Labeling.declaredNetAmount(text)) return text;
+      if (!Labeling.matchNetHeading(primary)?.[0].includes("/")) return "";
+
+      // Ein Ausschnitt an ganzen Bildpunkten vermeidet Neuabtastung der schmalen Ziffern.
+      const exact = await readLabelCrop(worker, input, output, {
+        x: Math.ceil(rect.x), y: Math.floor(rect.y),
+        right: Math.ceil(rect.right) - 1, bottom: Math.floor(rect.bottom),
       }, Tesseract.PSM.SINGLE_BLOCK);
-      return Labeling.declaredNetAmount(text) ? text : "";
+      return Labeling.declaredNetAmount(exact) ? exact : "";
     }
 
     async function readDietAbovePurpose(worker, input, data, output, primary) {
@@ -1005,6 +1028,28 @@
       return Labeling.matchingSplitCalcium(firstRead, secondRead);
     }
 
+    async function readMoistureCrop(worker, file, rotated, output, primary) {
+      const region = Ocr.findTextRegion(rotated.data, Labeling.matchMoistureReading);
+      if (!region) return "";
+      const { first, last } = region;
+      const height = Math.max(1, first.y1 - first.y0);
+      const top = Math.min(first.y0, last.y0);
+      const bottom = Math.max(first.y1, last.y1);
+      const reduced = rotated.dataScale < 1;
+      const read = (x, y, right, lower) => readLabelCrop(worker, reduced ? file : rotated.input, output, {
+        x: Math.round(x / rotated.dataScale), y: Math.round(y / rotated.dataScale),
+        right: Math.round(right / rotated.dataScale), bottom: Math.round(lower / rotated.dataScale),
+      }, Tesseract.PSM.SINGLE_LINE, 1, reduced ? rotated.turn : 0);
+      // Boxen der verkleinerten OCR können in die Nachbarzeile ragen.
+      const firstRead = reduced
+        ? await read(first.x0 - height * 0.14, top - height * 0.01, last.x1 + height * 0.32, bottom - height * 0.08)
+        : await read(first.x0 - height * 0.06, top - height * 0.1, last.x1 + height * 0.42, bottom + height * 0.16);
+      if (!Labeling.matchMoistureReading(firstRead)) return "";
+      const secondRead = await read(first.x0 - height * 0.11, top - height * 0.09,
+        last.x1 + height * 0.02, bottom + height * 0.05);
+      return Labeling.moistureCropHint(primary, firstRead, secondRead);
+    }
+
     /**
      * Liest ein Foto; bei Hinweisen auf Packungsmenge oder Aufdruck folgen Zusatzläufe.
      * step(text) meldet den Fortschritt an die Statuszeile (die Zusatzläufe dauern am Handy spürbar),
@@ -1015,11 +1060,12 @@
       const output = { text: true, blocks: true };
       let { data } = await worker.recognize(file, {}, output);
       let input = file;
+      let rotated = null;
       const warnings = [];
       if (Ocr.needsOrientationCheck(data)) {
         step("Ausrichtung wird geprüft");
         try {
-          const rotated = await readRotatedLabel(worker, file, data, output);
+          rotated = await readRotatedLabel(worker, file, data, output);
           if (rotated) ({ input, data } = rotated);
         } catch (e) {
           warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${e?.message || e})`);
@@ -1030,13 +1076,14 @@
       const checkImprint = Labeling.needsImprintLot(primary);
       const checkDiet = Labeling.needsDietDeclaration(primary);
       const checkCalcium = Labeling.needsSplitCalcium(primary);
-      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium) return { text: primary, warnings };
+      const checkMoisture = rotated && Labeling.needsMoistureCrop(primary);
+      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture) return { text: primary, warnings };
 
       let text = primary;
       try {
         if (checkWeight) {
           step("Zusatzprüfung Packungsmenge");
-          const nearby = await readAmountNearHeading(worker, input, data, output);
+          const nearby = await readAmountNearHeading(worker, input, data, output, primary);
           if (nearby) {
             text += `\n\n${nearby}`;
           } else {
@@ -1060,6 +1107,11 @@
           step("Zusatzprüfung Calciumgehalt");
           const calcium = await readSplitCalcium(worker, input, data, output);
           if (calcium) text += `\n\n${calcium}`;
+        }
+        if (checkMoisture) {
+          step("Zusatzprüfung Feuchtegehalt");
+          const moisture = await readMoistureCrop(worker, file, rotated, output, primary);
+          if (moisture) text += `\n\n${moisture}`;
         }
       } catch (e) {
         warnings.push(`Zusatzprüfung fehlgeschlagen (${e?.message || e})`);

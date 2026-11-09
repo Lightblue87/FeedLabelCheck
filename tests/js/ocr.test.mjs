@@ -822,3 +822,52 @@ test("mehrere Fütterungsdauern werden angezeigt und bleiben der manuellen Zuord
   assert.match(duration.matchedText, /fünf bis zwölf Wochen.*zunächst bis zu sechs Monaten/);
   assert.match(duration.note, /Zuordnung/);
 });
+
+test("zweisprachige Nettoüberschrift umfasst die gesamte Packungsformel", () => {
+  const text = "NETTOGEWICHT / POIDS NET: /\n2x57g © = 114 g";
+  assert.equal(Labeling.matchNetHeading(text)[0], "NETTOGEWICHT / POIDS NET");
+  assert.equal(Labeling.declaredNetAmount(text), "114 g");
+  assert.equal(Labeling.declaredNetAmount(text.replace("2x57g", "2x579g")), null);
+  assert.equal(Labeling.declaredNetAmount(text.replace(" = 114 g", "")), null);
+});
+
+test("eine zweite Feuchtelesung zeigt abweichende Werte, bis der OCR-Text korrigiert ist", () => {
+  const first = "Alleinfuttermittel für Katzen. Feuchtigkeit: 63,0 %";
+  const hint = Labeling.moistureCropHint(first, "Feuchtigkeit: 83,0 %,P", "Feuchtigkeit: 83,0%,");
+  assert.equal(hint, "OCR-Nachprüfung Feuchtewert: 83,0 %");
+  assert.equal(Labeling.moistureCropHint(first, "Feuchtigkeit: 83,0 %", "Feuchtigkeit: 80%"), "");
+  assert.equal(Labeling.moistureCropHint(first, "Feuchtigkeit: 63,0 %", "Feuchtigkeit: 63%"), "");
+  const check = text => checkNumericLabelRule("art15_005", text, "Feuchtigkeit", "keyword", 0.7);
+  const conflict = check(`${first}\n\n${hint}`);
+  assert.equal(conflict.status, "unclear");
+  assert.match(conflict.matchedText, /63,0.*OCR-Nachprüfung Feuchtewert: 83,0/);
+  assert.equal(check(`${first.replace("63,0", "83")}\n\n${hint}`).status, "found");
+  assert.equal(check(`Alleinfuttermittel für Katzen.\n\n${hint}`).status, "probablyFound");
+});
+
+test("Sensitive-Diät trennt Eiweiß- und Kohlenhydratquellen und erhält die bedingte Folgedauer", () => {
+  const text = "Diät-Alleinfuttermittel für ausgewachsene Katzen. Zur Minderung von Ausgangerzeugnis- und Nährstoffintoleranzerscheinungen.\n"
+    + "Es wird empfohlen, vor der Verwendung oder Verlängerung der Fütterungsdauer den Rat eines Tierarztes einzuholen. "
+    + "Fütterungsdauer: 3-8 Wochen, wenn Anzeichen von Intoleranzen verschwinden, kann dieses Futtermittel zunächst bis zu einem Jahr verwendet werden.\n"
+    + "Ausgewählte Eiweißquellen: Huhn, Pute. Ausgewählte Kohlenhydratauellen:\n1,9% Kartoffelstärke, Reis. "
+    + "Analytische Bestandteile: Feuchtegehalt 81%.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === `art18_${id}`);
+  assert.equal(field("purpose").status, "found");
+  assert.match(field("duration").matchedText, /3-8 Wochen.*wenn Anzeichen.*einem Jahr/);
+  assert.equal(field("advice").status, "found");
+  assert.equal(field("intolerance_protein").matchedText, "Ausgewählte Eiweißquellen: Huhn, Pute.");
+  assert.match(field("intolerance_carbohydrates").matchedText, /Kartoffelstärke, Reis\.$/);
+  assert.match(field("intolerance_carbohydrates").rule.legalBasis, /Eintrag 13/);
+});
+
+test("Sensitive-Werbetext und bloße Verweise sind keine deklarierten Quellen", () => {
+  const marketing = "Diät-Alleinfuttermittel für Katzen. Sensitive, gut verträglich. Enthält ausgewählte Eiweißquellen.";
+  const noPurpose = Labeling.check(marketing, FEED_TYPES[0], []);
+  assert.ok(!noPurpose.ruleResults.some(r => r.rule.id.startsWith("art18_intolerance_")));
+  const result = Labeling.check(marketing + " Reduction of ingredient and nutrient intolerances. Ausgewählte Eiweißquellen: siehe Etikett. "
+    + "It is recommended that a veterinarian's opinion be sought before use and before extending the period of use.",
+  FEED_TYPES[0], []);
+  assert.equal(result.ruleResults.find(r => r.rule.id === "art18_intolerance_protein").status, "unclear");
+  assert.equal(result.ruleResults.find(r => r.rule.id === "art18_advice").status, "found");
+});
