@@ -216,12 +216,13 @@ test("PO-Code ist nur ein Hinweis auf die Losnummer und braucht Bestätigung", (
   assert.match(lot.note, /Partie-\/Losnummer ist/);
 });
 
-test("PO-Code ergänzt den Hinweis auf einen Aufdruck-Verweis", () => {
+test("vollständig gelesener PO-Code wird auch bei einem Aufdruckverweis angezeigt", () => {
   const results = checkLabelEvidence(
     "Ergänzungsfuttermittel für alle Wildvögel. Mindestens haltbar bis/Chargen-Nr.: s. Aufdruck. PO 481516");
   const lot = results[4];
   assert.equal(lot.status, "probablyFound");
-  assert.match(lot.note, /Aufdruck separat fotografieren/);
+  assert.equal(lot.matchedText, "PO 481516");
+  assert.doesNotMatch(lot.note, /Aufdruck separat fotografieren/);
   assert.match(lot.note, /Partie-\/Losnummer ist/);
 });
 
@@ -295,4 +296,42 @@ test("Groß geschriebenes KG bei einer Mengenangabe belegt keinen Betrieb", () =
   const supplier = check("Musterfutter NV\nBeispielstraat 41\nNL 5823 AC Musterort\n(10 x 1,5 KG)");
   assert.equal(supplier.status, "found");
   assert.match(supplier.matchedText, /Musterfutter NV/);
+});
+
+test("die ganze erkannte Zutatenliste erscheint bis zur nächsten Überschrift", () => {
+  const firstLine = "Getreide, Saaten, Nüsse, Insekten (Beispielinsekten 2,9 %, Mehlwürmer 1 %, Seidenraupen 1 %),";
+  const secondLine = "pflanzliche Nebenerzeugnisse, getrocknete Apfelstücke, Holunderfrüchte, Sonnenblumenöl, pflanzliche Fette, Kurkuma.";
+  const text = `Ergänzungsfuttermittel für Wildvögel.\nZusammensetzung: ${firstLine}\n${secondLine} Fütterungsempfehlung: täglich füttern.\n[FR] Composition: céréales, fruits.`;
+  const result = checkLabelEvidence(text)[1];
+  assert.equal(result.status, "found");
+  assert.equal(result.matchedText, `Zusammensetzung: ${firstLine} ${secondLine}`);
+});
+
+const legacyLotPattern = String.raw`\b(?:Chargen|Lot)\s+\d+\b`;
+
+test("eine einzelne OCR-Ziffer ist kein bestätigter Chargencode", () => {
+  const text = "Ergänzungsfuttermittel für Wildvögel. Mindestens haltbar bis/Chargen 4. Siehe Aufdruck.";
+  assert.equal(checkNumericLabelRule("art15_004", text, legacyLotPattern).status, "missing");
+  const result = checkLabelEvidence(`${text}\nPO 157 923`)[4];
+  assert.equal(result.status, "probablyFound");
+  assert.equal(result.matchedText, "PO 157 923");
+});
+
+test("explizite Losnummern behalten Buchstaben, Bindestriche und getrennte Nummerngruppen", () => {
+  for (const lot of ["Charge: A2024-09-01", "Chargen-Nr.: BAF 1015 090925", "LOT 123 456 AB", "L 31459"]) {
+    const result = checkNumericLabelRule("art15_004", `Ergänzungsfuttermittel für Wildvögel.\n${lot}`, legacyLotPattern);
+    assert.equal(result.status, "found", lot);
+    assert.equal(result.matchedText, lot);
+  }
+  const redirect = "Ergänzungsfuttermittel für Wildvögel. Chargen-Nr.: siehe 04 auf der Verpackung.";
+  assert.equal(checkNumericLabelRule("art15_004", redirect, legacyLotPattern).status, "missing");
+});
+
+test("Zusatz-OCR wird bei einem Aufdruckverweis genutzt und verlangt übereinstimmende PO-Codes", () => {
+  assert.equal(Labeling.needsImprintLot("Mindestens haltbar bis/Chargen-Nr.: s. Aufdruck."), true);
+  assert.equal(Labeling.needsImprintLot("Mindestens haltbar bis/Chargen-Nr.: s. Aufdruck.\nPO 157923"), false);
+  assert.equal(Labeling.needsImprintLot("Ergänzungsfuttermittel für Wildvögel."), false);
+  assert.equal(Labeling.matchingImprintLot("A PO 157923", "PO 157923"), "PO 157923");
+  assert.equal(Labeling.matchingImprintLot("PO 157923", "PO 157924"), null);
+  assert.equal(Labeling.matchingImprintLot("PO 157923\nPO 157924", "PO 157923"), null);
 });

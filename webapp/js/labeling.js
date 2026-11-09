@@ -311,14 +311,13 @@ const Labeling = (() => {
 
   function compositionEvidence(text) {
     const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*/giu;
+    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:Fütterungsempfehlung|Fütterungshinweise?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
       const start = match.index + match[0].length;
-      const body = text.slice(start, start + 160)
-        .split(/\n\s*\n|\b(?:Fütterungsempfehlung|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Feeding recommendation|Analytical constituents)\b/i, 1)[0]
-        .trim();
+      const body = text.slice(start).split(nextSection, 1)[0].trim();
       if (/^(?:siehe|keine|see)\b|^s\./i.test(body) || !/\p{L}{2,}/u.test(body)) continue;
       if (/\p{L}[^:,\n]{0,40},\s*\p{L}|\d[ \t]*%/u.test(body)) {
-        return `${match[0].trim()} ${body}`.replace(/\s+/g, " ").slice(0, 100);
+        return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
       }
     }
     return null;
@@ -342,14 +341,41 @@ const Labeling = (() => {
     return null;
   }
 
+  const LOT_LABEL = /\b(?:chargen?(?:[ \t-]*(?:nummer|nr))?|los(?:[ \t-]*(?:nummer|nr))?|(?:zulassungsnummer|kennnummer|bezugsnr\.?)\s+der\s+partie|partie(?:[ \t-]*(?:nummer|nr))?|lot(?:[ \t]+no)?|batch(?:[ \t]+(?:number|no))?|L(?=[ \t]*:)|^L(?=[ \t]+[A-Z0-9]))\b\.?[ \t]*(?:[:#][ \t]*\n?[ \t]*)?/gim;
+  const LOT_SEGMENT = String.raw`(?=[A-Za-z0-9./-]*\d)[A-Za-z0-9]+(?:[./-][A-Za-z0-9]+)*`;
+  const LOT_VALUE = new RegExp(String.raw`^(?:[A-Z]{1,5}[ \t]+)?${LOT_SEGMENT}(?:[ \t]+${LOT_SEGMENT})*(?:[ \t]+[A-Z]{1,5}(?=[ \t]*(?:[;,.\n]|$)))?`);
+  const IMPRINT_REFERENCE = /\b(?:mhd|mindestens\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer))(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i;
+
+  function declaredLot(text) {
+    for (const label of text.matchAll(LOT_LABEL)) {
+      const code = text.slice(label.index + label[0].length).match(LOT_VALUE)?.[0];
+      if (code && !/^\d$/.test(code)) return `${label[0].trim()} ${code}`;
+    }
+    return null;
+  }
+
   /**
    * Ein separat aufgedruckter "PO"-Code (mit mindestens einer Ziffer) kann die
    * Losnummer sein, ist aber kein Beleg: nur als Hinweis, der bestätigt werden muss.
    */
   const PO_LOT_NOTE = "Möglicher Chargencode „PO …“ erkannt. Bitte bestätigen, dass dieser Code die Partie-/Losnummer ist.";
-  function possibleLotCode(ruleId, text) {
-    if (ruleId !== "art15_004") return null;
-    return text.match(/\bPO\b[ \t:.\-]*(?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,}/)?.[0] ?? null;
+  function possibleLotCode(text) {
+    const candidates = new Map();
+    for (const [printed, code] of text.matchAll(/\bPO\b[ \t:.-]+((?=[A-Z0-9/-]*\d)[A-Z0-9][A-Z0-9/-]*(?:[ \t]+\d[A-Z0-9/-]*)*)/g)) {
+      if (code.replace(/[^A-Z0-9]/g, "").length >= 3) candidates.set(code.replace(/[ \t]+/g, " "), printed);
+    }
+    return candidates.size === 1 ? candidates.values().next().value : null;
+  }
+
+  function needsImprintLot(text) {
+    return IMPRINT_REFERENCE.test(text) && !declaredLot(text) && !possibleLotCode(text);
+  }
+
+  function matchingImprintLot(first, second) {
+    const candidate = possibleLotCode(first);
+    const other = possibleLotCode(second);
+    return candidate && other && candidate.replace(/[ \t:.-]+/g, " ") === other.replace(/[ \t:.-]+/g, " ")
+      ? candidate : null;
   }
 
   function checkRule(rule, text, normText) {
@@ -363,7 +389,9 @@ const Labeling = (() => {
 
     const hasNegativeMatch = negative.some(p => matchPattern(p, text, normText) !== null);
 
-    const evidence = structuredEvidence(rule.id, text);
+    const lotRule = rule.id === "art15_004";
+    const evidence = lotRule ? declaredLot(text) : structuredEvidence(rule.id, text);
+    const po = lotRule && !evidence ? possibleLotCode(text) : null;
     const netQuantity = rule.id === "art15_003";
     const hasNumericEvidence = netQuantity || rule.id.startsWith("art17_004_");
     const packageHint = netQuantity && !evidence
@@ -371,10 +399,11 @@ const Labeling = (() => {
         || text.match(PACK_COUNT)?.[0] || text.match(AMOUNT_LINE)?.[0].trim()
       : null;
     let best = evidence ? { text: evidence, language: "de", weight: 1, languagePriority: 0 } : null;
-    if (packageHint) best = { text: packageHint, language: "de", weight: 0.7, languagePriority: 0 };
+    const hint = po || packageHint;
+    if (hint) best = { text: hint, language: "de", weight: 0.7, languagePriority: 0 };
     for (const p of positive) {
-      // Die bisherigen Zahlenmuster erfassen auch Futterrationen oder Ziffern aus anderen Zeilen.
-      if (hasNumericEvidence && p.patternType === "regex") continue;
+      // Allgemeine Zahlenmuster können Futterrationen, einzelne Ziffern oder Fragmente erfassen.
+      if (p.patternType === "regex" && (hasNumericEvidence || (lotRule && p.confidenceWeight >= 0.85))) continue;
       const weight = netQuantity ? Math.min(p.confidenceWeight, 0.7) : p.confidenceWeight;
       const m = matchPattern(p, text, normText);
       if (m !== null) {
@@ -393,11 +422,6 @@ const Labeling = (() => {
     }
 
     if (!best) {
-      const po = possibleLotCode(rule.id, text);
-      if (po) {
-        return { rule, status: "probablyFound", matchedText: po, matchedLanguage: null,
-                 confidence: 0.5, note: PO_LOT_NOTE };
-      }
       return { rule, status: "missing", matchedText: null, matchedLanguage: null,
                confidence: 0, note: "Im Prüftext nicht erkannt. Bitte Etikett manuell prüfen." };
     }
@@ -407,11 +431,10 @@ const Labeling = (() => {
     if (best.language !== "de") notes.push(`Hinweis wurde in ${languageName(best.language)} gefunden.`);
     if (status === "probablyFound") {
       const imprint = (rule.id === "art15_004" || rule.id === "art16_002" || rule.id.startsWith("art17_002_"))
-        && /\b(?:mhd|mindestens\s+haltbar\s+bis|chargen[ -]*(?:nr\.?|nummer))(?:\s*\/\s*chargen[ -]*(?:nr\.?|nummer))?\s*:?\s*(?:s\.|siehe)?\s*aufdruck\b/i.test(text);
-      notes.push(imprint
-        ? "Verweis auf Aufdruck erkannt. Bitte Aufdruck separat fotografieren oder den Wert im Prüftext ergänzen."
-        : "Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
-      if (possibleLotCode(rule.id, text)) notes.push(PO_LOT_NOTE);
+        && IMPRINT_REFERENCE.test(text);
+      if (imprint && !po) notes.push("Verweis auf Aufdruck erkannt. Bitte Aufdruck separat fotografieren oder den Wert im Prüftext ergänzen.");
+      if (po) notes.push(PO_LOT_NOTE);
+      if (!imprint && !po) notes.push("Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
     }
     return { rule, status, matchedText: best.text, matchedLanguage: best.language,
              confidence: best.weight, note: notes.join(" ") || null };
@@ -446,7 +469,8 @@ const Labeling = (() => {
 
   return {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
-    searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, MIN_OCR_LENGTH,
+    searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint,
+    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
   };
 })();
 

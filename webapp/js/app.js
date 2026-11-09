@@ -403,22 +403,50 @@
   function setupLabeling() {
     const sel = $("#l-feedtype");
 
+    async function readImprintLot(worker, file, output) {
+      const image = await createImageBitmap(file);
+      const crop = document.createElement("canvas");
+      try {
+        // Die obere Fotozone separat lesen, damit der Fließtext den Aufdruck nicht überlagert.
+        crop.width = image.width;
+        crop.height = Math.max(1, Math.round(image.height * 0.43));
+        crop.getContext("2d").drawImage(image, 0, 0, crop.width, crop.height, 0, 0, crop.width, crop.height);
+      } finally {
+        image.close();
+      }
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+      const first = await worker.recognize(crop, {}, output);
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+      const second = await worker.recognize(crop, {}, output);
+      return Labeling.matchingImprintLot(Ocr.textFromResult(first.data), Ocr.textFromResult(second.data));
+    }
+
     async function readLabelPhoto(worker, file) {
       const output = { text: true, blocks: true };
       const { data } = await worker.recognize(file, {}, output);
       const primary = Ocr.textFromResult(data);
-      if (!Labeling.needsPackageAmount(primary)) return primary;
+      const checkWeight = Labeling.needsPackageAmount(primary);
+      const checkImprint = Labeling.needsImprintLot(primary);
+      if (!checkWeight && !checkImprint) return primary;
 
+      let text = primary;
       try {
-        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
-        const retry = await worker.recognize(file, {}, output);
-        const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
-        return hint ? `${primary}\n${hint}` : primary;
+        if (checkWeight) {
+          await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+          const retry = await worker.recognize(file, {}, output);
+          const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
+          if (hint) text += `\n${hint}`;
+        }
+        if (checkImprint) {
+          const lot = await readImprintLot(worker, file, output);
+          if (lot) text += `\n${lot}`;
+        }
       } catch {
-        return primary;
+        // Der bereits gelesene Text bleibt bei einem fehlgeschlagenen Zusatzlauf erhalten.
       } finally {
         await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
       }
+      return text;
     }
 
     async function runOcr(files) {
