@@ -865,6 +865,61 @@
       return true;
     }
 
+    // ── Zusatzläufe der OCR (Packungsmenge, Aufdruck) ─────────────
+    async function readImprintLot(worker, file, output) {
+      const image = await createImageBitmap(file);
+      const crop = document.createElement("canvas");
+      try {
+        // Die obere Fotozone separat lesen, damit der Fließtext den Aufdruck nicht überlagert.
+        crop.width = image.width;
+        crop.height = Math.max(1, Math.round(image.height * 0.43));
+        crop.getContext("2d").drawImage(image, 0, 0, crop.width, crop.height, 0, 0, crop.width, crop.height);
+      } finally {
+        image.close();
+      }
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+      const first = await worker.recognize(crop, {}, output);
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+      const second = await worker.recognize(crop, {}, output);
+      return Labeling.matchingImprintLot(Ocr.textFromResult(first.data), Ocr.textFromResult(second.data));
+    }
+
+    /**
+     * Liest ein Foto; bei Hinweisen auf Packungsmenge oder Aufdruck folgen Zusatzläufe.
+     * step(text) meldet den Fortschritt an die Statuszeile (die Zusatzläufe dauern am Handy spürbar),
+     * warnings enthält fehlgeschlagene Zusatzläufe – der bereits gelesene Text bleibt erhalten.
+     * @returns {{text: string, warnings: string[]}}
+     */
+    async function readLabelPhoto(worker, file, step) {
+      const output = { text: true, blocks: true };
+      const { data } = await worker.recognize(file, {}, output);
+      const primary = Ocr.textFromResult(data);
+      const checkWeight = Labeling.needsPackageAmount(primary);
+      const checkImprint = Labeling.needsImprintLot(primary);
+      const warnings = [];
+      if (!checkWeight && !checkImprint) return { text: primary, warnings };
+
+      let text = primary;
+      try {
+        if (checkWeight) {
+          step("Zusatzprüfung Packungsmenge");
+          await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+          const retry = await worker.recognize(file, {}, output);
+          const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
+          if (hint) text += `\n${hint}`;
+        }
+        if (checkImprint) {
+          step("Zusatzprüfung Aufdruck");
+          const lot = await readImprintLot(worker, file, output);
+          if (lot) text += `\n${lot}`;
+        }
+      } catch (e) {
+        warnings.push(`Zusatzprüfung fehlgeschlagen (${e?.message || e})`);
+      } finally {
+        try { await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK }); } catch { /* Worker beendet */ }
+      }
+      return { text, warnings };
+    }
 
     async function doOcr(files, targetId, epoch) {
       const status = $("#l-ocr-status");
@@ -877,15 +932,21 @@
         // verhindert, dass Tesseract die Auflösung falsch schätzt.
         await worker.setParameters({ user_defined_dpi: "300" });
         let allText = "";
+        const warnings = [];
         for (let i = 0; i < files.length; i++) {
-          status.textContent = `OCR läuft … Bild ${i + 1}/${files.length}`;
-          const { data } = await worker.recognize(files[i], {}, { text: true, blocks: true });
-          allText += (allText ? "\n\n" : "") + Ocr.textFromResult(data);
+          const label = `Bild ${i + 1}/${files.length}`;
+          status.textContent = `OCR läuft … ${label}`;
+          const photo = await readLabelPhoto(worker, files[i], (what) => {
+            status.textContent = `OCR läuft … ${label} – ${what}`;
+          });
+          allText += (allText ? "\n\n" : "") + photo.text;
+          for (const w of photo.warnings) warnings.push(`${label}: ${w}`);
         }
         const applied = await appendOcrText(targetId, allText, epoch);
         status.className = "ocr-status";
         status.textContent = applied
           ? `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}) – Text bitte kurz prüfen.`
+            + (warnings.length ? ` Hinweis: ${warnings.join("; ")}. Der übrige Text wurde übernommen.` : "")
           : "OCR abgeschlossen, aber der Text wurde verworfen: Die Fotos konnten nicht gespeichert werden und es wurde inzwischen ein anderer Eintrag geöffnet.";
       } catch (e) {
         status.className = "ocr-status error";
