@@ -676,6 +676,10 @@ test("Mineralfutter-Überschrift gewinnt gegen den vorgeschriebenen Hinweis „D
   // nur als Überschrift, nicht als Erwähnung im Fließtext
   assert.equal(detect("Ergänzungsfuttermittel für Pferde. Kann mit Mineralfutter für Pferde kombiniert werden."), "complementary_feed");
   assert.equal(detect(`Ergänzungsfuttermittel für Pferde\n${note}`), "complementary_feed");
+  // eine ausdrückliche Ergänzungsfuttermittel-Bezeichnung bleibt maßgeblich, auch bei einer Anweisungszeile „Mineralfutter für …“
+  assert.equal(detect("Ergänzungsfuttermittel für Pferde\nFütterungsempfehlung:\nMineralfutter für Pferde zusätzlich anbieten."), "complementary_feed");
+  assert.equal(detect(`Ergänzungsfuttermittel für Pferde\nMineralfutter für Pferde zusätzlich anbieten.\n${note}`), "complementary_feed");
+  assert.equal(detect(`Mineralfutter für Rinder\nFütterungsempfehlung: 100 g\n${note}`), "mineral_feed");
 });
 
 test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {

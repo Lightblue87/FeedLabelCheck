@@ -235,6 +235,7 @@ const Labeling = (() => {
     return [...declarations.values()];
   }
 
+  const SUPPLEMENT_NOTE = /Ergänzungsfutter(?:mittel)?(?=[ \t\n]+darf\b)/gi;
   const MINERAL_HEADING = /^[ \t]*Mineral(?:futter|futtermittel|-Futtermittel)[ \t]+für[ \t]+\p{L}{3,}/imu;
 
   function detectFeedType(ocrText, feedTypes) {
@@ -251,7 +252,13 @@ const Labeling = (() => {
     // „Mineralfuttermittel für Rinder“ als eigene Zeile ist die Bezeichnung. Der vorgeschriebene Hinweis
     // „Dieses Ergänzungsfutter darf wegen …“ im selben Etikett nennt dagegen nur die Oberart.
     const mineral = candidates.find(c => c.feedType.id === "mineral_feed");
-    if (mineral && MINERAL_HEADING.test(ocrText)
+    // Der Vorrang gilt nur, wenn die Nennung von „Ergänzungsfutter“ allein aus dem Pflichthinweis stammt. Eine
+    // ausdrückliche Bezeichnung („Ergänzungsfuttermittel für Pferde“) und Fütterungsanweisungen, die eine Zeile
+    // mit „Mineralfutter für …“ beginnen, ändern den Typ nicht.
+    const withoutNote = normalizeText(ocrText.replace(SUPPLEMENT_NOTE, " "));
+    const declaredComplementary = rankedCandidates(withoutNote, feedTypes)
+      .some(c => c.feedType.id === "complementary_feed" && hasDirectLegalMatch(c));
+    if (mineral && MINERAL_HEADING.test(ocrText) && !declaredComplementary
         && candidates.every(c => ["mineral_feed", "complementary_feed"].includes(c.feedType.id) || !hasDirectLegalMatch(c))) {
       return mineral;
     }
