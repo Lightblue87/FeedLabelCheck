@@ -10,6 +10,10 @@ permissions:
   contents: read
   actions: write   # required by upload-artifact
 
+concurrency:
+  group: publish-feedlabelcheck-data
+  cancel-in-progress: false
+
 jobs:
   build-data:
     runs-on: ubuntu-latest
@@ -64,28 +68,24 @@ jobs:
             dist/manifest.json
           retention-days: 30
 
-      - name: Check data repository token
-        id: check-token
+      - name: Check data repository deploy key
         env:
-          DATA_REPO_TOKEN: ${{ secrets.FEEDLABELCHECK_DATA_REPO_TOKEN }}
+          DATA_REPO_DEPLOY_KEY: ${{ secrets.FEEDLABELCHECK_DATA_DEPLOY_KEY }}
         run: |
-          if [ -z "$DATA_REPO_TOKEN" ]; then
-            echo "::warning::Secret FEEDLABELCHECK_DATA_REPO_TOKEN not set — skipping publish to data repository."
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          if [ -z "$DATA_REPO_DEPLOY_KEY" ]; then
+            echo "::error::Secret FEEDLABELCHECK_DATA_DEPLOY_KEY is required to publish data."
+            exit 1
           fi
 
       - name: Checkout public data repository
-        if: steps.check-token.outputs.has_token == 'true'
         uses: actions/checkout@v4
         with:
           repository: Lightblue87/FeedLabelCheck-Data
-          token: ${{ secrets.FEEDLABELCHECK_DATA_REPO_TOKEN }}
+          ref: main
+          ssh-key: ${{ secrets.FEEDLABELCHECK_DATA_DEPLOY_KEY }}
           path: public-data
 
       - name: Publish SQLite databases
-        if: steps.check-token.outputs.has_token == 'true'
         run: |
           cp dist/feedlabelcheck.sqlite public-data/feedlabelcheck.sqlite
           cp dist/labeling.sqlite public-data/labeling.sqlite
