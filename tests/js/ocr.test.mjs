@@ -954,3 +954,9 @@ test("ausgeschlossene Ernährungszwecke lösen keine zweckbezogene Prüfung aus"
   assert.ok(!result.ruleResults.some(r => r.rule.id.startsWith("art18_struvite_")));
   assert.equal(Labeling.needsDietDeclaration("Nicht zur Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz."), false);
 });
+
+test("die französische Typzeile aus einer Nachbarspalte gehört nicht zur deutschen Zutatenliste", () => {
+  const text = "Alleinfuttermittel für Katzen. Zusammensetzung: Fleisch und tierische Nebenerzeugnisse Aliment complet pour chats (32 % davon 18 % Huhn), Zucker, Mineralstoffe. Zusatzstoffe: Taurin.";
+  const result = checkNumericLabelRule("art17_003_complete", text, "Zusammensetzung", "keyword", 0.7);
+  assert.equal(result.matchedText, "Zusammensetzung: Fleisch und tierische Nebenerzeugnisse (32 % davon 18 % Huhn), Zucker, Mineralstoffe.");
+});
