@@ -278,6 +278,16 @@ const Labeling = (() => {
     return null;
   }
 
+  /**
+   * Ein separat aufgedruckter "PO"-Code (mit mindestens einer Ziffer) kann die
+   * Losnummer sein, ist aber kein Beleg: nur als Hinweis, der bestätigt werden muss.
+   */
+  const PO_LOT_NOTE = "Möglicher Chargencode „PO …“ erkannt. Bitte bestätigen, dass dieser Code die Partie-/Losnummer ist.";
+  function possibleLotCode(ruleId, text) {
+    if (ruleId !== "art15_004") return null;
+    return text.match(/\bPO\b[ \t:.\-]*(?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]{2,}/)?.[0] ?? null;
+  }
+
   function checkRule(rule, text, normText) {
     const positive = rule.patterns.filter(p => !p.isNegativePattern);
     const negative = rule.patterns.filter(p => p.isNegativePattern);
@@ -309,6 +319,11 @@ const Labeling = (() => {
     }
 
     if (!best) {
+      const po = possibleLotCode(rule.id, text);
+      if (po) {
+        return { rule, status: "probablyFound", matchedText: po, matchedLanguage: null,
+                 confidence: 0.5, note: PO_LOT_NOTE };
+      }
       return { rule, status: "missing", matchedText: null, matchedLanguage: null,
                confidence: 0, note: "Im Prüftext nicht erkannt. Bitte Etikett manuell prüfen." };
     }
@@ -322,6 +337,7 @@ const Labeling = (() => {
       notes.push(imprint
         ? "Verweis auf Aufdruck erkannt. Bitte Aufdruck separat fotografieren oder den Wert im Prüftext ergänzen."
         : "Indirekter Treffer erkannt – Etikett bitte manuell bestätigen.");
+      if (possibleLotCode(rule.id, text)) notes.push(PO_LOT_NOTE);
     }
     return { rule, status, matchedText: best.text, matchedLanguage: best.language,
              confidence: best.weight, note: notes.join(" ") || null };

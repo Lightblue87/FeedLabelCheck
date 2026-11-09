@@ -207,3 +207,27 @@ test("Firmenkürzel und Straßenanschrift bleiben als konkrete Angaben erkennbar
     assert.equal(results[2].status, "found");
   }
 });
+
+test("PO-Code ist nur ein Hinweis auf die Losnummer und braucht Bestätigung", () => {
+  const results = checkLabelEvidence("Ergänzungsfuttermittel für alle Wildvögel. Nettomasse 1 kg. PO 481516");
+  const lot = results[4];
+  assert.equal(lot.status, "probablyFound");
+  assert.equal(lot.matchedText, "PO 481516");
+  assert.match(lot.note, /Partie-\/Losnummer ist/);
+});
+
+test("PO-Code ergänzt den Hinweis auf einen Aufdruck-Verweis", () => {
+  const results = checkLabelEvidence(
+    "Ergänzungsfuttermittel für alle Wildvögel. Mindestens haltbar bis/Chargen-Nr.: s. Aufdruck. PO 481516");
+  const lot = results[4];
+  assert.equal(lot.status, "probablyFound");
+  assert.match(lot.note, /Aufdruck separat fotografieren/);
+  assert.match(lot.note, /Partie-\/Losnummer ist/);
+});
+
+test("ähnliche Zeichenfolgen ohne Ziffer oder als Wortteil gelten nicht als PO-Code", () => {
+  for (const noise of ["PO Box", "POSTFACH 12", "Kompost 123", "PO", "po 4711"]) {
+    const results = checkLabelEvidence(`Ergänzungsfuttermittel für alle Wildvögel. ${noise}`);
+    assert.equal(results[4].status, "missing", noise);
+  }
+});
