@@ -877,10 +877,22 @@
 
       const summary = { overall: result.overallStatus, counts: tally, feedType: feedType.id, at: Date.now() };
       if (save && history && (current || text)) {
+        // Das Ergebnis gehört zu genau diesen Eingaben und diesem Eintrag. Die Schreibwarteschlange
+        // kann blockiert sein (z. B. Fotospeicherung): beim Ausführen darf weder ein später
+        // getippter Text noch ein inzwischen geöffneter anderer Eintrag betroffen sein.
+        const checkedText = textEl.value;
+        const checkedType = sel.value;
+        const checkedId = current?.id ?? null;
+        const epoch = viewEpoch;
         enqueue(async () => {
-          await ensureEntry();
-          const e = await history.update(current.id, { text: textEl.value, lastCheck: summary });
-          if (e) current = e;
+          let id = checkedId;
+          if (!id) {
+            if (epoch !== viewEpoch) return;       // Ansicht wurde inzwischen gewechselt
+            await ensureEntry();
+            id = current.id;
+          }
+          const e = await history.update(id, { text: checkedText, feedType: checkedType, lastCheck: summary });
+          if (e && current?.id === id) current = e;
         }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
       }
       return summary;
