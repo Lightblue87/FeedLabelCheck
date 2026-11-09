@@ -26,6 +26,13 @@ const FEED_TYPES = [
 
 // ── cleanText ─────────────────────────────────────────────────────
 
+test("cleanText korrigiert als 32xxx gelesene Vitamincodes, Mengen bleiben", () => {
+  const out = Ocr.cleanText("90.000 I.E. Vitamin D3 (32671)\n3.000 mg Vitamin E (3a700)\nEnergie (32000) kJ\nJod (3202)");
+  assert.match(out, /Vitamin D3 \(3a671\)/);
+  assert.match(out, /\(32000\)/);
+  assert.match(out, /\(3202\)/);
+});
+
 test("cleanText korrigiert als 33xxx gelesene 3a-Zusatzstoffcodes", () => {
   const input = "600 mg Vitamin B1 (33821), 15.000 mcg Biotin (33880), 200 mg Folsäure (33316)";
   const out = Ocr.cleanText(input);
@@ -879,6 +886,44 @@ test("Mengenangaben aus einer Nachbarspalte sind keine Losnummer", () => {
   const reference = check("Kennnummer der Partie:\nSiehe Aufdruck");
   assert.equal(reference.status, "probablyFound");
   assert.match(reference.note, /Verweis auf Aufdruck erkannt/);
+});
+
+test("Zeilenweise vermischte Spalten: Zutaten und Analytik werden getrennt belegt", () => {
+  const rules = [
+    { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+    { id: "art17_004_mineral", severity: "critical", patterns: [{ patternValue: "Analytische Bestandteile", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+  ];
+  const label = "Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium\nMonocalciumphosphat 4% Natrium\nNatriumchlorid 2% Magnesium\nMagnesiumoxid\nRübenmelasse\npflanzliches Fett aus Raps, raffiniert, gehärtet\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)";
+  const [composition, analysis] = Labeling.check(label, FEED_TYPES[2], rules).ruleResults;
+  assert.equal(composition.status, "found");
+  assert.equal(composition.matchedText.split("\n").slice(1).join("|"),
+    "Weizengrießkleie|Calciumcarbonat|Monocalciumphosphat|Natriumchlorid|Magnesiumoxid|Rübenmelasse|pflanzliches Fett aus Raps, raffiniert, gehärtet");
+  assert.equal(analysis.status, "found");
+  assert.equal(analysis.matchedText.split("\n").slice(1).join("|"), "4% Phosphor|10% Calcium|4% Natrium|2% Magnesium");
+});
+
+test("Vermischte Spalten: Abschnittsüberschrift beendet die Zutaten, Messwert nach Zutatenzeile ist nicht eindeutig", () => {
+  const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = body => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\n${body}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  const heading = check("Weizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium\nFütterungsempfehlung\nRinder 100 g täglich");
+  assert.equal(heading.status, "probablyFound");
+  assert.match(heading.note, /mehrspaltiges Layout/);
+  const interleaved = check("Weizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium\nMagnesiumoxid\nRübenmelasse 4% Natrium\nNatriumchlorid 2% Magnesium");
+  assert.equal(interleaved.status, "probablyFound");
+  assert.doesNotMatch(interleaved.matchedText, /% Natrium/);
+});
+
+test("Vermischte Spalten: Feuchte-Zeile, längere Analytikspalte und unbekannte Zeilen", () => {
+  const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = body => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\n${body}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  const head = "Weizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium\nMonocalciumphosphat 4% Natrium\n";
+  const moisture = check(`${head}Rübenmelasse 5% Feuchte\nMagnesiumoxid\nNatriumchlorid\nZusatzstoffe (je kg):\n1 mg Vitamin A`);
+  assert.equal(moisture.status, "found");
+  assert.match(moisture.matchedText, /Rübenmelasse\nMagnesiumoxid|Rübenmelasse$|Rübenmelasse\n/);
+  const longer = check(`${head}Magnesiumoxid\nRübenmelasse\n5% Rohasche\n2% Rohfaser\nZusatzstoffe (je kg):\n1 mg Vitamin A`);
+  assert.equal(longer.status, "found");
+  const unknown = check(`${head}Magnesiumoxid\nRübenmelasse\n**§§ 12 ??\nZusatzstoffe (je kg):`);
+  assert.equal(unknown.status, "probablyFound");
 });
 
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {

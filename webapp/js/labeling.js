@@ -507,9 +507,58 @@ const Labeling = (() => {
   const MULTILINGUAL_COMPOSITION = /^((?:Samenstelling|Komposition|Composition|Zusammensetzung)[ \t]*\/[ \t]*[^\n]{1,240})\n(?:(?:NL|EN|FR|IT|ES|DA|SE|PL|PT|CZ)[ \t]+[^\n]+\n){0,10}DE[ \t]+([^\n]+)/im;
   const FEEDING_TABLE_HEADING = /\b(?:Feeding[ \t]+(?:advice|guide)|Fütterungsempfehlung)\b[^\n]*/i;
 
+  // Zeilenweise vermischte Spalten ohne Bildkoordinaten: „Zusammensetzung: Analytische Bestandteile:“ gefolgt von
+  // Zeilen „Zutat 4% Phosphor“. Die Zutat steht links, der Messwert rechts; zutatenartige Zeilen ohne Messwert
+  // setzen die linke Spalte fort. Nur bei mindestens zwei Zeilen mit Messwert und drei Zutaten.
+  const MIXED_COMPOSITION_HEADING = /^[ \t]*Zusammensetzung[ \t]*:[ \t]*Analytische[ \t]+Bestandteile[ \t]*:[ \t]*\n/im;
+  const MIXED_ANALYSIS_VALUE = /^(\p{L}[\p{L}\p{N} .,()\/&-]{2,70}?)[ \t]+(\d+(?:[.,]\d+)?[ \t]*%[ \t]+\p{L}[\p{L} -]{1,30})$/u;
+  const MIXED_INGREDIENT = /^\p{L}[\p{L}\p{N} .,()\/&%-]{2,70}$/u;
+
+  // Abschnittsgrenzen: eine dieser Überschriften beendet die linke Spalte.
+  const MIXED_STOP = /\b(?:Zusatzstoffe|Hersteller|Inverkehrbringer|Vertrieb|Importeur|F[üu]tterung\w*|Einsatzempfehlung|Dosierung|Anwendung|Tagesration|Futtermenge|Feeding|Lagerung\w*|Hinweise?|Analytische|Inhaltsstoffe|Feuchte\w*|Nett(?:o\w*)|Inhalt|Chargen?|Losnummer|Partie|Kennnummer|MHD|haltbar|Gehalt)\b/i;
+
+  const MIXED_VALUE_ONLY = /^\d+(?:[.,]\d+)?[ \t]*%[ \t]+\p{L}[\p{L} -]{1,30}$/u;
+
+  // Die Rekonstruktion gilt nur, wenn jede Zeile eingeordnet ist und der Abschnitt an einer echten
+  // Überschrift (oder am Textende) endet. Sonst fehlen Zutaten oder Messwerte stillschweigend.
+  function mixedColumns(text) {
+    const heading = MIXED_COMPOSITION_HEADING.exec(text);
+    if (!heading) return null;
+    const items = [];
+    const values = [];
+    let pairs = 0;
+    let plain = false;
+    for (const raw of text.slice(heading.index + heading[0].length).split("\n")) {
+      const line = raw.trim();
+      if (!line) break;
+      const pair = line.match(MIXED_ANALYSIS_VALUE);
+      if (pair) {
+        // Ein Messwert nach einer Zeile ohne Messwert: die Zuordnung ist nicht eindeutig.
+        if (plain) return null;
+        items.push(pair[1].trim());
+        values.push(pair[2].trim());
+        pairs += 1;
+        continue;
+      }
+      if (pairs >= 2 && MIXED_STOP.test(line)) break;
+      if (pairs >= 2 && /:$/.test(line)) break;
+      if (pairs >= 2 && MIXED_VALUE_ONLY.test(line)) { values.push(line); continue; }
+      if (pairs >= 2 && MIXED_INGREDIENT.test(line)) { items.push(line); plain = true; continue; }
+      return null;
+    }
+    return pairs >= 2 && items.length >= 3 ? { items, values } : null;
+  }
+
+  function mixedColumnComposition(text) {
+    const columns = mixedColumns(text);
+    return columns ? `Zusammensetzung (aus vermischten Spalten getrennt):\n${columns.items.join("\n")}` : null;
+  }
+
   function compositionEvidence(text) {
     const listed = text.match(MULTILINGUAL_COMPOSITION);
     if (listed && /,\s*\p{L}/u.test(listed[2])) return `${listed[1]}: ${listed[2]}`;
+    const mixed = mixedColumnComposition(text);
+    if (mixed) return mixed;
     const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*|^(?:(?:[zt]usammensetzung|composition)[ \t]*|ingredients[ \t]*:?[ \t]*)\n/gimu;
     const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition|ingredients)\b[^:\n]{0,65}:|\n[ \t]*(?:[zt]usammensetzung|composition|ingredients)[ \t]*\n|\n[ \t]*crude protein[ \t:]*[<>]?[ \t]*\d|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
@@ -655,6 +704,8 @@ const Labeling = (() => {
       const fields = moistureConflict(declaredMoisture(text), moistureHints(text)) ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
       const evidence = percentageEvidence(text, fields);
       // Angezeigt wird der ganze Abschnitt („4% Phosphor, 10% Calcium, …“) statt nur der ersten Zeile.
+      const mixed = evidence && mixedColumns(text);
+      if (mixed) return `Analytische Bestandteile (aus vermischten Spalten getrennt):\n${mixed.values.join("\n")}`;
       return evidence ? analyticalSection(text) ?? evidence : null;
     }
     if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {

@@ -214,6 +214,9 @@ const Ocr = (() => {
   const ADDITIVE_CODE_FIXES = [
     [/\(3\s*3(\d{3}[a-z]{0,3})\)/gi, "(3a$1)"],
     [/\(3\s*5(\d{3}[a-z]{0,3})\)/gi, "(3b$1)"],
+    // (3a671) als (32671): nur Vitamine/Provitamine (3a6xx–3a9xx), damit
+    // Mengen wie (32000) unberührt bleiben.
+    [/\(3\s*2([6-9]\d{2}[a-z]{0,3})\)/gi, "(3a$1)"],
   ];
 
   /**
