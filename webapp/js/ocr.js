@@ -108,6 +108,10 @@ const Ocr = (() => {
     return null;
   }
 
+  // Ein an der Spaltenlücke getrenntes Stück übernimmt die Entscheidung der ursprünglichen Zeile: Hat die ganze Zeile
+  // den Konfidenzfilter bestanden, wird ein einzelnes Wort der einen Spalte nicht nachträglich verworfen.
+  const fragmentOrigin = new WeakMap();
+
   /** Ordnet die Zeilen eines zweispaltigen Etiketts spaltenweise (links, dann rechts). */
   function reorderColumns(lines) {
     const gutter = findColumnGutter(lines);
@@ -123,6 +127,7 @@ const Ocr = (() => {
       if (crossing) { flush(); result.push(words); continue; }
       const side = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 < gutter.x);
       const other = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 >= gutter.x);
+      for (const part of [side, other]) if (part.length && part.length < words.length) fragmentOrigin.set(part, words);
       if (side.length) left.push(side);
       if (other.length) right.push(other);
     }
@@ -165,7 +170,14 @@ const Ocr = (() => {
    */
   function textFromResult(data) {
     if (data && Array.isArray(data.blocks) && data.blocks.length) {
-      const kept = reorderColumns(flattenLines(data.blocks)).map(filterLine).filter(Boolean);
+      const kept = reorderColumns(flattenLines(data.blocks)).map(words => {
+        const origin = fragmentOrigin.get(words);
+        if (!origin) return filterLine(words);
+        // Stück einer getrennten Zeile: gilt, wenn die ursprüngliche Zeile gilt; nur schwache Randwörter fallen weg.
+        if (!filterLine(origin)) return null;
+        const kept = words.filter(w => w.confidence >= WORD_MIN_CONFIDENCE || countAlnum(w.text) >= WORD_MIN_ALNUM);
+        return kept.length ? kept.map(w => w.text).join(" ") : null;
+      }).filter(Boolean);
       if (kept.length) return cleanText(kept.join("\n"));
     }
     return cleanText(data && data.text ? data.text : "");

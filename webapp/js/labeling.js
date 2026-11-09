@@ -617,7 +617,7 @@ const Labeling = (() => {
   // Überschrift und Zeilen eines Abschnitts als Beleg; Zeilenumbrüche bleiben erhalten (Tabellen, Listen).
   function sectionLines(text, heading, headingEnd, body) {
     // Adress- und Kontaktzeilen (Inverkehrbringer, Telefon, Web) gehören nicht mehr zum Abschnitt.
-    const addressAt = body.split("\n").findIndex(line => /\bTel\.|www\.|@|\b[A-Z]{1,2}-\d{5}\b|\b\d{5}[ \t]+[A-ZÄÖÜ]/.test(line));
+    const addressAt = body.split("\n").findIndex(line => /\bTel\.|www\.|@/.test(line) || POSTAL_ADDRESS.test(line));
     const rows = (addressAt >= 0 ? body.split("\n").slice(0, addressAt) : body.split("\n")).map(line => line.trim());
     const first = rows.shift();
     const head = `${text.slice(heading, headingEnd).trim()}${first ? ` ${first}` : ""}`;
