@@ -71,19 +71,52 @@ Geprüft am 9. November 2026. Die fachliche Bestandsaufnahme begann auf `main` b
 - Übertrage Grenzwerte für Alleinfutter nicht direkt auf Ergänzungs- oder Einzelfutter. Für solche Produkte sind die einschlägigen Zulassungsbedingungen, Art. 8 VO (EG) 767/2009 und bei Ergänzungsfutter die vorgeschriebene Verdünnung bzw. Verwendung zu prüfen. Halte außerdem den Toleranzvergleich zwischen Etikett und Labor nach Anhang IV der VO (EG) 767/2009 getrennt von der Prüfung eines Zulassungshöchstgehalts. [VO (EG) 767/2009, Art. 8, Art. 11 und Anhang IV](https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX%3A02009R0767-20181226) · [VO (EG) 1831/2003, Anhang IV](https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX%3A02003R1831-20210327)
 - Erfasse die Nettomenge separat von Konzentrationen und Mengen einzelner Bestandteile. Art. 15 Buchst. e VO (EG) 767/2009 unterscheidet Masseeinheiten bei festen Erzeugnissen und Masse- oder Volumeneinheiten bei flüssigen. [VO (EG) 767/2009, Art. 15](https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX%3A02009R0767-20181226)
 
-## Lokal starten und Änderungen prüfen
+## Testverfahren
+
+### Automatisierte Prüfungen
+
+Führe die Befehle im Repository-Stamm des Stands aus, den du prüfen willst. Verwende für Änderungen aus PR #41 dessen Branch. Benötigt werden Node.js sowie Python mit pytest und den Projektabhängigkeiten. Die Installation der Abhängigkeiten ist in der [README](README.md#tests) beschrieben.
 
 ```bash
-# Aus dem Repository-Stamm
 node --test tests/js/*.mjs
 python3 -m pytest -q tests/
+```
+
+- Für Änderungen an OCR oder Etikettenregeln lässt sich `node --test tests/js/ocr.test.mjs` separat starten. Prüfe bei einem Regressionstest sowohl den Status als auch den erkannten Beleg. Teste mehrdeutige, widersprüchliche und fehlende Angaben neben den positiven Fällen.
+- `tests/test_webapp_js.py` ruft die Node-Tests auch in pytest auf. Ohne Node.js wird dieser Python-Test übersprungen. Notiere Anzahl und Gründe übersprungener Tests. GitHub Pages führt vor der Auslieferung keine Tests aus.
+- Bei Fachänderungen prüfe zusätzlich Einzel und Batch mit demselben Prüfkontext. Verwende Werte unter, auf und über einer Grenze sowie abweichende Einheiten, fehlende Bezugsgrößen und ungültige Eingaben wie `10abc`. Vergleiche Ergebnisstatus, verwendete Einheit und Quellenangabe.
+
+### Foto-Upload und Kennzeichnung im Browser
+
+Starte die PWA aus dem Repository-Stamm in einem eigenen Terminal.
+
+```bash
 python3 -m http.server 8080 --bind 127.0.0.1 --directory webapp
 ```
 
-- Öffne `http://localhost:8080/`. Für eine Vorschau unter einem Unterpfad starte den Server ohne `--directory webapp` und öffne `/webapp/`. Halte lokale URLs relativ, damit die App unter `/FeedLabelCheck/` auf Pages funktioniert. Teste den Service Worker über HTTPS oder localhost.
-- Aktualisiere beim Ändern ausgelieferter Dateien die Cache-Version und bei neuen Ressourcen die Vorabladeliste in `sw.js`. Prüfe mit einem frischen und einem bestehenden Browserprofil, getrennt für App-Update und Daten-Update. Offline nach der ersten vollständigen Installation erneut öffnen, einschließlich Katalog, Kennzeichnung und OCR. Prüfe bei Änderungen an der mobilen Bedienung zusätzlich Safari im iOS-Homescreen-Modus und Chrome auf Android.
-- Ergänze bei Fachänderungen konkrete Fälle für Einzel und Batch mit identischem Prüfkontext, Grenzwerte, Einheiten, Mehrdeutigkeit und Quellenangaben. Sichere Kennzeichnungsänderungen mit Soll-Ergebnissen und zulässigen Testetiketten ab. Der vorhandene Python-Test `tests/test_webapp_js.py` ruft dieselben Node-Tests auf. Die Pages-Auslieferung hat aktuell kein eigenes Test-Gate.
-- Befund vom 9. November: 20 Node-Tests bestanden. `pytest` meldete 247 bestanden und 3 wegen fehlender lokaler Trainingsdaten übersprungen. Lokaler Chromium-Test vor der Übernahme von #34: Einzel- und Batch-Eingaben, EU-Suche sowie Offline-Neustart mit OCR eines synthetischen Etiketts und anschließender Kennzeichnungsprüfung liefen. Geprüft wurden weder echte Mobilgeräte noch reale Etikettenfotos. Der Diff und die Laufzeitprüfungen des neuen Layouts sind in PR #34 dokumentiert.
+1. Öffne `http://127.0.0.1:8080/` in einem frischen Browserprofil. Warte auf die geladenen Daten und notiere unter „Daten“ deren Quelle und Stand. Verwende für Vorher-Nachher-Vergleiche dieselben Fotos, denselben Datenstand und dieselbe Browserkonfiguration. Für die Vorschau unter einem Unterpfad starte den Server ohne `--directory webapp` und öffne `/webapp/`.
+2. Öffne „Etikett“, lade die Originalfotos über den normalen Foto-Upload hoch und warte auf das Ende der OCR. Lade mehrere Ansichten desselben Etiketts gemeinsam hoch. Beginne für jedes andere Produkt einen neuen Prüfeintrag, damit sich keine Texte verschiedener Produkte vermischen.
+3. Starte die Etikettenprüfung mit automatischer Typwahl. Vergleiche zuerst den editierbaren OCR-Text mit dem Original, dann den Futtermitteltyp und die Ergebniskarten. Halte pro Feld den Sollwert am Original, den erkannten Text, den angezeigten Beleg und den Status fest. So lässt sich unterscheiden, ob die Texterkennung, die Feldzuordnung oder die Prüfregel versagt hat. Wiederhole einen Grenzfall mit korrigiertem Text. Wähle den Futtermitteltyp manuell, falls er im Foto unlesbar bleibt.
+4. Prüfe ein bekanntes Etikett aufrecht und um 90, 180 und 270 Grad gedreht. Vergleiche die Laufzeit mit dem aufrechten Foto. Öffne anschließend den Verlauf und prüfe, ob die hochgeladene Originaldatei unverändert beim Eintrag liegt. Vergleiche für eine bytegenaue Prüfung die SHA-256-Prüfsummen von Upload und gespeichertem Original.
+
+| Referenzfall | Erwartung für den Entwurf #41 |
+| --- | --- |
+| AGROBS Seniormineral | `3 kg`, Charge `120300` und MHD `03/2027` bleiben in allen vier Ausrichtungen getrennt. Die gut lesbare aufrechte Aufnahme braucht keine Drehversuche. |
+| Pavo WeightLift | Der gemeinsame Upload der beiden Nutzerfotos liefert die sechs deutschen Zutaten. Die Mengen aus der Fütterungstabelle dürfen die Nettomenge nicht belegen. |
+| Purina Katzenfutter | Die sichtbare Packungsformel ergibt `114 g`. Die französische Futtermittelbezeichnung gehört nicht in die deutsche Zutatenliste. Bei `63,0 %` im Erstlauf und `83,0 %` in der Nachprüfung bleibt die Feuchte unklar. |
+| MultiFit Wildvogelfutter | Die deutsche Zutatenliste bleibt bis zur nächsten Überschrift vollständig. `PO 157921` bleibt ein zu bestätigender Chargenhinweis. |
+| Kattovit Renal und Urinary | Prüfe Ernährungszweck, Belegtext und Zusatzfelder getrennt. Beim Renal-Beutel ergibt die Rechnung aus den lesbaren Angaben `5,28 g/kg` Phosphor bei 12 % Feuchte. Beim Urinary-Beutel ergibt sie `0,88 g/kg` Magnesium. Feuchte und Gehalt müssen demselben Analyseabschnitt zugeordnet sein. Die Rechnung erscheint als Hinweis. |
+
+Prüfe pro Foto nur Angaben, die darauf sichtbar sind. Nutze zulässige öffentliche Beispiele oder lokal bereitgestellte Originalfotos. Die Nutzerfotos und ihre Rohtexte bleiben außerhalb des Git-Repositorys. Wenn ein Referenzfoto fehlt, dokumentiere den fehlenden Foto-Test getrennt vom Text- oder Unit-Test. [Referenzbilder und Prüfbefunde in PR #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
+
+### Offline, Verlauf und Datenwechsel
+
+1. Lade die PWA online vollständig und warte, bis ihr Service Worker die Seite kontrolliert. Schalte dann das Netzwerk ab und öffne dieselbe Adresse erneut, ohne die Website-Daten zu löschen. Öffne den Katalog und den Etikettenverlauf. Lade ein neues, noch nicht verarbeitetes Foto hoch und prüfe die OCR samt Ergebniskarten. Ein bereits gespeichertes Ergebnis allein belegt keinen funktionierenden Offline-OCR-Lauf.
+2. Prüfe den Verlauf in einem separaten Testprofil mit mehreren Fotos je Eintrag. Korrigiere Text und öffne den Eintrag erneut. Simuliere einen abgelaufenen unmarkierten Eintrag und einen gleich alten Eintrag mit „Behalten“. Nach dem Neustart sollen der unmarkierte Eintrag samt Fotos gelöscht und der markierte Eintrag samt Fotos weiter abrufbar sein. Prüfe auch das Aufheben der Markierung und das manuelle Löschen.
+3. Prüfe App-Update und Daten-Update getrennt in einem frischen und einem bestehenden Browserprofil. Bei Änderungen an ausgelieferten Dateien aktualisiere die Cache-Version, bei neuen Ressourcen die Vorabladeliste in `sw.js`. Simuliere beim Daten-Update einen gültigen neuen Stand, einen unterbrochenen Download und eine Datei mit falscher Prüfsumme. Ein unvollständiger oder ungültiger Download darf den letzten gültigen Stand nicht ersetzen.
+4. Prüfe Änderungen an der mobilen Bedienung zusätzlich auf einem echten iPhone im Safari-Homescreen-Modus und auf Android in Chrome. Halte Gerät, Browser und Online- oder Offline-Zustand im Testprotokoll fest.
+
+**Geprüfter Stand vom 9. November 2026:** Für den Entwurf #41 bei `3fb949f` bestanden 139 Node-Tests und 247 Python-Tests. Drei Python-Tests wurden wegen fehlender lokaler Trainingsdaten übersprungen. Der Foto-Upload mit realen Etiketten, die vier Ausrichtungen und der Offline-Neustart wurden in lokalem Chromium geprüft. Die Abnahme auf echten Mobilgeräten steht aus. [Prüfbefunde in PR #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
 
 ## Bestätigte Produktentscheidungen vom 9. November 2026
 
