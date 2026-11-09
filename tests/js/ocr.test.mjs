@@ -449,3 +449,63 @@ test("eine Zusammensetzungs-Überschrift ohne Zutaten bestätigt keine Zutatenli
   assert.match(real.matchedText, /Getreide, Saaten, Nüsse/);
   assert.doesNotMatch(real.matchedText, /Hersteller|Muster/);
 });
+
+const LIVESTOCK_TYPES = [
+  ...FEED_TYPES.map(type => type.id === "complete_feed"
+    ? { ...type, keywordsDe: [...type.keywordsDe, "complete nutrition", "100% complete nutrition"] }
+    : type),
+  { id: "milk_replacer", nameDe: "Milchaustauscher", keywordsDe: ["Milchaustauscher", "Tränke"] },
+];
+
+test("ausgeschriebener Milchaustauscher für Aufzuchtkälber hat Vorrang vor der allgemeinen Alleinfutter-Angabe", () => {
+  const text = "Milchaustauschfuttermittel für Aufzuchtkälber. Analytische Bestandteile: 21,5 % Rohprotein. Alleinfuttermittel darf nur entsprechend der Anleitung verfüttert werden.";
+  assert.equal(Labeling.detectFeedType(text, LIVESTOCK_TYPES)?.feedType.id, "milk_replacer");
+  for (const [id, expected] of [["art15_001", "Milchaustauschfuttermittel"], ["art17_001_milk", "für Aufzuchtkälber"]]) {
+    const evidence = checkNumericLabelRule(id, text, "unpassender Mustertext", "keyword");
+    assert.equal(evidence.status, "found");
+    assert.equal(evidence.matchedText, expected);
+  }
+});
+
+test("Werbetext und Tränke-Hinweise belegen allein keine Futtermittelart", () => {
+  for (const text of ["Convenient, complete nutrition for newborn calves.", "Mit Wasser mischen und als alleinige Tränke verfüttern."]) {
+    assert.equal(Labeling.detectFeedType(text, LIVESTOCK_TYPES), null);
+  }
+});
+
+test("OCR-Variante der Ergänzungsfutter-Deklaration und verstümmelter Vergleich", () => {
+  assert.equal(Labeling.detectFeedType("ERGÄNZUNGFUTTERMITTEL FÜR PFERDE", LIVESTOCK_TYPES)?.feedType.id, "complementary_feed");
+  const text = "Dieses Ergänzungsfuttermittel darf wegen der … Alleinfuttermittel höheren, Gehaltes an Zusatzstoffen nur begrenzt als Tränke verfüttert werden.";
+  assert.equal(Labeling.detectFeedType(text, LIVESTOCK_TYPES)?.feedType.id, "complementary_feed");
+});
+
+test("Zusammensetzung mit Schrägstrichen endet vor dem Hersteller und Legehennen haben einen eigenen Beleg", () => {
+  const text = "Ergänzungsfuttermittel für Legehennen.\nZusammensetzung:\nGetreide / Mais / Erbsen /\nSonnenblumenöl / Hafer.\nMusterfutter GmbH & Co. KG\nBeispielstraße 5\nHinweise: kühl lagern.";
+  const comp = checkNumericLabelRule("art17_003_complementary", text, "Zusammensetzung", "keyword", 0.7);
+  assert.equal(comp.status, "found");
+  assert.equal(comp.matchedText, "Zusammensetzung: Getreide / Mais / Erbsen / Sonnenblumenöl / Hafer.");
+  const species = checkNumericLabelRule("art17_001_complementary", text, "Tierart:", "keyword", 0.7);
+  assert.equal(species.matchedText, "für Legehennen");
+});
+
+test("mit Semikolon getrennte Zutaten enden vor den Inhaltsstoffen, Einsatzhinweise vor der Fütterungsanleitung", () => {
+  for (const next of ["Inhaltsstoffe: 6,1 % Rohprotein", "Einsatzempfehlung: 50 g pro Liter Wasser", "Hinweise: kühl lagern"]) {
+    const text = `Ergänzungsfuttermittel für Kälber.\nZusammensetzung: Traubenzucker; Molkenpulver;\nLaktose.\n${next}`;
+    const result = checkNumericLabelRule("art17_003_complementary", text, "Zusammensetzung", "keyword", 0.7);
+    assert.equal(result.status, "found");
+    assert.equal(result.matchedText, "Zusammensetzung: Traubenzucker; Molkenpulver; Laktose.");
+  }
+});
+
+
+test("OCR-Leerzeichen innerhalb einer Futtermittelart bleiben im Beleg sichtbar", () => {
+  const text = "Ergänzungsf uttermittel für Legehennen. Zusammensetzung: Getreide / Mais.";
+  assert.equal(Labeling.detectFeedType(text, LIVESTOCK_TYPES)?.feedType.id, "complementary_feed");
+  assert.equal(checkNumericLabelRule("art15_001", text, "Ergänzungsfuttermittel", "keyword").matchedText, "Ergänzungsf uttermittel");
+});
+
+test("englischer Hinweis auf eine spätere Milchfütterung belegt die Futtermittelart nicht", () => {
+  const check = text => checkNumericLabelRule("art15_001", text, "milk replacer", "keyword");
+  assert.equal(check("Feed the colostrum product first, then begin feeding calf\nmilk replacer at the next feeding.").status, "missing");
+  assert.equal(check("Calf milk replacer for calves\nFollow the directions on this label.").status, "found");
+});

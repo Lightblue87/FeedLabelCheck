@@ -132,6 +132,15 @@ const Labeling = (() => {
   }
 
   // ── Futtermitteltyp-Erkennung (Port des Swift-Detectors) ──────
+  const EXTRA_FEED_TERMS = {
+    milk_replacer: ["Milchaustauschfuttermittel", "Milchaustausch-Alleinfuttermittel", "Milchaustausch-Ergänzungsfuttermittel"],
+    complementary_feed: ["Ergänzungfuttermittel", "Ergaenzungfuttermittel"],
+  };
+  const EXTRA_FEED_DECLARATIONS = Object.values(EXTRA_FEED_TERMS).flat();
+  const SPLIT_FEED_PATTERN = /\b((?:Ergänzungs|Ergaenzungs|Allein)f)[ \t]+(uttermittel)\b/gi;
+  const EXTRA_FEED_PATTERN = new RegExp(String.raw`\b(?:${EXTRA_FEED_DECLARATIONS.map(escapeRegex).join("|")})\b`, "i");
+  const INDIRECT_FEED_TERMS = new Set(["complete nutrition", "100% complete nutrition", "tranke"]);
+
   const DIRECT_LEGAL_TERMS = new Set([
     "einzelfuttermittel", "mischfuttermittel", "alleinfuttermittel",
     "allein-futtermittel", "alleinfutter", "diat alleinfuttermittel",
@@ -139,6 +148,7 @@ const Labeling = (() => {
     "erganzungsfutermittel", "ergaenzungsfutermittel", "erganzungsfuttermitel",
     "ergaenzungsfuttermitel", "erganzungsfutter", "mineralfuttermittel",
     "mineral-futtermittel", "milchaustauscher", "milch-austauscher",
+    ...EXTRA_FEED_DECLARATIONS.map(normalizeText),
   ]);
 
   function normalizeText(text) {
@@ -162,7 +172,10 @@ const Labeling = (() => {
     while ((m = re.exec(text)) !== null) {
       const start = m.index + m[1].length;
       const before = text.slice(Math.max(0, start - 30), start);
-      if (!COMPARISON_MARKERS.some(marker => before.includes(marker))) return true;
+      const after = text.slice(start + phrase.length, start + phrase.length + 40);
+      const comparison = COMPARISON_MARKERS.some(marker => before.includes(marker))
+        || (/^allein/.test(phrase) && /^\s+hoher(?:e|en|er|es)[, ]+gehalt/.test(after));
+      if (!comparison) return true;
       re.lastIndex = start + phrase.length;   // Überlappungen weiter prüfen
     }
     return false;
@@ -187,9 +200,10 @@ const Labeling = (() => {
     return feedTypes
       .filter(ft => ft.id !== "all" && ft.id !== "unknown")
       .map(ft => {
-        const matched = ft.keywordsDe.filter(kw => {
+        const keywords = [...new Set([...ft.keywordsDe, ...(EXTRA_FEED_TERMS[ft.id] || [])])];
+        const matched = keywords.filter(kw => {
           const nk = normalizeText(kw);
-          if (!nk) return false;
+          if (!nk || INDIRECT_FEED_TERMS.has(nk)) return false;
           if (DIRECT_LEGAL_TERMS.has(nk)) return containsPhraseOutsideComparison(nk, normalized);
           return normalized.includes(nk);
         });
@@ -208,10 +222,13 @@ const Labeling = (() => {
   }
 
   function detectFeedType(ocrText, feedTypes) {
-    const normalized = normalizeText(ocrText);
+    const normalized = normalizeText(ocrText.replace(SPLIT_FEED_PATTERN, "$1$2"));
     const candidates = rankedCandidates(normalized, feedTypes);
     const best = candidates[0];
     if (!best) return null;
+    const milk = candidates.find(c => c.feedType.id === "milk_replacer" && hasDirectLegalMatch(c));
+    if (milk && candidates.every(c => ["milk_replacer", "complete_feed"].includes(c.feedType.id)
+        || !hasDirectLegalMatch(c))) return milk;
     if (candidates.length > 1 && best.score - candidates[1].score < 0.25) {
       if (hasDirectLegalMatch(best) && !hasDirectLegalMatch(candidates[1])) return best;
       return null;   // mehrdeutig → manuelle Auswahl
@@ -322,12 +339,12 @@ const Labeling = (() => {
 
   function compositionEvidence(text) {
     const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*/giu;
-    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\b(?:Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
+    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
       const start = match.index + match[0].length;
       const body = text.slice(start, start + MAX_COMPOSITION_CHARS).split(nextSection, 1)[0].trim();
       if (/^(?:siehe|keine|see)\b|^s\./i.test(body) || !/\p{L}{2,}/u.test(body)) continue;
-      if (/\p{L}[^:,\n]{0,40},\s*\p{L}|\d[ \t]*%/u.test(body)) {
+      if (/\p{L}[^:;,/\n]{0,40}(?:[,;]|[ \t]\/)\s*\p{L}|\d[ \t]*%/u.test(body)) {
         return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
       }
     }
@@ -343,10 +360,13 @@ const Labeling = (() => {
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? null;
     }
+    if (ruleId === "art15_001") {
+      return text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? null;
+    }
     if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
     if (ruleId.startsWith("art17_004_")) return percentageEvidence(text, ANALYTICAL_NAME);
     if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {
-      return text.match(/\bfür\s+(?:alle\s+)?Wildvögel\b/i)?.[0] ?? null;
+      return text.match(/\bfür\s+(?:alle\s+)?(?:Wildvögel|Legehennen|Aufzuchtkälber)\b/i)?.[0] ?? null;
     }
     if (ruleId.startsWith("art17_003_")) return compositionEvidence(text);
     return null;
@@ -422,6 +442,8 @@ const Labeling = (() => {
     const hint = po || packageHint;
     if (hint) best = { text: hint, language: "de", weight: 0.7, languagePriority: 0 };
     for (const p of positive) {
+      if (rule.id === "art15_001" && p.patternType === "keyword" && normalizeText(p.patternValue) === "milk replacer"
+          && !/^[ \t]*(?:(?:calf|lamb|kid)[ \t]+)?milk replacer(?:[ \t]+for[ \t]+[^\n]+)?[ \t]*$/im.test(text)) continue;
       // Allgemeine Zahlenmuster können Futterrationen, einzelne Ziffern oder Fragmente erfassen.
       if (p.patternType === "regex" && (hasNumericEvidence || (lotRule && p.confidenceWeight >= 0.85))) continue;
       const weight = netQuantity ? Math.min(p.confidenceWeight, 0.7) : p.confidenceWeight;
