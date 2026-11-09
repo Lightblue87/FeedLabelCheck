@@ -98,6 +98,12 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory webapp
 - Prüfe Firmenkürzel als eigene Wörter. Ein OCR-Fragment innerhalb eines fremdsprachigen Wortes darf keine Unternehmensangabe bestätigen. Gib bei unbelegten Angaben an, dass sie im Prüftext nicht erkannt wurden. Für eine fachliche Bewertung können weitere Verpackungsflächen und die Prüfung der jeweiligen Deklarationspflicht nötig sein.
 - Nutze die Vorder- und Rückseite gemeinsam für die Abnahme. Halte Originalfotos im lokalen Prüfverlauf vor, damit Nutzer Belege vergleichen und einzelne OCR-Fehler korrigieren können.
 
+## Abnahme mit öffentlich zugänglichen Etikettenbildern
+
+- Neun Bilder im normalen Browser-Upload vor und nach der Korrektur geprüft. Die Stichprobe umfasst Hunde, Katzen, Pferde, Kaninchen und Legehennen, darunter mehrsprachige Verpackungen und Ausschnitte. Bewerte pro Feld nur die im jeweiligen Bild sichtbare Angabe. Die Originalbilder bleiben im lokalen Testordner. [Änderung und Quellen im Entwurf #40](https://github.com/Lightblue87/FeedLabelCheck/pull/40)
+- Regressionen für die nächste Abnahme: Eine Fütterungs- oder Energieangabe `pro 100 g` ist keine Nettomenge. `KG` nach einem Zahlenwert ist kein Unternehmensbeleg. Halte bei Mehrfachpackungen Einzelmenge und mögliche Gesamtmenge auseinander. Werte aus einem zweiten OCR-Lauf bleiben Hinweise. Prüfe außerdem Zutatenüberschriften mit Prozentangaben sowie analytische Prozentwerte in Tabellen.
+- Offene OCR-Fälle aus der Stichprobe sind die tatsächlichen `800 g` auf einem Rinti-Etikett, kleine Schrift auf einer gekrümmten Katzendose und eine polnische Legehennen-Deklaration. Bei unlesbarer Futtermittelart bleibt die manuelle Auswahl verfügbar. [Hundeetikett](https://www.gosupps.com/rinti-kennerfleisch-ross-12-x-800-g-ross-800-g-pack-of-12.html) · [Katzenetikett](https://www.petsnature.de/katzen/catz-finefood/catz-finefood-classic-adult-gefluegel-200g/008890) · [Legehennenetikett](https://hodowlany.pl/kurka-naturka-nioska-z-ziarnami-kruszonka-dla-kur-niosek-20-kg.html)
+
 ## Verbleibende Abnahmeentscheidungen
 
 - Lege fest, welche Etikettsprachen, Produkttypen und realen Beispiele für die erste Abnahme bereitstehen. Die aktuelle PWA lädt nur das deutsche OCR-Sprachmodell.
