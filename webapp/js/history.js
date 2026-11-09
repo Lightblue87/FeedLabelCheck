@@ -188,16 +188,30 @@ const LabelHistory = (() => {
         idxReq.onsuccess = () => idxReq.result.forEach(k => tx.objectStore("photos").delete(k));
         await done(tx);
       },
+      /**
+       * Entfernt Fotos ohne Eintrag. Eintrags-IDs lesen und Verwaiste löschen geschieht in
+       * EINER Transaktion über beide Speicher: ein anderer Tab, der gleichzeitig einen Eintrag
+       * samt Fotos anlegt, kann so nie zwischen Lesen und Löschen dazwischenkommen.
+       */
       async deleteOrphanPhotos() {
         const db = await open();
-        const ids = new Set((await request(db.transaction("entries").objectStore("entries").getAllKeys())));
-        const all = await request(db.transaction("photos").objectStore("photos").getAll());
-        const orphans = all.filter(p => !ids.has(p.entryId));
-        if (!orphans.length) return 0;
-        const tx = db.transaction("photos", "readwrite");
-        orphans.forEach(p => tx.objectStore("photos").delete(p.id));
-        await done(tx);
-        return orphans.length;
+        const tx = db.transaction(["entries", "photos"], "readwrite");
+        const finished = done(tx);
+        let count = 0;
+        const keysReq = tx.objectStore("entries").getAllKeys();
+        keysReq.onsuccess = () => {
+          const ids = new Set(keysReq.result);
+          // Schlüssel-Cursor über den Index: liefert entryId + Foto-ID, ohne die Blobs zu laden
+          const cur = tx.objectStore("photos").index("entryId").openKeyCursor();
+          cur.onsuccess = () => {
+            const c = cur.result;
+            if (!c) return;
+            if (!ids.has(c.key)) { tx.objectStore("photos").delete(c.primaryKey); count++; }
+            c.continue();
+          };
+        };
+        await finished;
+        return count;
       },
     };
   }
