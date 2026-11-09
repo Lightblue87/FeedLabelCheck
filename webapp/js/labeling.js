@@ -322,7 +322,7 @@ const Labeling = (() => {
 
   function compositionEvidence(text) {
     const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*/giu;
-    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:|\b(?:Fütterungsempfehlung|Fütterungshinweise?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
+    const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\b(?:Fütterungsempfehlung|Fütterungshinweise?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
       const start = match.index + match[0].length;
       const body = text.slice(start, start + MAX_COMPOSITION_CHARS).split(nextSection, 1)[0].trim();
@@ -360,10 +360,14 @@ const Labeling = (() => {
   // Ein einzelnes "L" ist sonst keine Losangabe (10 L 50 …); direkt hinter einem Datum schon: "MHD 20.12.2026 L 123456".
   const DATED_LOT = new RegExp(String.raw`\b\d{1,2}[./-](?:\d{1,2}[./-])?\d{2,4}[ \t]+(L)[ \t]+(${LOT_SEGMENT}(?:[ \t]+${LOT_SEGMENT})*)`);
 
+  // Steht die Losnummer-Überschrift ohne Wert da, folgt in der nächsten Zeile oft ein anderes Feld
+  // (MHD …, NETTO 800 g): dessen Name darf nicht als Code gelten. Ein Code wie "NET12345" bleibt erlaubt.
+  const NEIGHBOR_FIELD = /^(?:mhd|exp|bbd|best[ \t]+before|mindestens|netto\w*|net|inhalt|gewicht|hersteller|vertrieb|zusammensetzung|analytische|feuchte\w*|tierart)(?![A-Za-z0-9])/i;
+
   function declaredLot(text) {
     for (const label of text.matchAll(LOT_LABEL)) {
       const code = text.slice(label.index + label[0].length).match(LOT_VALUE)?.[0];
-      if (code && !/^\d$/.test(code)) return `${label[0].trim()} ${code}`;
+      if (code && !/^\d$/.test(code) && !NEIGHBOR_FIELD.test(code)) return `${label[0].trim()} ${code}`;
     }
     const dated = text.match(DATED_LOT);
     if (dated && !/^\d$/.test(dated[2])) return `${dated[1]} ${dated[2]}`;

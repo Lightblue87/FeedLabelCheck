@@ -414,3 +414,36 @@ test("Mengenüberschrift ohne Menge löst den Zusatz-OCR-Lauf aus, mit Menge nic
   assert.equal(Labeling.needsPackageAmount("Inhalt: 5 kg"), false);
   assert.equal(Labeling.needsPackageAmount("Inhaltsstoffe: Protein"), false);
 });
+
+test("ein Nachbarfeld nach einer Losnummer-Überschrift ohne Wert wird nicht als Losnummer bestätigt", () => {
+  for (const next of ["MHD 20.12.2026", "NETTO 800 g", "EXP 12.12.2027", "Mindestens haltbar bis 12/2027",
+                      "Nettomasse 10 kg", "Hersteller: Muster GmbH", "Best before 12/2027"]) {
+    for (const head of ["Chargen-Nr.:", "Losnummer:", "Lot:", "Charge:"]) {
+      const text = `Ergänzungsfuttermittel für Wildvögel.\n${head}\n${next}`;
+      const direct = checkNumericLabelRule("art15_004", text, legacyLotPattern);
+      assert.notEqual(direct.status, "found", JSON.stringify(text));
+      const withKeyword = checkLabelEvidence(text)[4];
+      assert.notEqual(withKeyword.status, "found", JSON.stringify(text));
+    }
+  }
+});
+
+test("echte Codes, die wie ein Feldname beginnen oder ihn enthalten, bleiben Losnummern", () => {
+  for (const lot of ["Charge: NET12345", "Lot: EXP20271", "Charge: MHD7788", "Chargen-Nr.: A12345", "Charge:\nA12345"]) {
+    const result = checkNumericLabelRule("art15_004", `Ergänzungsfuttermittel für Wildvögel.\n${lot}`, legacyLotPattern);
+    assert.equal(result.status, "found", lot);
+  }
+});
+
+test("eine Zusammensetzungs-Überschrift ohne Zutaten bestätigt keine Zutatenliste aus einem Nachbarfeld", () => {
+  const check = text => checkNumericLabelRule("art17_003_complete", `Alleinfuttermittel für Hunde. ${text}`, "Zusammensetzung", "keyword", 0.7);
+  for (const text of ["Zusammensetzung:\n\nHersteller: Muster GmbH, Berlin", "Zusammensetzung:\nVertrieb: Futter OHG, Hamburg",
+                      "Zusammensetzung:\nNettomasse: 10 kg, Chargen-Nr.: A12345", "Zusammensetzung:\nChargen-Nr.: A12345, MHD: 12/2027"]) {
+    assert.notEqual(check(text).status, "found", JSON.stringify(text));
+  }
+  // echte Liste, danach Nachbarfeld: nur die Liste zählt
+  const real = check("Zusammensetzung: Getreide, Saaten, Nüsse.\nHersteller: Muster GmbH, Berlin");
+  assert.equal(real.status, "found");
+  assert.match(real.matchedText, /Getreide, Saaten, Nüsse/);
+  assert.doesNotMatch(real.matchedText, /Hersteller|Muster/);
+});
