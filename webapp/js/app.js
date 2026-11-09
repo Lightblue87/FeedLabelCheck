@@ -433,6 +433,7 @@
     // Foto- und Ergebnis-Updates desselben Eintrags gegenseitig).
     let queue = Promise.resolve();
     const enqueue = (fn) => { const p = queue.then(fn); queue = p.catch(() => {}); return p; };
+
     const reportError = (what, e) => toast(`${what}: ${e?.message || e}`, "error", true);
 
     const retentionText = (e) => {
@@ -441,18 +442,25 @@
       return d <= 0 ? "Löschung heute" : d === 1 ? "Löschung in 1 Tag" : `Löschung in ${d} Tagen`;
     };
 
-    /** Legt beim ersten Inhalt (Text oder Foto) den Eintrag an. Nur innerhalb von enqueue aufrufen. */
-    async function ensureEntry() {
+    /**
+     * Legt beim ersten Inhalt (Text oder Foto) den Eintrag an. Nur innerhalb von enqueue aufrufen.
+     * Der Eintrag wird nur dann zum angezeigten (current), wenn die Ansicht seit dem Start unverändert
+     * ist; wurde inzwischen ein anderer Eintrag geöffnet oder neu begonnen, bleibt er für sich, und
+     * die Ansicht wird nicht angetastet. Aufrufer verwenden deshalb den zurückgegebenen Eintrag.
+     */
+    async function ensureEntry({ text = textEl.value, feedType = sel.value } = {}) {
       if (!history) return null;
-      if (!current) {
-        current = await history.startEntry({ text: textEl.value, feedType: sel.value });
-        rememberCurrent(current.id);
-        // Bittet den Browser, den Verlauf nicht bei Speichermangel zu räumen (Fotos!).
-        try { navigator.storage?.persist?.(); } catch { /* optional */ }
-        renderEntryBar();
-        refreshHistoryCount();
-      }
-      return current;
+      if (current) return current;
+      const epoch = viewEpoch;
+      const entry = await history.startEntry({ text, feedType });
+      if (epoch !== viewEpoch || current) return entry;
+      current = entry;
+      rememberCurrent(current.id);
+      // Bittet den Browser, den Verlauf nicht bei Speichermangel zu räumen (Fotos!).
+      try { navigator.storage?.persist?.(); } catch { /* optional */ }
+      renderEntryBar();
+      refreshHistoryCount();
+      return entry;
     }
 
     // Nur lokal geänderten Text speichern: Ein unberührter Tab darf beim Ausblenden, Wechseln oder
@@ -470,9 +478,9 @@
         const version = textVersion;          // beides im selben synchronen Schritt lesen
         if (version === savedVersion) return;
         if (!current && !text.trim()) { savedVersion = version; return; }
-        await ensureEntry();
-        const e = await history.update(current.id, { text });
-        if (e) current = e;
+        const id = (await ensureEntry({ text })).id;
+        const e = await history.update(id, { text });
+        if (e && current?.id === id) current = e;
         savedVersion = Math.max(savedVersion, version);
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
     }
@@ -485,9 +493,11 @@
     });
     sel.addEventListener("change", () => {
       if (!history || !current) return;
+      const id = current.id;
+      const feedType = sel.value;
       enqueue(async () => {
-        const e = await history.update(current.id, { feedType: sel.value });
-        if (e) current = e;
+        const e = await history.update(id, { feedType });
+        if (e && current?.id === id) current = e;
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
     });
     // iOS beendet PWAs ohne Vorwarnung: ausstehende Eingabe beim Ausblenden sofort sichern.
@@ -511,15 +521,26 @@
     /** Legt die unveränderten Originale beim Eintrag ab (bevor die OCR startet). */
     function attachPhotos(files) {
       if (!history) return Promise.resolve(null);
+      // Zu welchem Eintrag gehört die Aufnahme? Beim Auswählen festhalten, nicht erst beim Ausführen:
+      // die Warteschlange kann hängen, während der Nutzer bereits einen anderen Eintrag geöffnet hat.
+      const originId = current?.id ?? null;
+      const originEpoch = viewEpoch;
       return enqueue(async () => {
-        await ensureEntry();
-        current = await history.addPhotos(current.id, files, { makeThumb });
-        await refreshPhotos();
+        // Noch kein Eintrag: ist die Ansicht inzwischen gewechselt, bekommt die Aufnahme einen eigenen
+        // Eintrag, statt in den (neuen, fremden) Eintrag der jetzigen Ansicht zu geraten.
+        const id = originId ?? (originEpoch === viewEpoch
+          ? (await ensureEntry()).id
+          : (await history.startEntry({ text: "", feedType: "auto" })).id);
+        const updated = await history.addPhotos(id, files, { makeThumb });
+        if (current?.id === id) {            // nur in die Ansicht übernehmen, wenn derselbe Eintrag noch offen ist
+          if (updated) current = updated;
+          await refreshPhotos();
+        }
         refreshHistoryCount();
-        return current.id;
+        return id;
       }).catch(e => {
         reportError("Fotos konnten nicht im Verlauf gespeichert werden", e);
-        return current?.id ?? null;   // der Eintrag, zu dem die Aufnahme gehört (falls schon angelegt)
+        return originId ?? current?.id ?? null;   // der Eintrag, zu dem die Aufnahme gehört (falls schon angelegt)
       });
     }
 
@@ -706,9 +727,11 @@
 
     $("#l-keep").addEventListener("click", async () => {
       if (!current) return;
+      const id = current.id;
+      const keep = !current.keep;
       try {
-        const e = await enqueue(() => history.setKeep(current.id, !current.keep));
-        if (e) { current = e; renderEntryBar(); }
+        const e = await enqueue(() => history.setKeep(id, keep));
+        if (e && current?.id === id) { current = e; renderEntryBar(); }
       } catch (e) { reportError("Verlauf", e); }
     });
 
@@ -901,14 +924,8 @@
         const checkedText = textEl.value;
         const checkedType = sel.value;
         const checkedId = current?.id ?? null;
-        const epoch = viewEpoch;
         enqueue(async () => {
-          let id = checkedId;
-          if (!id) {
-            if (epoch !== viewEpoch) return;       // Ansicht wurde inzwischen gewechselt
-            await ensureEntry();
-            id = current.id;
-          }
+          const id = checkedId ?? (await ensureEntry({ text: checkedText, feedType: checkedType })).id;
           const e = await history.update(id, { text: checkedText, feedType: checkedType, lastCheck: summary });
           if (e && current?.id === id) current = e;
         }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
