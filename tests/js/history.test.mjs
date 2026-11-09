@@ -306,3 +306,33 @@ test("appendText bei leerem Text ohne führende Leerzeilen; unbekannter Eintrag 
   assert.equal((await history.appendText(e.id, "A")).text, "A");
   assert.equal(await history.appendText("nope", "x"), null);
 });
+
+test("applyCheck hängt das Ergebnis an, wenn die gespeicherten Eingaben zum geprüften Stand passen", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "A", feedType: "auto" });
+  const entry = await history.applyCheck(e.id, { text: "A", feedType: "auto", lastCheck: { overall: "unklar" } });
+  assert.equal(entry.lastCheck.overall, "unklar");
+});
+
+test("applyCheck ersetzt keinen neueren gespeicherten Text und hängt kein Ergebnis dafür an", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "A" });
+  await history.update(e.id, { text: "B (neuer gespeichert)" });
+  const entry = await history.applyCheck(e.id, { text: "A", feedType: "auto", lastCheck: { overall: "unklar" } });
+  assert.equal(entry.text, "B (neuer gespeichert)", "Text bleibt unverändert");
+  assert.equal(entry.lastCheck, null, "Ergebnis für den alten Text wird nicht angehängt");
+});
+
+test("applyCheck mit writeInputs speichert den geprüften Stand und hängt das Ergebnis an", async () => {
+  const { history } = setup();
+  const e = await history.startEntry({ text: "alt" });
+  const entry = await history.applyCheck(e.id, { text: "neu", feedType: "pet_feed", lastCheck: { overall: "unklar" }, writeInputs: true });
+  assert.equal(entry.text, "neu");
+  assert.equal(entry.feedType, "pet_feed");
+  assert.equal(entry.lastCheck.overall, "unklar");
+});
+
+test("applyCheck bei unbekanntem Eintrag gibt null zurück", async () => {
+  const { history } = setup();
+  assert.equal(await history.applyCheck("nope", { text: "x", feedType: "auto", lastCheck: {} }), null);
+});

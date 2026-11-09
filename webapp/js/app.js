@@ -493,10 +493,15 @@
       textTimer = setTimeout(saveText, 400);
     });
     sel.addEventListener("change", () => {
-      if (!history || !current) return;
-      const id = current.id;
+      if (!history) return;
+      const idAtEvent = current?.id ?? null;
+      const epoch = viewEpoch;
       const feedType = sel.value;
       enqueue(async () => {
+        // Wird der Eintrag gerade erst angelegt (current noch leer), gilt der danach vorhandene
+        // Eintrag derselben Ansicht; ohne Eintrag greift die Auswahl beim Anlegen (ensureEntry).
+        const id = idAtEvent ?? (epoch === viewEpoch ? (current?.id ?? null) : null);
+        if (!id) return;
         const e = await history.update(id, { feedType });
         if (e && current?.id === id) current = e;
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
@@ -810,21 +815,40 @@
     /** @returns {boolean} false, wenn der Text keinem Eintrag zugeordnet werden konnte und verworfen wurde */
     async function appendOcrText(targetId, ocrText, epoch) {
       const join = (old) => (old.trim() ? old + "\n\n" : "") + ocrText;
+      const syncViewer = () => { if (!viewer.hidden) $("#viewer-text").value = textEl.value; };
       // Ohne Eintrag (Speichern fehlgeschlagen) gehört der Text nur zur Ansicht, in der er gestartet wurde.
       if (history && !targetId && epoch !== viewEpoch) return false;
-      if (!history || !targetId || current?.id === targetId) {
+
+      const showsTarget = !history || !targetId || current?.id === targetId;
+      if (!history || !targetId || (showsTarget && textVersion !== savedVersion)) {
+        // Kein Verlauf, kein Eintrag oder ungesicherte lokale Eingabe: an den sichtbaren Text anhängen
+        // und speichern (die lokale Eingabe darf nicht verloren gehen).
         textEl.value = join(textEl.value);
-        if (!viewer.hidden) $("#viewer-text").value = textEl.value;   // Betrachter ist gerade offen
+        syncViewer();
         markTextEdited();
         saveText();
         return true;
       }
-      // Der Nutzer hat inzwischen einen anderen Eintrag geöffnet: Text gehört zum alten.
-      // Atomar anhängen (nicht lesen und neu schreiben): eine Korrektur aus einem anderen Tab
-      // zwischen Lesen und Schreiben ginge sonst verloren.
-      await enqueue(() => history.appendText(targetId, ocrText));
+      // Sonst atomar an den zuletzt GESPEICHERTEN Text anhängen (eine Korrektur aus einem anderen Tab
+      // bleibt erhalten, egal ob der Eintrag noch angezeigt wird) und die Anzeige daran angleichen.
+      const e = await enqueue(() => history.appendText(targetId, ocrText));
+      if (e && current?.id === targetId) {
+        current = e;
+        if (textVersion === savedVersion) {
+          textEl.value = e.text;
+          syncViewer();
+          markTextLoaded();
+        } else {
+          // Der Nutzer hat während des Anhängens getippt: Anhang auch dort ergänzen und mitspeichern.
+          textEl.value = join(textEl.value);
+          syncViewer();
+          markTextEdited();
+          saveText();
+        }
+      }
       return true;
     }
+
 
     async function doOcr(files, targetId, epoch) {
       const status = $("#l-ocr-status");
@@ -934,9 +958,16 @@
         const checkedText = textEl.value;
         const checkedType = sel.value;
         const checkedId = current?.id ?? null;
+        const checkVersion = textVersion;
+        const unsavedAtCheck = textVersion !== savedVersion;
         enqueue(async () => {
           const id = checkedId ?? (await ensureEntry({ text: checkedText, feedType: checkedType })).id;
-          const e = await history.update(id, { text: checkedText, feedType: checkedType, lastCheck: summary });
+          // Den geprüften Stand nur als Eingabe speichern, wenn er in diesem Tab ungesichert war und der
+          // Editor seither unverändert ist; sonst nie einen neueren Autosave oder eine fremde Korrektur
+          // überschreiben. Das Ergebnis wird nur angehängt, wenn die gespeicherten Eingaben dazu passen.
+          const writeInputs = unsavedAtCheck && textVersion === checkVersion && sel.value === checkedType;
+          const e = await history.applyCheck(id, { text: checkedText, feedType: checkedType, lastCheck: summary, writeInputs });
+          if (writeInputs) savedVersion = Math.max(savedVersion, checkVersion);
           if (e && current?.id === id) current = e;
         }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
       }
