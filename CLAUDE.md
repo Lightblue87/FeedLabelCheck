@@ -156,10 +156,25 @@ Ausgewählte Etikettenansichten aus den folgenden öffentlichen Quellen wurden i
 | [Kattovit Urinary Lachs](https://kattovit.com/en/products/nassfutter-lachs-frischebeutel-24-x-85g-urinary) und [Kattovit Urinary Spezial-Cream](https://kattovit.com/products/snack-spezial-cream-schachtel-11-x-6-x-15g-urinary) | Der Beutel belegt die Verringerung von Struvitsteinrezidiven. Die Spezial-Cream bleibt trotz ähnlichem Produktnamen Ergänzungsfutter. |
 | [Kattovit Sensitive Huhn und Pute](https://kattovit.com/products/nassfutter-huhn-pute-frischebeutel-24-x-85g-sensitive) | Prüfe getrennte Eiweiß- und Kohlenhydratquellen sowie die erste und die bedingte weitere Fütterungsdauer. Einzelne OCR-Ziffern müssen am Bild abgeglichen werden. |
 
+#### Sichtbare Auswertung nach dem Foto-Upload
+
+Die folgenden Ansichten wurden in Chromium mit einem mobilen Ansichtsfenster geprüft. Erfasst wurden das Ergebnisbanner, die sichtbaren Karten, ihre Status und die eingeblendeten Textbelege. Die Ausgangsbefunde stammen von `main` mit dem mitgelieferten Datenstand. Der Diabetes-Befund wurde zusätzlich in der veröffentlichten PWA bestätigt.
+
+| Quelle und verwendete Ansicht | Sichtbarer Ausgangsbefund |
+| --- | --- |
+| [Kattovit Diabetes Lachs](https://kattovit.com/products/nassfutter-lachs-frischebeutel-24-x-85g-diabetes), [Beutelrückseite](https://kattovit.com/cdn/shop/files/77246_Diabetes-Lachs_Product-Image-03.jpg?v=1737139873&width=2048) | 15 Karten. Der Typ wird als Diät-Alleinfuttermittel erkannt. Die Karte „Besonderer Ernährungszweck“ zeigt „Unklar“, obwohl der OCR-Text die Regulierung der Glucoseversorgung enthält. Die Nettomenge erscheint als „Nicht erkannt“. |
+| [Kattovit Aufbaukur Huhn](https://www.shop-apotheke.at/tiergesundheit/upmMDLDHM/kattovit-aufbaukur-recovery-huhn.htm), [Beutelrückseite](https://cdn.shop-apotheke.at/images/mp/prod/08a76fe317d645039ecc8330269585f3) | 15 Karten. Ernährungszweck und Fütterungsdauer stehen auf „Unklar“, obwohl Rekonvaleszenz und „Bis zur vollständigen Genesung“ im OCR-Text lesbar sind. Die Nettomenge erscheint als „Nicht erkannt“. |
+| [Oxbow Western Timothy](https://www.amazon.de/-/en/Petlife-Oxbow-Western-Timothy-Small/dp/B000WFRLX2), [mehrsprachige Etikettenansicht](https://m.media-amazon.com/images/I/A1mRXw3SBIL._AC_UF1000%2C1000_QL80_.jpg) | Die automatische Typwahl fordert zur manuellen Auswahl auf und zeigt keine Karten. Nach Auswahl von Einzelfuttermittel erscheinen neun Karten. Nur die Zielgruppe erscheint als „Gefunden“. |
+| [Agroland Moofeed Lick Min Cattle-G](https://agroland.ro/cresterea-animalelor/455156-galeata-cu-vitamine-si-minerale-pentru-bovine-agroland-25-kg.html), [rumänische Etikettenvorlage](https://agroland.ro/16878-medium_default/galeata-cu-vitamine-si-minerale-pentru-bovine-agroland-25-kg.jpg) | Die automatische Typwahl zeigt keine Karten. Nach Auswahl von Mineralfuttermittel erscheinen elf Karten, alle mit „Nicht erkannt“. |
+| [Kattovit Renal Ente](https://kattovit.com/en/products/nassfutter-ente-frischebeutel-24-x-85g-niere-renal), Beutelrückseite als Kontrollfall | 23 Karten. Nierenzweck, Fütterungsdauer und Tierarzthinweis erscheinen als „Gefunden“. Calcium `0,18 %` erscheint als „Wahrscheinlich“. Der OCR-Beleg zeigt `80 %` und `809 %`. Beide Rechenkarten für 12 % Bezugsfeuchte bleiben „Unklar“ und zeigen keinen berechneten Wert. |
+
+Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütterungsdauer der Aufbaukur als „Gefunden“. Beim Renal-Beutel benennt die Feuchtekarte den Wert über 100 % ausdrücklich. Die Rechenkarten bleiben bis zur eindeutigen Klärung offen. Wiederhole bei der Abnahme den normalen Foto-Upload und prüfe die sichtbaren Karten neben dem OCR-Rohtext. [Änderung und Browserbefunde in PR #42](https://github.com/Lightblue87/FeedLabelCheck/pull/42)
+
+- Prüfe „Gefunden“ immer gegen den eingeblendeten Beleg. Bei Aufbaukur Huhn enthält die grüne Zusammensetzungskarte auch Teile der folgenden Analyse und Zusatzstoffe. Bei Diabetes Lachs zeigt „Analytische Bestandteile“ nur den Treffer „Rohprotein 8 %“. In beiden Fällen zeigt die Partiekarte „Wahrscheinlich“ mit einem Verweis auf den Stempel. Eine Partienummer wurde aus diesen Bildern nicht angezeigt.
+
 **Noch nicht im Foto-Upload geprüft.** Verwende Produkttexte und Deklarationsblätter als Referenz für den Sollwert. Für einen OCR-Test brauchst du eine lesbare Verpackungsansicht oder ein separat gekennzeichnetes gerendertes Deklarationsblatt.
 
 - **Mineralfutter für Rinder und Diätergänzungsfutter für Kälber.** Der Downloadbereich enthält Deklarationen für TMR-Mineral und BEWI-SAN Bewilyt. Damit lassen sich tabellarische Gehalte und die Abgrenzung zum Milchaustauscher vorbereiten. [Weissachmühle – Deklarationen und Downloads](https://www.weissachmuehle.de/downloads/)
-- **Weitere Diätzwecke bei Katzen.** Die Produktseiten bieten Referenzen für Glucoseversorgung und ernährungsphysiologische Wiederherstellung. [Kattovit Diabetes Lachs](https://kattovit.com/en/products/nassfutter-lachs-frischebeutel-24-x-85g-diabetes) · [Kattovit Aufbaukur Huhn](https://kattovit.com/products/nassfutter-huhn-frischebeutel-24-x-85g-aufbaukur)
 
 ## Abnahme mit Nutzerfotos
 
