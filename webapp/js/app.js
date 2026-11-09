@@ -486,6 +486,24 @@
       }).catch(e => reportError("Verlauf konnte nicht gespeichert werden", e));
     }
 
+    /**
+     * Sichert alle ungesicherten Änderungen des Editors, bevor die Ansicht gewechselt wird. Ein einzelnes
+     * saveText() sichert nur den Stand beim Aufruf; was während des Wartens getippt wird, würde der Wechsel
+     * überschreiben und trotzdem als gesichert gelten. Daher wiederholen, bis der Editor sauber ist.
+     * @returns {Promise<boolean>} false, wenn inzwischen eine neuere Navigation begonnen wurde oder das
+     *   Sichern nicht gelingt – dann darf die Ansicht nicht gewechselt werden (nichts geht verloren).
+     */
+    async function flushPendingEdits(nav) {
+      if (!history) return true;
+      for (let i = 0; i < 20; i++) {
+        if (nav !== navSeq) return false;
+        if (textVersion === savedVersion) return true;
+        clearTimeout(textTimer);
+        await saveText();
+      }
+      return nav === navSeq && textVersion === savedVersion;
+    }
+
     let textTimer = null;
     textEl.addEventListener("input", () => {
       markTextEdited();
@@ -750,11 +768,11 @@
 
     async function openEntry(id) {
       const nav = ++navSeq;
-      clearTimeout(textTimer);
-      await saveText();                        // offene Eingabe des bisherigen Eintrags sichern
-      if (nav !== navSeq) return;              // inzwischen wurde etwas anderes angesteuert
+      if (!(await flushPendingEdits(nav))) return;   // offene Eingabe des bisherigen Eintrags sichern
       const e = await history.get(id);
-      if (nav !== navSeq) return;              // ... während der Eintrag geladen wurde
+      if (nav !== navSeq) return;              // inzwischen wurde etwas anderes angesteuert
+      // Während des Ladens getippt: auch das noch beim bisherigen Eintrag sichern, bevor die Ansicht wechselt
+      if (!(await flushPendingEdits(nav))) return;
       if (!e) { toast("Eintrag nicht mehr vorhanden.", "warn", true); await renderHistory(); return; }
       viewEpoch++;
       current = e;
@@ -788,9 +806,7 @@
 
     $("#l-new").addEventListener("click", async () => {
       const nav = ++navSeq;
-      clearTimeout(textTimer);
-      await saveText();
-      if (nav !== navSeq) return;              // ein neueres Öffnen hat Vorrang
+      if (!(await flushPendingEdits(nav))) return;   // ein neueres Öffnen hat Vorrang; ungesichert: nicht wechseln
       resetCurrent();
       setHistoryOpen(false);
     });
