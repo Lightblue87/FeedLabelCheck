@@ -521,6 +521,12 @@ const Labeling = (() => {
         body = body.replace(/[ \t]+aliment\s+(?:complet|compl[ée]mentaire)\s+pour\s+(?:chats|chiens)(?:\s+adultes?)?(?=\s*\(\s*\d+(?:[,.]\d+)?\s*%\s+davon\b)/gi, "");
       }
       if (/^(?:siehe|keine|see)\b|^s\./i.test(body) || !/\p{L}{2,}/u.test(body)) continue;
+      // Eine Zutat je Zeile ohne Trennzeichen („Weizengrießkleie⏎Calciumcarbonat⏎…“): die Zeilen bleiben erhalten.
+      const items = body.split("\n").map(line => line.trim()).filter(Boolean);
+      if (items.length >= 3 && items.every(line => /^\p{L}[\p{L}\p{N} .,()\/&%-]{2,70}$/u.test(line))
+          && items.filter(line => /[,;]/.test(line)).length <= Math.floor(items.length / 3)) {
+        return `${match[0].trim()}\n${items.join("\n")}`;
+      }
       if (/\p{L}[^:;,/\n]{0,40}(?:[,;]|[ \t]\/)\s*\p{L}|\d[ \t]*%/u.test(body)) {
         return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
       }
@@ -553,9 +559,11 @@ const Labeling = (() => {
 
   // „Zusatzstoffe je kg: Vitamin A 12.000 I.E.“: Überschrift mit mindestens einer Mengenangabe im
   // eigenen Abschnitt. Eine leere Überschrift oder eine Menge aus dem Nachbarabschnitt genügt nicht.
-  const ADDITIVES_HEADING = /\b(?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)[ \t]+)?Zusatzstoffe(?:[ \t]+(?:je|pro)[ \t]*kg)?[ \t]*(?:\([^)\n]{0,20}\))?[ \t]*:/giu;
-  const ADDITIVE_AMOUNT = /\d[\d.,]*[ \t]*(?:mg|µg|μg|mcg|g|I\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}])/u;
+  const ADDITIVES_HEADING = /\b(?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)[ \t]+)?Zusatzstoffe(?:[ \t]+(?:je|pro)[ \t]*kg|[ \t]*\/[ \t]*kg)?[ \t]*(?:\([^)\n]{0,20}\))?[ \t]*:/giu;
+  const ADDITIVE_AMOUNT = /\d[\d.,]*[ \t]*(?:mg|µg|μg|mcg|g|[I1l]\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}])/u;
   const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer|Vertrieb|Netto\w*|Inhalt|Füllmenge|Packungsinhalt|Gewicht|net[ \t]+(?:weight|contents|quantity)|Chargen?|Losnummer|Dosierung|Anwendung|Lagerung\w*|Tagesration|Futtermenge|Ration|täglich)\b/i;
+  // Beim Lesen einer Tabelle beginnt der nächste Abschnitt mit der Überschrift der anderen Zusatzstoffgruppe.
+  const ADDITIVES_SECTION_END = new RegExp(`${ADDITIVES_END.source}|\\b(?:Technologische|Ernährungsphysiologische|Zootechnische|Sensorische|Zusatzstoffe)\\b`, "i");
   const ADDITIVE_AMOUNT_ALL = new RegExp(ADDITIVE_AMOUNT.source, "gu");
   const ADDITIVES_END_AT_START = new RegExp(`^[ \\t]*(?:${ADDITIVES_END.source})`, "i");
   // Eine Menge zählt nur mit einem benannten Stoff davor oder dahinter. Bezugsmengen („je 100 g“, „pro kg“)
@@ -572,16 +580,19 @@ const Labeling = (() => {
     return null;
   }
   function additivesEvidence(text) {
+    const sections = [];
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;
-      const section = text.slice(start, start + 400).split(ADDITIVES_END, 1)[0];
-      const amount = namedAdditiveAmount(section);
-      if (!amount) continue;
-      const head = evidenceSnippet(text, heading.index, heading[0].length);
-      const line = evidenceSnippet(text, start + amount.index, amount[0].length);
-      return line === head || head.includes(line) ? head : `${head} … ${line}`;
+      // Der Abschnitt endet an der nächsten Zusatzstoff-Überschrift. Folgt sie unmittelbar („Zusatzstoffe:
+      // Ernährungsphysiologische Zusatzstoffe/kg: …“), zählt der Inhalt dahinter zur ersten Überschrift.
+      const window = text.slice(start, start + 900);
+      const cut = window.split(ADDITIVES_SECTION_END, 1)[0];
+      const section = namedAdditiveAmount(cut) ? cut : window.split(ADDITIVES_END, 1)[0];
+      if (!namedAdditiveAmount(section)) continue;
+      const lines = sectionLines(text, heading.index, start, section);
+      if (!sections.includes(lines)) sections.push(lines);
     }
-    return null;
+    return sections.length ? sections.join("\n") : null;
   }
 
   // Kurzformen der Bezeichnung als eigene Zeile („Mineralfutter für Rinder“, „Mischfutter“): gelten nur für den
@@ -600,6 +611,29 @@ const Labeling = (() => {
     return match ? evidenceSnippet(text, match.index, match[0].length) : null;
   }
 
+  const ANALYTICAL_HEADING = /\b(?:Analytische[ \t]+(?:Bestandteile|Inhaltsstoffe|Gehalte(?:[ \t]+und[ \t]+Bestandteile)?)|Analytical[ \t]+(?:constituents|components)|Constituants[ \t]+analytiques)[ \t]*:?/i;
+  const ANALYTICAL_END = /\n[ \t]*\n|\b(?:Zusatzstoffe|Ernährungsphysiologische|Technologische|Zootechnische|Sensorische|Additives|Fütterung\w*|Feeding|Zusammensetzung|Composition|Hersteller|Inverkehrbringer|Vertrieb|Mindestens|mind\.|MHD|Netto\w*|Charge\w*|Kennnummer|Lagerung\w*)\b/i;
+  const MAX_SECTION_LINES = 14;
+  // Überschrift und Zeilen eines Abschnitts als Beleg; Zeilenumbrüche bleiben erhalten (Tabellen, Listen).
+  function sectionLines(text, heading, headingEnd, body) {
+    // Adress- und Kontaktzeilen (Inverkehrbringer, Telefon, Web) gehören nicht mehr zum Abschnitt.
+    const addressAt = body.split("\n").findIndex(line => /\bTel\.|www\.|@|\b[A-Z]{1,2}-\d{5}\b|\b\d{5}[ \t]+[A-ZÄÖÜ]/.test(line));
+    const rows = (addressAt >= 0 ? body.split("\n").slice(0, addressAt) : body.split("\n")).map(line => line.trim());
+    const first = rows.shift();
+    const head = `${text.slice(heading, headingEnd).trim()}${first ? ` ${first}` : ""}`;
+    const lines = [head, ...rows.filter(Boolean)].slice(0, MAX_SECTION_LINES);
+    // Tabellen und Messwerte enden mit einer Zeile, die eine Ziffer trägt; Logo- und Siegeltext danach gehört nicht dazu.
+    while (lines.length > 1 && !/\d/.test(lines[lines.length - 1])) lines.pop();
+    return lines.join("\n");
+  }
+  function analyticalSection(text) {
+    const heading = ANALYTICAL_HEADING.exec(text);
+    if (!heading) return null;
+    const start = heading.index + heading[0].length;
+    const body = text.slice(start, start + 900).split(ANALYTICAL_END, 1)[0];
+    return /\d[\d.,]*[ \t]*%/.test(body) ? sectionLines(text, heading.index, start, body) : null;
+  }
+
   function structuredEvidence(ruleId, text, feedType = null) {
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? postalAddressEvidence(text);
@@ -611,7 +645,9 @@ const Labeling = (() => {
     if (ruleId === "art15_006") return additivesEvidence(text);
     if (ruleId.startsWith("art17_004_")) {
       const fields = moistureConflict(declaredMoisture(text), moistureHints(text)) ? ANALYTICAL_NAME : `${ANALYTICAL_NAME}|${MOISTURE_NAME}`;
-      return percentageEvidence(text, fields);
+      const evidence = percentageEvidence(text, fields);
+      // Angezeigt wird der ganze Abschnitt („4% Phosphor, 10% Calcium, …“) statt nur der ersten Zeile.
+      return evidence ? analyticalSection(text) ?? evidence : null;
     }
     if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {
       return text.match(/\bfür\s+(?:alle\s+)?(?:Wildvögel|Legehennen|Aufzuchtkälber|(?:Süßwasser)?Zierfische|Wasserschildkröten(?:[ \t]+und[ \t]+Echsen)?)\b/i)?.[0] ?? null;

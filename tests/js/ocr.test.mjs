@@ -744,6 +744,77 @@ test("Bezeichnungen der Futtermittelart in Kurz- und Langform werden als Typ und
   }
 });
 
+// ── Spaltenreihenfolge ────────────────────────────────────────────
+
+const boxed = (y, ...cells) => cells.map(([text, x0, x1]) => ({ text, confidence: 90, bbox: { x0, x1, y0: y, y1: y + 15 } }));
+const lineText = lines => lines.map(words => words.map(word => word.text).join(" "));
+
+test("zweispaltiges Etikett: Zeilen werden an der Spaltenlücke getrennt und spaltenweise geordnet", () => {
+  const lines = [
+    boxed(10, ["Carolina", 288, 560]),
+    boxed(40, ["Zusammensetzung:", 47, 250], ["Analytische", 403, 520], ["Bestandteile:", 525, 690]),
+    boxed(69, ["Weizengrießkleie", 47, 200], ["4%", 410, 440], ["Phosphor", 450, 520]),
+    boxed(97, ["Calciumcarbonat", 47, 190], ["10%", 410, 445], ["Calcium", 455, 520]),
+    boxed(125, ["Magnesiumoxid", 48, 193]),
+    boxed(153, ["Ernährungsphysiologische", 402, 597], ["Zusatzstoffe", 602, 690]),
+    boxed(181, ["Fütterung:", 38, 140], ["625.000", 408, 468], ["I.E.", 472, 500], ["Vitamin", 510, 580], ["A", 585, 600]),
+    boxed(209, ["Dieses", 38, 100], ["Ergänzungsfutter", 105, 300], ["3.000", 426, 467], ["mg", 470, 495], ["Vitamin", 500, 560], ["E", 565, 580]),
+  ];
+  assert.deepEqual(lineText(Ocr.reorderColumns(lines)), [
+    "Carolina", "Zusammensetzung:", "Weizengrießkleie", "Calciumcarbonat", "Magnesiumoxid", "Fütterung:", "Dieses Ergänzungsfutter",
+    "Analytische Bestandteile:", "4% Phosphor", "10% Calcium", "Ernährungsphysiologische Zusatzstoffe", "625.000 I.E. Vitamin A", "3.000 mg Vitamin E",
+  ]);
+});
+
+test("Spaltenreihenfolge ändert einspaltige Etiketten, Tabellen und Zeilen ohne Überschriftenkollision nicht", () => {
+  // Tabelle in einer Spalte: Zellen derselben Zeile bleiben zusammen
+  const table = [
+    boxed(10, ["Zusatzstoffe", 40, 160], ["je", 165, 185], ["kg:", 190, 220]),
+    boxed(40, ["625.000", 40, 110], ["I.E.", 120, 150], ["Vitamin", 260, 340], ["A", 345, 360], ["(3a672a)", 520, 600]),
+    boxed(68, ["3.000", 60, 110], ["mg", 120, 150], ["Vitamin", 260, 340], ["E", 345, 360], ["(3a700)", 520, 590]),
+  ];
+  assert.deepEqual(Ocr.reorderColumns(table), table);
+  // zwei Überschriften in einer Zeile, aber ohne Lücke zwischen den Spalten: keine Trennung
+  const dense = [
+    boxed(10, ["Zusammensetzung:", 40, 200], ["Analytische", 205, 300], ["Bestandteile:", 305, 400]),
+    boxed(40, ["Weizen", 40, 120], ["4%", 125, 150], ["Protein", 155, 230], ["Mais", 240, 300]),
+  ];
+  assert.deepEqual(Ocr.reorderColumns(dense), dense);
+  // Wörter ohne Position bleiben unverändert
+  const plain = [[{ text: "Zusammensetzung:", confidence: 90 }, { text: "Analytische", confidence: 90 }]];
+  assert.deepEqual(Ocr.reorderColumns(plain), plain);
+});
+
+test("Abschnitte werden vollständig und zeilenweise als Beleg gezeigt (Zusammensetzung, Analytik, Zusatzstoffe)", () => {
+  const rules = [
+    { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+    { id: "art17_004_mineral", severity: "critical", patterns: [{ patternValue: "Analytische", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+    { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] },
+  ];
+  const text = [
+    "Mineralfutter für Rinder",
+    "Zusammensetzung:", "Weizengrießkleie", "Calciumcarbonat", "Monocalciumphosphat", "Natriumchlorid", "pflanzliches Fett aus Raps, raffiniert, gehärtet", "",
+    "Analytische Bestandteile:", "4% Phosphor", "10% Calcium", "4% Natrium", "2% Magnesium", "",
+    "Ernährungsphysiologische Zusatzstoffe (je kg):", "625.000 I.E. Vitamin A (3a672a)", "3.000 mg Vitamin E (3a700)", "",
+    "Technologische Zusatzstoffe (je kg):", "1 mg Citronensäure", "100 mg Betahydroxytoluol (E321)", "",
+    "Inverkehrbringer: Weissachmühle GmbH, Mühlenstraße 15, 87534 Oberstaufen",
+  ].join("\n");
+  const [composition, analytic, additives] = Labeling.check(text, FEED_TYPES[2], rules).ruleResults;
+  assert.equal(composition.status, "found");
+  assert.equal(composition.matchedText, "Zusammensetzung:\nWeizengrießkleie\nCalciumcarbonat\nMonocalciumphosphat\nNatriumchlorid\npflanzliches Fett aus Raps, raffiniert, gehärtet");
+  assert.equal(analytic.status, "found");
+  assert.equal(analytic.matchedText, "Analytische Bestandteile:\n4% Phosphor\n10% Calcium\n4% Natrium\n2% Magnesium");
+  assert.equal(additives.status, "found");
+  assert.equal(additives.matchedText, "Ernährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\n3.000 mg Vitamin E (3a700)\n"
+    + "Technologische Zusatzstoffe (je kg):\n1 mg Citronensäure\n100 mg Betahydroxytoluol (E321)");
+  // Logo- und Siegeltext nach der letzten Messwertzeile gehört nicht zum Abschnitt
+  const trailing = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n10 mg Vitamin E\n5 mg Zink\nA VLOG\nAMA-Gütesiegel tauglich", FEED_TYPES[2], rules).ruleResults[2];
+  assert.equal(trailing.matchedText, "Zusatzstoffe je kg:\n10 mg Vitamin E\n5 mg Zink");
+  // Kontaktzeilen gehören nicht zum Abschnitt
+  const withAddress = Labeling.check("Mineralfutter für Rinder\nZusatzstoffe je kg:\n10 mg Vitamin E\nWeissachmühle GmbH, 87534 Oberstaufen\n3 mg Eisen", FEED_TYPES[2], rules).ruleResults[2];
+  assert.equal(withAddress.matchedText, "Zusatzstoffe je kg:\n10 mg Vitamin E");
+});
+
 test("Mengenangaben aus einer Nachbarspalte sind keine Losnummer", () => {
   const rule = { id: "art15_004", severity: "critical", patterns: ["Partie", "Charge", "Lot"].map(patternValue => ({ patternValue, patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 })) };
   const check = text => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Calciumcarbonat, Magnesiumoxid\n${text}`, FEED_TYPES[2], [rule]).ruleResults[0];

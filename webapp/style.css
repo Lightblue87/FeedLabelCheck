@@ -461,7 +461,7 @@ body.kb .toast { bottom: 12px; }
 .rule-card.notCheckable { border-left-color: var(--muted); }
 .rule-card h4 { margin: 0 0 4px; font-size: 0.9375rem; line-height: 1.35; }
 .rule-card .meta { color: var(--ink-2); font-size: 0.8125rem; }
-.rule-card .match { display: inline-block; margin-top: 8px; padding: 4px 8px; border-radius: 6px; background: var(--field); border: 1px solid var(--line); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.rule-card .match { display: inline-block; max-width: 100%; white-space: pre-line; margin-top: 8px; padding: 4px 8px; border-radius: 6px; background: var(--field); border: 1px solid var(--line); font-size: 0.8125rem; overflow-wrap: anywhere; }
 
 .status-pill {
   display: inline-block;
