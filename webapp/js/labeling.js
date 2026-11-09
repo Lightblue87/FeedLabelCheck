@@ -240,7 +240,10 @@ const Labeling = (() => {
     const normalized = normalizeText(keyword);
     const term = keyword.trim();
     let idx;
-    if (/^(?:AG|KG|OHG)$/.test(term)) {
+    if (term === "KG") {
+      const matches = [...text.matchAll(/\bKG\b/g)];
+      idx = matches.find(match => !/\d[ \t]*$/.test(text.slice(0, match.index)))?.index ?? -1;
+    } else if (/^(?:AG|OHG)$/.test(term)) {
       idx = text.search(new RegExp(`\\b${term}\\b`));
     } else if (/^(?:Weg|Platz)$/.test(term)) {
       idx = normText.search(new RegExp(`${term.toLowerCase()}[ \\t]+\\d+\\b`));
@@ -268,13 +271,74 @@ const Labeling = (() => {
     return keywordMatch(pattern.patternValue, text, normText);
   }
 
+  const DECIMAL = String.raw`\d+(?:[,.]\d+)?`;
+  const PACKAGE_AMOUNT = String.raw`(${DECIMAL})[ \t]*(kg|g|t|ml|l|Liter|Kilogramm|Gramm)\b`;
+  const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Netto|net weight|net contents|net volume|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
+  const NET_AMOUNT = new RegExp(String.raw`\b(?:${NET_LABEL})\b[ \t:)]*\n?[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}`, "i");
+  const AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*$`, "im");
+  const PACK_COUNT = new RegExp(String.raw`\([ \t]*(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*\)`, "i");
+  const NET_HEADING = new RegExp(String.raw`\b(?:${NET_LABEL})\b`, "i");
+  const OCR_AMOUNT_HINT = "OCR-Kandidat Packungsmenge: ";
+  const MOISTURE_NAME = "Feuchtegehalt|Feuchtigkeitsgehalt|Feuchtigkeit|Feuchte|Wassergehalt|moisture(?: content)?";
+  const ANALYTICAL_NAME = `Rohprotein|Rohfett|Rohfaser|Rohasche|Fettgehalt|Calcium|Phosphor|crude protein|crude fat|crude fib(?:re|er)|crude ash|${MOISTURE_NAME}`;
+
+  function needsPackageAmount(text) {
+    return !NET_AMOUNT.test(text) && !AMOUNT_LINE.test(text) && (NET_HEADING.test(text) || PACK_COUNT.test(text));
+  }
+
+  function packageAmountHint(primaryText, sparseText) {
+    const amounts = new Map();
+    const pack = primaryText.match(PACK_COUNT);
+    const number = value => Number(value.replace(",", "."));
+    for (const line of sparseText.split("\n")) {
+      const match = line.match(AMOUNT_LINE);
+      if (!match) continue;
+      const [, amount, unit] = match;
+      const value = number(amount);
+      if (pack && (unit.toLowerCase() !== pack[3].toLowerCase()
+          || Math.abs(value - Number(pack[1]) * number(pack[2])) > 1e-8)) continue;
+      amounts.set(`${value} ${unit.toLowerCase()}`, `${amount} ${unit}`);
+    }
+    return amounts.size === 1 ? OCR_AMOUNT_HINT + amounts.values().next().value : "";
+  }
+
+  function percentageEvidence(text, fieldNames) {
+    const field = String.raw`\b(?:${fieldNames})\b`;
+    const percent = String.raw`${DECIMAL}[ \t|]*%`;
+    const pattern = new RegExp(String.raw`${field}[ \t:.·|]*${percent}|\b${percent}[ \t|]*${field}`, "i");
+    return text.match(pattern)?.[0] ?? null;
+  }
+
+  function compositionEvidence(text) {
+    const heading = /\b(?:[zt]usammensetzung|composition)\b[^:\n]{0,65}:[\s=]*/giu;
+    for (const match of text.matchAll(heading)) {
+      const start = match.index + match[0].length;
+      const body = text.slice(start, start + 160)
+        .split(/\n\s*\n|\b(?:Fütterungsempfehlung|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Feeding recommendation|Analytical constituents)\b/i, 1)[0]
+        .trim();
+      if (/^(?:siehe|keine|see)\b|^s\./i.test(body) || !/\p{L}{2,}/u.test(body)) continue;
+      if (/\p{L}[^:,\n]{0,40},\s*\p{L}|\d[ \t]*%/u.test(body)) {
+        return `${match[0].trim()} ${body}`.replace(/\s+/g, " ").slice(0, 100);
+      }
+    }
+    return null;
+  }
+
   function structuredEvidence(ruleId, text) {
+    if (ruleId === "art15_003") {
+      const amountLine = text.match(AMOUNT_LINE)?.[0].trim();
+      return text.match(NET_AMOUNT)?.[0].trim()
+        ?? (amountLine && /^[℮e]|[℮e]$/i.test(amountLine) ? amountLine : null);
+    }
+    if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
+      return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? null;
+    }
+    if (ruleId === "art15_005") return percentageEvidence(text, MOISTURE_NAME);
+    if (ruleId.startsWith("art17_004_")) return percentageEvidence(text, ANALYTICAL_NAME);
     if (ruleId === "art16_003" || ruleId.startsWith("art17_001_")) {
       return text.match(/\bfür\s+(?:alle\s+)?Wildvögel\b/i)?.[0] ?? null;
     }
-    if (ruleId.startsWith("art17_003_")) {
-      return text.match(/\bZusammensetzung[ \t]*:\s*(?!(?:siehe|keine)\b|s\.)[\p{L}][^:;,\n]{1,55},\s*[\p{L}][^:;,\n]{1,45}/iu)?.[0] ?? null;
-    }
+    if (ruleId.startsWith("art17_003_")) return compositionEvidence(text);
     return null;
   }
 
@@ -300,14 +364,24 @@ const Labeling = (() => {
     const hasNegativeMatch = negative.some(p => matchPattern(p, text, normText) !== null);
 
     const evidence = structuredEvidence(rule.id, text);
+    const netQuantity = rule.id === "art15_003";
+    const hasNumericEvidence = netQuantity || rule.id.startsWith("art17_004_");
+    const packageHint = netQuantity && !evidence
+      ? text.split("\n").find(line => line.startsWith(OCR_AMOUNT_HINT))
+        || text.match(PACK_COUNT)?.[0] || text.match(AMOUNT_LINE)?.[0].trim()
+      : null;
     let best = evidence ? { text: evidence, language: "de", weight: 1, languagePriority: 0 } : null;
+    if (packageHint) best = { text: packageHint, language: "de", weight: 0.7, languagePriority: 0 };
     for (const p of positive) {
+      // Die bisherigen Zahlenmuster erfassen auch Futterrationen oder Ziffern aus anderen Zeilen.
+      if (hasNumericEvidence && p.patternType === "regex") continue;
+      const weight = netQuantity ? Math.min(p.confidenceWeight, 0.7) : p.confidenceWeight;
       const m = matchPattern(p, text, normText);
       if (m !== null) {
         const prio = languagePriority(p.patternLanguage);
         if (!best || prio < best.languagePriority
-            || (prio === best.languagePriority && p.confidenceWeight > best.weight)) {
-          best = { text: m, language: p.patternLanguage, weight: p.confidenceWeight, languagePriority: prio };
+            || (prio === best.languagePriority && weight > best.weight)) {
+          best = { text: m, language: p.patternLanguage, weight, languagePriority: prio };
         }
       }
     }
@@ -372,7 +446,7 @@ const Labeling = (() => {
 
   return {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
-    searchFeedMaterials, detectFeedType, check, MIN_OCR_LENGTH,
+    searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, MIN_OCR_LENGTH,
   };
 })();
 

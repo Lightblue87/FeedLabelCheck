@@ -403,6 +403,24 @@
   function setupLabeling() {
     const sel = $("#l-feedtype");
 
+    async function readLabelPhoto(worker, file) {
+      const output = { text: true, blocks: true };
+      const { data } = await worker.recognize(file, {}, output);
+      const primary = Ocr.textFromResult(data);
+      if (!Labeling.needsPackageAmount(primary)) return primary;
+
+      try {
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+        const retry = await worker.recognize(file, {}, output);
+        const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
+        return hint ? `${primary}\n${hint}` : primary;
+      } catch {
+        return primary;
+      } finally {
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+      }
+    }
+
     async function runOcr(files) {
       if (!files.length) return;
       const status = $("#l-ocr-status");
@@ -416,8 +434,7 @@
         let allText = "";
         for (let i = 0; i < files.length; i++) {
           status.textContent = `OCR läuft … Bild ${i + 1}/${files.length}`;
-          const { data } = await worker.recognize(files[i], {}, { text: true, blocks: true });
-          allText += (allText ? "\n\n" : "") + Ocr.textFromResult(data);
+          allText += (allText ? "\n\n" : "") + await readLabelPhoto(worker, files[i]);
         }
         await worker.terminate();
         $("#l-text").value = ($("#l-text").value.trim() ? $("#l-text").value + "\n\n" : "") + allText;

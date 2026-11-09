@@ -231,3 +231,68 @@ test("ähnliche Zeichenfolgen ohne Ziffer oder als Wortteil gelten nicht als PO-
     assert.equal(results[4].status, "missing", noise);
   }
 });
+
+function checkNumericLabelRule(id, text, patternValue, patternType = "regex", confidenceWeight = 1) {
+  const rule = { id, severity: "critical", patterns: [{
+    patternValue, patternType, patternLanguage: "de", confidenceWeight,
+  }] };
+  return Labeling.check(text, FEED_TYPES[0], [rule]).ruleResults[0];
+}
+
+const legacyWeightPattern = String.raw`\b\d+[,.]?\d*\s*(kg|g|t|ml|l)\b`;
+
+test("Nettomenge nutzt die deklarierte Menge statt Bezugs- und Fütterungswerten", () => {
+  const ration = "Alleinfuttermittel für Hunde. Energie pro 100 g.\nKörpergewicht 8 kg 20 kg 52 kg";
+  assert.equal(checkNumericLabelRule("art15_003", ration, legacyWeightPattern).status, "missing");
+  assert.equal(checkNumericLabelRule("art15_003", `${ration}\n800 g`, legacyWeightPattern).status, "probablyFound");
+  for (const net of ["Nettomasse: 800 g", "℮800g", "Net weight: 800 g"]) {
+    const result = checkNumericLabelRule("art15_003", `${ration}\n${net}`, legacyWeightPattern);
+    assert.equal(result.status, "found");
+    assert.match(result.matchedText, /800\s*g/);
+  }
+});
+
+test("zweiter OCR-Lauf liefert nur eindeutige Mengenhinweise und prüft Mehrfachpackungen", () => {
+  assert.equal(Labeling.needsPackageAmount("Energie pro 100 g"), false);
+  assert.equal(Labeling.needsPackageAmount("Nettomasse: 7 kg"), false);
+  assert.equal(Labeling.needsPackageAmount("Inhalt (Nettomasse):"), true);
+  assert.equal(Labeling.packageAmountHint("Inhalt (Nettomasse):", "7 kg\n12 kg"), "");
+  assert.equal(Labeling.packageAmountHint("(10 x 1,5 kg)", "15 kg\n52 kg"), "OCR-Kandidat Packungsmenge: 15 kg");
+  const result = checkNumericLabelRule("art15_003", "Ergänzungsfuttermittel für Pferde (10 x 1,5 kg)\nOCR-Kandidat Packungsmenge: 15 kg", legacyWeightPattern);
+  assert.equal(result.status, "probablyFound");
+  assert.match(result.matchedText, /15 kg/);
+});
+
+test("Feuchtegehalt wird mit dem gelesenen Prozentwert in beiden Leserichtungen belegt", () => {
+  for (const pair of ["Feuchtegehalt 77 %", "77 % Feuchtigkeit"]) {
+    const result = checkNumericLabelRule("art15_005", `Alleinfuttermittel für ausgewachsene Hunde. ${pair}.`, "Feuchte", "keyword");
+    assert.equal(result.status, "found");
+    assert.equal(result.matchedText, pair);
+  }
+});
+
+test("Analytik erkennt Tabellenwerte und verwirft zeilenübergreifende Zufallstreffer", () => {
+  const loose = String.raw`\b(?:Moisture|Rohfaser)\s+\d+[,.]?\d*\s*%?\b`;
+  const check = text => checkNumericLabelRule("art17_004_complete", `Alleinfuttermittel für Katzen. ${text}`, loose);
+  assert.equal(check("Moisture\n3 ACCIAIO CARTA").status, "missing");
+  assert.equal(check("20,00 | % | Rohfaser").matchedText, "20,00 | % | Rohfaser");
+  assert.equal(check("Rohprotein: 24 %").status, "found");
+});
+
+test("Zusammensetzung mit Produktname oder Prozentwerten bleibt als Beleg erkennbar", () => {
+  const check = text => checkNumericLabelRule("art17_003_complete", `Alleinfuttermittel für Hunde. ${text}`, "Zusammensetzung", "keyword", 0.7);
+  for (const text of ["Zusammensetzung Beispielprodukt:\n28 % Beispielmehl, 20 % Beispielsaat", "Zusammensetzung / Composition: Beispielzutat 25 %"]) {
+    assert.equal(check(text).status, "found");
+  }
+  assert.equal(check("Zusammensetzung: siehe Rückseite. Analytische Bestandteile: Protein 24 %").status, "probablyFound");
+});
+
+
+test("Groß geschriebenes KG bei einer Mengenangabe belegt keinen Betrieb", () => {
+  const check = text => checkNumericLabelRule("art15_002", `Ergänzungsfuttermittel für Pferde.\n${text}`, " KG", "keyword");
+  assert.equal(check("(10 x 1,5 KG)").status, "missing");
+  assert.equal(check("Musterfutter GmbH & Co. KG").status, "found");
+  const supplier = check("Musterfutter NV\nBeispielstraat 41\nNL 5823 AC Musterort\n(10 x 1,5 KG)");
+  assert.equal(supplier.status, "found");
+  assert.match(supplier.matchedText, /Musterfutter NV/);
+});
