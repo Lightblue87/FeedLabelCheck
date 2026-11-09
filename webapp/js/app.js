@@ -1082,7 +1082,7 @@
       resultBox.hidden = false;
 
       let feedType = null;
-      let detectionNote = "";
+      let confidence = null;
       if (sel.value === "auto") {
         const det = Labeling.detectFeedType(text, feedTypes);
         if (!det) {
@@ -1093,7 +1093,7 @@
           return null;
         }
         feedType = det.feedType;
-        detectionNote = ` (automatisch erkannt: ${feedType.nameDe}, ${Math.round(det.confidence * 100)} %)`;
+        confidence = det.confidence;
       } else {
         feedType = feedTypes.find(f => f.id === sel.value);
       }
@@ -1102,6 +1102,9 @@
       const result = Labeling.check(text, feedType, rules);
       const o = OVERALL[result.overallStatus];
       overall.className = "banner " + o.cls;
+      const typeName = result.dietary && ["complete_feed", "complementary_feed"].includes(feedType.id)
+        ? `Diät-${feedType.nameDe}` : feedType.nameDe;
+      const detectionNote = confidence === null ? "" : ` (automatisch erkannt: ${typeName}, ${Math.round(confidence * 100)} %)`;
       overall.textContent = o.text + detectionNote;
 
       const tally = {};

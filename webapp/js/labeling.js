@@ -222,7 +222,26 @@ const Labeling = (() => {
     return result.matchedKeywords.some(kw => DIRECT_LEGAL_TERMS.has(normalizeText(kw)));
   }
 
+  const DIET_DECLARATION = /\b(?:di(?:ä|ae?)t[\s‐‑–-]*(allein|ergänzungs|ergaenzungs)[\s‐‑–-]*futtermittel|(complete|complementary)\s+diet(?:etic|ic)\s+(?:pet\s+food|(?:pet\s+)?feed(?:ingstuff)?)|diet(?:etic|ic)\s+(complete|complementary)\s+(?:pet\s+food|(?:pet\s+)?feed(?:ingstuff)?)|(?:aliment\s+di[ée]t[ée]tique\s+)(complet|compl[ée]mentaire))\b/giu;
+
+  function declaredDiet(text, feedTypes) {
+    const declarations = new Map();
+    for (const [wording, de, enFirst, enSecond, fr] of text.matchAll(DIET_DECLARATION)) {
+      const complete = /^(?:allein|complete|complet)$/i.test(de || enFirst || enSecond || fr);
+      const typeId = complete ? "complete_feed" : "complementary_feed";
+      const feedType = feedTypes.find(type => type.id === typeId);
+      if (feedType && !declarations.has(typeId)) declarations.set(typeId, { feedType, wording });
+    }
+    return [...declarations.values()];
+  }
+
   function detectFeedType(ocrText, feedTypes) {
+    const diets = declaredDiet(ocrText, feedTypes);
+    if (diets.length > 1) return null;
+    if (diets.length === 1) {
+      const { feedType, wording } = diets[0];
+      return { feedType, confidence: 0.9, matchedKeywords: [wording], score: 4.05 };
+    }
     const normalized = normalizeText(ocrText.replace(SPLIT_FEED_PATTERN, "$1$2"));
     const candidates = rankedCandidates(normalized, feedTypes);
     const best = candidates[0];
@@ -400,7 +419,7 @@ const Labeling = (() => {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? postalAddressEvidence(text);
     }
     if (ruleId === "art15_001") {
-      return text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? null;
+      return text.match(DIET_DECLARATION)?.[0] ?? text.match(EXTRA_FEED_PATTERN)?.[0] ?? text.match(SPLIT_FEED_PATTERN)?.[0] ?? text.match(/\bAlleinfutter[ \t]+für\b/i)?.[0] ?? null;
     }
     if (ruleId.startsWith("art17_002_")) {
       return text.match(/\b(?:MHD|mindestens[ \t]+haltbar[ \t]+bis)[ \t:]*\n?[ \t]*(?:0?[1-9]|1[0-2])\.\d{4}\b(?![./-]\d)/i)?.[0] ?? null;
@@ -552,6 +571,44 @@ const Labeling = (() => {
     return "keineAuffaelligkeit";
   }
 
+  // Erfasst die auf dem Etikett sichtbaren Angaben. Die Tabellenmerkmale je
+  // Verwendungszweck (einschließlich bedingter Angaben und Gehalte) bleiben offen.
+  const DIET_PURPOSES = [
+    /\bUnterstützung\s+der\s+Nierenfunktion\s+bei\s+(?:akuter\s+und\s+)?chronischer\s+Niereninsuffizienz\b|\bsupport\s+of\s+renal\s+function\s+in\s+(?:the\s+)?case\s+of\s+(?:acute\s+and\s+)?chronic\s+renal\s+insufficiency\b/i,
+    /\bVerringerung\s+(?:der\s+|von\s+)?Oxalsteinbildung\b|\breduction\s+of\s+oxalate\s+stone\s+formation\b/i,
+    /\bAusgleich\s+unzureichender\s+Verdauung\b|\bcompensation\s+for\s+maldigestion\b/i,
+    /\bLinderung\s+(?:(?:akuter|von)\s+)?Resorptionsstörungen\s+des\s+Darms\b|\breduction\s+of\s+(?:acute\s+)?intestinal\s+absorptive\s+disorders\b/i,
+    /\bAuflösung\s+von\s+Struvitsteinen\b|\bdissolution\s+of\s+struvite\s+stones\b/i,
+    /\bVerringerung\s+von\s+Struvitsteinrezidiven\b|\breduction\s+of\s+struvite\s+stone\s+recurrence\b/i,
+  ];
+  const DIET_DURATION_AMOUNT = String.raw`(?:\d{1,3}|ein(?:e[rmn]?)?|zwei|drei|vier|fünf|sechs|sieben|acht|zwölf|one|two|three|four|six|twelve)`;
+  const DIET_DURATION = new RegExp(String.raw`\b(?:(?:(?:empfohlene\s+)?(?:Fütterungsdauer|Dauer\s+der\s+Fütterung)|recommended\s+(?:length|period)\s+of\s+(?:time|use))[\s:“”"]*(?:zunächst\s+|initially\s+)?(?:bis\s+zu\s+|up\s+to\s+)?|zunächst\s+bis\s+zu\s+|initially\s+up\s+to\s+)(?:${DIET_DURATION_AMOUNT}(?:\s*(?:bis|to|[-–])\s*${DIET_DURATION_AMOUNT})?\s+(?:Tag(?:e[n]?)?|Woche[n]?|Monat(?:e[n]?)?|days?|weeks?|months?)|lebenslang|for\s+life)\b`, "i");
+  const DIET_ADVICE = /\bvor\s+(?:der\s+)?(?:Verwendung|Fütterung|Anwendung|Verlängerung)[^.!?;]{0,130}?\b(?:den\s+)?Rat\s+(?:eines|einer)\s+(?:Tierarzt(?:es)?|Tierärztin|Fütterungsexpert(?:en|in)|Fachmanns)\s+einzuholen\b|\b(?:it\s+is\s+recommended\s+(?:that\s+)?(?:a\s+)?(?:veterinarian[’']s|feeding\s+expert[’']s)\s+opinion\s+be\s+sought|consult\s+(?:a|your)\s+(?:veterinarian|feeding\s+expert))\s+before\s+(?:use|feeding|extending)\b/i;
+
+  function dietRuleResults(text) {
+    const article = "Art. 18 VO (EG) Nr. 767/2009";
+    const annex = "Anhang Teil B VO (EU) 2020/354";
+    const purposes = DIET_PURPOSES.map(pattern => text.match(pattern)?.[0].replace(/\s+/g, " ")).filter(Boolean);
+    const make = (id, titleDe, legalBasis, evidence, note) => ({
+      rule: { id, titleDe, legalBasis, severity: "critical" },
+      status: evidence ? "found" : "unclear",
+      matchedText: evidence || null,
+      matchedLanguage: null,
+      confidence: evidence ? 1 : 0.3,
+      note: evidence ? null : note,
+    });
+    return [
+      make("art18_purpose", "Besonderer Ernährungszweck", `${article} Buchst. b · ${annex}`,
+        purposes.join(" / "), "Kein Ernährungszweck aus der hinterlegten Liste im Prüftext erkannt. Bitte Deklaration am Etikett prüfen."),
+      make("art18_duration", "Empfohlene Fütterungsdauer", `${article} Buchst. b · ${annex}`,
+        text.match(DIET_DURATION)?.[0].replace(/\s+/g, " "), "Keine zuordenbare Fütterungsdauer im Prüftext erkannt."),
+      make("art18_advice", "Hinweis auf fachlichen Rat", `${article} Buchst. c`,
+        text.match(DIET_ADVICE)?.[0].replace(/\s+/g, " "), "Kein zuordenbarer Beratungshinweis im Prüftext erkannt."),
+      make("art18_review", "Weitere Angaben zum Ernährungszweck", annex, null,
+        "Zweckabhängige Pflichtangaben, Nährstoffvorgaben und die Eignung der Fütterungsdauer am Etikett fachlich prüfen."),
+    ];
+  }
+
   function check(ocrText, feedType, rules) {
     if (ocrText.length < MIN_OCR_LENGTH) {
       return {
@@ -565,7 +622,9 @@ const Labeling = (() => {
     }
     const normText = normalizeText(ocrText);
     const ruleResults = rules.map(rule => checkRule(rule, ocrText, normText));
-    return { feedType, ruleResults, overallStatus: overallStatus(ruleResults) };
+    const dietary = ocrText.match(DIET_DECLARATION) !== null;
+    if (dietary) ruleResults.push(...dietRuleResults(ocrText));
+    return { feedType, ruleResults, overallStatus: overallStatus(ruleResults), dietary };
   }
 
   return {

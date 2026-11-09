@@ -606,3 +606,47 @@ test("Verweise auf Stempel und Behälterboden bleiben Hinweise zur Nachaufnahme"
     assert.equal(Labeling.needsImprintLot(text), false);
   }
 });
+
+test("Diätdeklarationen erhalten ihre Grundart und bleiben bei widersprüchlicher Deklaration offen", () => {
+  const complete = "DIÄTALLEINFUTTERMITTEL FÜR KATZEN";
+  const complementary = "Diät-Ergänzungs-\nfuttermittel für Hunde";
+  assert.equal(Labeling.detectFeedType(complete, FEED_TYPES)?.feedType.id, "complete_feed");
+  assert.equal(Labeling.detectFeedType(complementary, FEED_TYPES)?.feedType.id, "complementary_feed");
+  assert.equal(Labeling.detectFeedType("Complete dietetic pet food for adult cats", FEED_TYPES)?.feedType.id, "complete_feed");
+  assert.equal(Labeling.detectFeedType(`${complete}\n${complementary}`, FEED_TYPES), null);
+});
+
+test("Nierendiät behält allgemeine Kennzeichnungsregeln und zeigt zusätzliche belegte Angaben", () => {
+  const text = "Diät-Alleinfuttermittel für ausgewachsene Katzen. Zur Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n"
+    + "Fütterungsempfehlung: Es wird, empfohlen vor der Verwendung oder vor Verlängerung der Fütterungsdauer den Rat eines\n"
+    + "Tierarztes einzuholen. Empfohlene Dauer der Fütterung: Zunächst bis zu 6 Monaten.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === id);
+  assert.equal(result.dietary, true);
+  assert.equal(field("art18_purpose").status, "found");
+  assert.match(field("art18_duration").matchedText, /6 Monaten/);
+  assert.match(field("art18_advice").matchedText, /Rat eines Tierarztes einzuholen/);
+  assert.equal(field("art18_review").status, "unclear");
+  assert.equal(result.overallStatus, "unklar");
+  const acuteAndChronic = text.replace("bei chronischer", "bei akuter und chronischer");
+  assert.match(Labeling.check(acuteAndChronic, FEED_TYPES[0], []).ruleResults[0].matchedText, /akuter und chronischer/);
+  assert.equal(checkNumericLabelRule("art15_001", text, "Alleinfuttermittel", "keyword", 0.7).matchedText, "Diät-Alleinfuttermittel");
+});
+
+test("Gastro-Etikett kann mehrere Zwecke zeigen und ein MHD belegt keine Fütterungsdauer", () => {
+  const text = "Diät-Alleinfuttermittel für Hunde. Zum Ausgleich unzureichender Verdauung und zur Linderung von Resorptionsstörungen des Darms. "
+    + "MHD: 03/2027. Tierärztlich entwickelt.";
+  const result = Labeling.check(text, FEED_TYPES[0], []);
+  const field = id => result.ruleResults.find(r => r.rule.id === id);
+  assert.match(field("art18_purpose").matchedText, /unzureichender Verdauung \/ Linderung von Resorptionsstörungen/);
+  assert.equal(field("art18_duration").status, "unclear");
+  assert.equal(field("art18_advice").status, "unclear");
+  const timed = Labeling.check(text + " Empfohlene Fütterungsdauer: drei bis zwölf Wochen.", FEED_TYPES[0], []);
+  assert.match(timed.ruleResults.find(r => r.rule.id === "art18_duration").matchedText, /drei bis zwölf Wochen/);
+});
+
+test("Produktnamen und Nierenwerbung lösen keine Diätfutter-Prüfung aus", () => {
+  const text = "Alleinfuttermittel für Katzen. Veterinary Diet – Renal. Unterstützt die Nierenfunktion.";
+  assert.equal(Labeling.detectFeedType(text, FEED_TYPES)?.feedType.id, "complete_feed");
+  assert.equal(Labeling.check(text, FEED_TYPES[0], []).dietary, false);
+});
