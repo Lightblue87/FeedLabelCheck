@@ -544,7 +544,7 @@ const Labeling = (() => {
   // eigenen Abschnitt. Eine leere Überschrift oder eine Menge aus dem Nachbarabschnitt genügt nicht.
   const ADDITIVES_HEADING = /\b(?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)[ \t]+)?Zusatzstoffe(?:[ \t]+(?:je|pro)[ \t]*kg)?[ \t]*(?:\([^)\n]{0,20}\))?[ \t]*:/giu;
   const ADDITIVE_AMOUNT = /\d[\d.,]*[ \t]*(?:mg|µg|μg|mcg|g|I\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}])/u;
-  const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer)\b/i;
+  const ADDITIVES_END = /\n[ \t]*\n|\b(?:Fütterung\w*|Feeding|Zusammensetzung|Composition|Analytische|Analytical|Mindestens haltbar bis|MHD|Hersteller|Inverkehrbringer|Vertrieb|Netto\w*|Inhalt|Füllmenge|Packungsinhalt|Gewicht|net[ \t]+(?:weight|contents|quantity)|Chargen?|Losnummer|Dosierung|Anwendung|Lagerung\w*)\b/i;
   function additivesEvidence(text) {
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;

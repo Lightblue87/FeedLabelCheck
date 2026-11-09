@@ -695,7 +695,8 @@ test("Zusatzstoffe: Überschrift mit Mengenangabe im eigenen Abschnitt ist ein B
   assert.match(real.matchedText, /Zusatzstoffe je kg.*12\.000 I\.E\./);
   assert.equal(check("Ernährungsphysiologische Zusatzstoffe (je kg):\nVitamin D3 3.200 I.E.").status, "found");
   for (const text of ["Zusatzstoffe:\nFütterungsempfehlung: 100 g täglich", "Zusatzstoffe: keine", "Zusatzstoffe je kg:\n\nVitamin A 100 mg",
-                      "Zusatzstoffe: Fütterung 100 g", "Ohne Zusatzstoffe. Rohprotein 12 %"]) {
+                      "Zusatzstoffe: Fütterung 100 g", "Ohne Zusatzstoffe. Rohprotein 12 %", "Zusatzstoffe:\nNettogewicht: 400 g",
+                      "Zusatzstoffe:\nNettomasse 25 kg", "Zusatzstoffe:\nInhalt: 1,5 kg", "Zusatzstoffe:\nCharge: 12 g", "Zusatzstoffe:\nNet weight: 400 g"]) {
     assert.notEqual(check(text).status, "found", text);
   }
 });
