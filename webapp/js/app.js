@@ -179,7 +179,7 @@
     fillSelect($("#s-category"), ["Alle Kategorien", ...idx.allCategories], "Alle Kategorien");
     refreshSpeciesForCategory();
     fillSelect($("#s-age"), ["Kein Altersfilter", ...idx.ageOptions.map(m => `≤ ${m} Monate`)], "Kein Altersfilter");
-    fillSelect($("#s-unit"), idx.allUnits.length ? idx.allUnits : ["mg/kg"], "mg/kg");
+    fillSelect($("#s-unit"), LavesEval.unitOptions(idx.allUnits), "mg/kg");
     updateContextSummary();
     // Eigenes Dropdown statt <datalist> – iOS Safari zeigt datalist-
     // Vorschläge nicht an. getOptions liest idx bei jedem Öffnen frisch.
@@ -241,6 +241,7 @@
         eNumber: $("#s-enumber").value.trim(),
         substance: $("#s-substance").value.trim(),
         valueText: $("#s-value").value,
+        unit: $("#s-unit").value,
         species: $("#s-species").value,
         ageMonths: currentAgeMonths(),
         category: $("#s-category").value,
@@ -254,7 +255,7 @@
   }
 
   /** Gemeinsame Prüf-Logik für Einzel- und Batch-Prüfung. */
-  function runCheck({ eNumber, substance, valueText, species, ageMonths, category }) {
+  function runCheck({ eNumber, substance, valueText, unit, species, ageMonths, category }) {
     if (!eNumber && !substance) {
       return { cls: "warn", lines: ["Bitte Kennnummer oder Stoff eingeben."] };
     }
@@ -297,7 +298,7 @@
       };
     }
 
-    const { ok, msgs } = LavesEval.evaluateSingleValue(val, recs[0]);
+    const { ok, msgs } = LavesEval.evaluateSingleValue(val, recs[0], unit);
     return { cls: ok === true ? "ok" : ok === false ? "bad" : "warn", lines: msgs };
   }
 
@@ -326,7 +327,7 @@
         <label class="f f-val">Laborergebnis
           <span class="inline">
             <input class="b-value" inputmode="decimal" placeholder="Zahl" enterkeyhint="done">
-            <select class="b-unit" aria-label="Einheit">${(idx.allUnits.length ? idx.allUnits : ["mg/kg"])
+            <select class="b-unit" aria-label="Einheit">${LavesEval.unitOptions(idx.allUnits)
               .map(u => `<option${u === "mg/kg" ? " selected" : ""}>${escapeHtml(u)}</option>`).join("")}</select>
           </span>
         </label>
@@ -364,11 +365,12 @@
         const eNumber = row.querySelector(".b-enumber").value.trim();
         const substance = row.querySelector(".b-substance").value.trim();
         const valueText = row.querySelector(".b-value").value;
+        const unit = row.querySelector(".b-unit").value;
         const cell = row.querySelector(".b-result");
         row.classList.remove("ok", "bad", "warn");
         if (!eNumber && !substance && !valueText) { cell.hidden = true; return; }
         const res = runCheck({
-          eNumber, substance, valueText, species, ageMonths, category,
+          eNumber, substance, valueText, unit, species, ageMonths, category,
         });
         counts[res.cls] = (counts[res.cls] || 0) + 1;
         row.classList.add(res.cls);
