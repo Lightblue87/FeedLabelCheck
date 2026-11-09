@@ -11,7 +11,7 @@
  */
 "use strict";
 
-const CACHE_VERSION = "flc-v8";
+const CACHE_VERSION = "flc-v9";
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
 const SHELL_ASSETS = [

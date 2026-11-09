@@ -259,9 +259,9 @@
     if (!eNumber && !substance) {
       return { cls: "warn", lines: ["Bitte Kennnummer oder Stoff eingeben."] };
     }
-    const val = parseFloat(String(valueText).replace(",", "."));
-    if (Number.isNaN(val)) {
-      return { cls: "warn", lines: ["Laborwert muss eine Zahl sein."] };
+    const val = LavesEval.parseLabValue(valueText);
+    if (val === null) {
+      return { cls: "warn", lines: ["Laborwert als Zahl ohne Einheit oder Tausendertrennzeichen eingeben."] };
     }
 
     const recs = LavesEval.matchAdditiveRecords(idx, eNumber, {

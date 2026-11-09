@@ -96,3 +96,15 @@ test("unitOptions: Masseeinheiten zuerst, Datenwerte ohne Duplikate", () => {
   assert.deepEqual(opts.slice(0, 4), ["mg/kg", "g/kg", "µg/kg", "%"]);
   assert.deepEqual(opts.slice(4), ["KBE/kg", "FTU/kg"]);
 });
+
+test("Laborwerte mit deutschem oder englischem Dezimaltrennzeichen und Exponent", () => {
+  for (const [input, expected] of [["10", 10], [" 10,5 ", 10.5], ["10.5", 10.5], ["1,2e3", 1200], ["0", 0]]) {
+    assert.equal(LavesEval.parseLabValue(input), expected);
+  }
+});
+
+test("Laborwerte mit Restzeichen, gemischten Trennzeichen und unendlichem Wert ablehnen", () => {
+  for (const input of ["10abc", "10 mg/kg", "1.000,50", "1 000", "1e", "1e999", "Infinity", "0x10", "", " "]) {
+    assert.equal(LavesEval.parseLabValue(input), null, input);
+  }
+});
