@@ -514,18 +514,30 @@ const Labeling = (() => {
   const MIXED_ANALYSIS_VALUE = /^(\p{L}[\p{L}\p{N} .,()\/&-]{2,70}?)[ \t]+(\d+(?:[.,]\d+)?[ \t]*%[ \t]+\p{L}[\p{L} -]{1,30})$/u;
   const MIXED_INGREDIENT = /^\p{L}[\p{L}\p{N} .,()\/&%-]{2,70}$/u;
 
+  // Abschnittsgrenzen: eine dieser Überschriften beendet die linke Spalte.
+  const MIXED_STOP = /\b(?:Zusatzstoffe|Hersteller|Inverkehrbringer|Vertrieb|Importeur|F[üu]tterung\w*|Einsatzempfehlung|Dosierung|Anwendung|Tagesration|Futtermenge|Feeding|Lagerung\w*|Hinweise?|Analytische|Inhaltsstoffe|Feuchte\w*|Nett(?:o\w*)|Inhalt|Chargen?|Losnummer|Partie|Kennnummer|MHD|haltbar|Gehalt)\b/i;
+
   function mixedColumns(text) {
     const heading = MIXED_COMPOSITION_HEADING.exec(text);
     if (!heading) return null;
     const items = [];
     const values = [];
     let pairs = 0;
+    let plain = false;
     for (const raw of text.slice(heading.index + heading[0].length).split("\n")) {
       const line = raw.trim();
       const pair = line.match(MIXED_ANALYSIS_VALUE);
-      if (pair && pairs === items.length) { items.push(pair[1].trim()); values.push(pair[2].trim()); pairs += 1; continue; }
-      if (pairs >= 2 && MIXED_INGREDIENT.test(line) && !/\b(?:Zusatzstoffe|Hersteller|Inverkehrbringer)\b/i.test(line)) {
+      if (pair && !MIXED_STOP.test(line)) {
+        // Ein Messwert nach einer Zeile ohne Messwert: die Zuordnung ist nicht eindeutig.
+        if (plain) return null;
+        items.push(pair[1].trim());
+        values.push(pair[2].trim());
+        pairs += 1;
+        continue;
+      }
+      if (pairs >= 2 && MIXED_INGREDIENT.test(line) && !MIXED_STOP.test(line)) {
         items.push(line);
+        plain = true;
         continue;
       }
       break;
