@@ -742,6 +742,9 @@ const Labeling = (() => {
     for (const p of positive) {
       if (rule.id === "art15_001" && p.patternType === "keyword" && normalizeText(p.patternValue) === "milk replacer"
           && !/^[ \t]*(?:(?:calf|lamb|kid)[ \t]+)?milk replacer(?:[ \t]+for[ \t]+[^\n]+)?[ \t]*$/im.test(text)) continue;
+      // „… gegenüber Alleinfuttermitteln höheren Gehalte …“ (Pflichthinweis) ist keine Bezeichnung der Futtermittelart.
+      if (rule.id === "art15_001" && p.patternType === "keyword" && DIRECT_LEGAL_TERMS.has(normalizeText(p.patternValue))
+          && !containsPhraseOutsideComparison(normalizeText(p.patternValue), normText)) continue;
       // Allgemeine Zahlenmuster können Futterrationen, einzelne Ziffern oder Fragmente erfassen.
       const barePostalCode = operatorRule && p.patternValue === String.raw`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b`;
       if (p.patternType === "regex" && (hasNumericEvidence || barePostalCode

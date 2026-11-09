@@ -678,6 +678,15 @@ test("Mineralfutter-Überschrift gewinnt gegen den vorgeschriebenen Hinweis „D
   assert.equal(detect(`Ergänzungsfuttermittel für Pferde\n${note}`), "complementary_feed");
 });
 
+test("Der Vergleich „gegenüber Alleinfuttermitteln“ belegt keine Futtermittelart", () => {
+  const rule = { id: "art15_001", severity: "critical", patterns: [{ patternValue: "Alleinfuttermittel", patternType: "keyword", patternLanguage: "de", confidenceWeight: 1 }] };
+  const check = text => Labeling.check(`Futter für Rinder. ${text}`, FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(check("Dieses Futter darf wegen der gegenüber Alleinfuttermitteln höheren Gehalte nur an Rinder verfüttert werden.").status, "missing");
+  const real = check("Alleinfuttermittel für Rinder. Gegenüber Alleinfuttermitteln anderer Hersteller …");
+  assert.equal(real.status, "found");
+  assert.match(real.matchedText, /Alleinfuttermittel für Rinder/);
+});
+
 test("Zusatzstoffe: Überschrift mit Mengenangabe im eigenen Abschnitt ist ein Beleg", () => {
   const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const check = text => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${text}`, FEED_TYPES[1], [rule]).ruleResults[0];
