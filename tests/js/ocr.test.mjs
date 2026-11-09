@@ -940,6 +940,16 @@ test("cleanText: Kennnummern werden gegen die bekannte Liste geprüft, nur einde
   }
 });
 
+test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, Stoffnamen vor Kennnummern bleiben", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = body => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${body}`, FEED_TYPES[1], [rule]).ruleResults[0];
+  const feeding = check("Zusatzstoffe:\nFütterungsempfehlung: 100 g pro Tier und Tag");
+  assert.notEqual(feeding.status, "found");
+  const named = check("Zusatzstoffe:\n10 mg Vitamin E\nKupfer als Kupfersulfat (3b405)");
+  assert.equal(named.status, "found");
+  assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
+});
+
 test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und Kennnummer in der Folgezeile", () => {
   const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\nFütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)\nDieses Ergänzungsfutter darf we- 2.000 mg Beta-Carotin (3a160(a))\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)\nTechnologische Zusatzstoffe (je kg):\n100 mg Betahydroxytoluol (E321)";

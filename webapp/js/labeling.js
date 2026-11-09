@@ -640,28 +640,35 @@ const Labeling = (() => {
   const ROW_START = new RegExp(`${ROW_AMOUNT.source}|(?<![\\p{L}\\p{N},.])\\d[\\d.]*(?:,\\d+)?(?=[ \\t]+\\p{L}[^\\n]*${ROW_CODE.source})`, "iu");
   const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
 
-  function cleanAdditiveLine(line) {
+  // `next` ist die Folgezeile: die Kennnummer darf dort stehen.
+  function cleanAdditiveLine(line, next = "") {
     const start = ROW_START.exec(line);
     if (start) {
       const prefix = line.slice(0, start.index).trim();
-      return prefix && /[-:.]$/.test(prefix) && !ROW_HEADING_WORDS.test(prefix) ? line.slice(start.index) : line;
+      // Ein Vorlauf wird nur abgeschnitten, wenn die Zeile als Zusatzstoffzeile belegt ist (Kennnummer in dieser
+      // oder der Folgezeile). Eine Mengenangabe allein genügt nicht: „Fütterungsempfehlung: 100 g“ ist eine Überschrift.
+      const isRow = ROW_CODE.test(line.slice(start.index)) || (ROW_CODE.test(next) && !ROW_START.test(next));
+      return isRow && prefix && /[-:.]$/.test(prefix) && !ROW_HEADING_WORDS.test(prefix) ? line.slice(start.index) : line;
     }
     const compound = /(?:^|[.:][ \t]+)(\p{Lu}\p{L}+[ \t]+als[ \t]+\p{Lu}.*)$/u.exec(line);
     if (compound && compound.index > 0) return compound[1];
-    // Nur die Kennnummer gehört zur Tabelle: „minen und Spurenelementen an (3b502)“.
-    const tail = new RegExp(String.raw`^([^\d()]*\p{L})[ \t]+(${ROW_CODE.source})$`, "iu").exec(line);
+    // Nur die Kennnummer gehört zur Tabelle: „minen und Spurenelementen an (3b502)“. Der Vorlauf ist Fließtext einer
+    // Nachbarspalte, wenn er klein beginnt (Wortfragment oder Satzmitte); ein Stoffname beginnt groß.
+    const tail = new RegExp(String.raw`^(\p{Ll}[^\d()]*\p{L})[ \t]+(${ROW_CODE.source})$`, "u").exec(line);
     return tail && tail[1].trim().split(/\s+/).length >= 3 ? tail[2] : line;
   }
 
   function cleanAdditiveLines(evidence) {
-    return evidence.split("\n").map(cleanAdditiveLine).join("\n");
+    const lines = evidence.split("\n");
+    return lines.map((line, i) => cleanAdditiveLine(line, lines[i + 1] ?? "")).join("\n");
   }
 
   // Strukturierte Zusatzstoffzeilen: Menge, Einheit (null, wenn nicht gelesen), Name, Kennnummer. Eine Zeile zählt
   // nur mit Kennnummer oder Stoffname. Die Kennnummer darf in der Folgezeile stehen („als Mangan-(II)-Oxid⏎(3b502)“).
   function parseAdditiveRows(text) {
     const rows = [];
-    const lines = String(text || "").split("\n").map(cleanAdditiveLine);
+    const raw = String(text || "").split("\n");
+    const lines = raw.map((line, i) => cleanAdditiveLine(line, raw[i + 1] ?? ""));
     for (let i = 0; i < lines.length; i += 1) {
       const start = ROW_START.exec(lines[i]);
       if (!start) continue;
