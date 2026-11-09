@@ -48,12 +48,31 @@ const Ocr = (() => {
           const words = (line.words || [])
             .filter(w => (w.text || "").trim())
             .map(w => ({ text: w.text.trim(),
-                         confidence: typeof w.confidence === "number" ? w.confidence : 0 }));
+                         confidence: typeof w.confidence === "number" ? w.confidence : 0,
+                         bbox: w.bbox }));
           if (words.length) lines.push(words);
         }
       }
     }
     return lines;
+  }
+
+  function findTextRegion(data, matchLine) {
+    for (const words of flattenLines(data.blocks)) {
+      const match = matchLine(words.map(word => word.text).join(" "));
+      if (!match) continue;
+      let offset = 0;
+      const positions = [];
+      for (const word of words) {
+        const start = offset;
+        offset += word.text.length + 1;
+        if (word.bbox && start < match.index + match[0].length && offset > match.index) {
+          positions.push(word.bbox);
+        }
+      }
+      if (positions.length) return { first: positions[0], last: positions[positions.length - 1] };
+    }
+    return null;
   }
 
   function filterLine(words) {
@@ -77,6 +96,24 @@ const Ocr = (() => {
       if (kept.length) return cleanText(kept.join("\n"));
     }
     return cleanText(data && data.text ? data.text : "");
+  }
+
+  function orientationScore(data) {
+    return flattenLines(data.blocks).flat().filter(word =>
+      word.confidence >= 70 && /\p{L}{3}/u.test(word.text)
+    ).length;
+  }
+
+  function needsOrientationCheck(data) {
+    return data.confidence < 50 && orientationScore(data) < 12;
+  }
+
+  // Kurze Etikettenausschnitte liefern auch aufrecht nur wenige sichere Wörter. Dort genügt eine
+  // deutliche relative Verbesserung, sofern die Drehung selbst brauchbaren Text liefert.
+  function isBetterOrientation(candidate, original) {
+    const c = orientationScore(candidate);
+    const o = orientationScore(original);
+    return c >= o + 12 || (c >= 6 && c >= o * 3 + 4);
   }
 
   // Zusatzstoff-Codes wie (3a671) liest die OCR oft falsch:
@@ -113,7 +150,7 @@ const Ocr = (() => {
     return cleaned;
   }
 
-  return { textFromResult, cleanText, flattenLines, filterLine };
+  return { textFromResult, cleanText, flattenLines, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
