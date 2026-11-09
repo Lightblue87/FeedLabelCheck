@@ -280,9 +280,10 @@ const Labeling = (() => {
 
   const DECIMAL = String.raw`\d+(?:[,.]\d+)?`;
   const PACKAGE_AMOUNT = String.raw`(${DECIMAL})[ \t]*(kg|g|t|ml|l|Liter|Kilogramm|Gramm)\b`;
-  const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Netto|net weight|net contents|net volume|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
+  const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Nettoinhalt|Nettovolumen|Packungsinhalt|Füllmenge|Inhalt|Netto|net weight|net contents|net volume|net quantity|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
   const NET_AMOUNT = new RegExp(String.raw`\b(?:${NET_LABEL})\b[ \t:)]*\n?[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}`, "i");
   const AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e]?[ \t]*$`, "im");
+  const AMOUNT_LINE_ALL = new RegExp(AMOUNT_LINE.source, "gim");
   const PACK_COUNT = new RegExp(String.raw`\([ \t]*(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*\)`, "i");
   const NET_HEADING = new RegExp(String.raw`\b(?:${NET_LABEL})\b`, "i");
   const OCR_AMOUNT_HINT = "OCR-Kandidat Packungsmenge: ";
@@ -335,9 +336,9 @@ const Labeling = (() => {
 
   function structuredEvidence(ruleId, text) {
     if (ruleId === "art15_003") {
-      const amountLine = text.match(AMOUNT_LINE)?.[0].trim();
-      return text.match(NET_AMOUNT)?.[0].trim()
-        ?? (amountLine && /^[℮e]|[℮e]$/i.test(amountLine) ? amountLine : null);
+      // Eine ℮/e-markierte Menge gilt auch dann, wenn davor andere Mengenzeilen stehen (Fütterungstabelle).
+      const markedLine = [...text.matchAll(AMOUNT_LINE_ALL)].map(m => m[0].trim()).find(l => /^[℮e]|[℮e]$/i.test(l));
+      return text.match(NET_AMOUNT)?.[0].trim() ?? markedLine ?? null;
     }
     if (ruleId === "art15_002" || ruleId.startsWith("art17_005_")) {
       return text.match(/^\p{L}[\p{L}\p{N} .&'’-]{2,65}[ \t]+(?:N\.?V\.?|B\.?V\.?)[ \t]*\n[^\n]{3,70}\n(?:NL[- \t]+)?\d{4}[ \t]+[A-Z]{2}[ \t]+\p{L}[^\n]{1,40}/mu)?.[0] ?? null;

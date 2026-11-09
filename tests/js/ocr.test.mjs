@@ -379,3 +379,38 @@ test("ein loses L ohne Datum davor und Mengenangaben mit L belegen keine Losnumm
     assert.notEqual(result.status, "found", noise);
   }
 });
+
+test("ausdrückliche Mengenüberschriften (Inhalt, Nettoinhalt, Füllmenge …) belegen die Nettomenge", () => {
+  for (const [declared, amount] of [
+    ["Inhalt: 1 Liter", /1 Liter/], ["Inhalt: 800 g", /800 g/], ["Inhalt 5 kg", /5 kg/],
+    ["Nettoinhalt: 20 kg", /20 kg/], ["Füllmenge: 500 ml", /500 ml/], ["Packungsinhalt: 3 kg", /3 kg/],
+    ["Nettovolumen 2 l", /2 l/], ["Net quantity: 2 kg", /2 kg/], ["Inhalt:\n1 kg", /1 kg/],
+  ]) {
+    const result = checkNumericLabelRule("art15_003", `Ergänzungsfuttermittel für Pferde.\n${declared}`, legacyWeightPattern);
+    assert.equal(result.status, "found", JSON.stringify(declared));
+    assert.match(result.matchedText, amount, JSON.stringify(declared));
+  }
+});
+
+test("mehrdeutige Überschriften und Tabellenwerte belegen weiterhin keine Nettomenge", () => {
+  for (const noise of ["Gewicht: 10 kg", "Körpergewicht 8 kg 20 kg 52 kg", "Energie pro 100 g", "Fütterung: 200 g täglich",
+                       "Inhaltsstoffe: 5 kg Protein", "Inhalt je Beutel: 85 g"]) {
+    const result = checkNumericLabelRule("art15_003", `Alleinfuttermittel für Hunde.\n${noise}`, legacyWeightPattern);
+    assert.notEqual(result.status, "found", noise);
+  }
+});
+
+test("eine ℮-markierte Packungsmenge gilt auch nach anderen Mengenzeilen", () => {
+  for (const tail of ["Körpergewicht:\n10 kg\n℮800g", "5 kg\n10 kg\n800 g ℮", "20 kg\ne 1,5 kg"]) {
+    const result = checkNumericLabelRule("art15_003", `Alleinfuttermittel für Hunde.\n${tail}`, legacyWeightPattern);
+    assert.equal(result.status, "found", JSON.stringify(tail));
+    assert.match(result.matchedText, /[℮e]/, JSON.stringify(tail));
+    assert.doesNotMatch(result.matchedText, /^(?:5|10|20) kg$/, JSON.stringify(tail));
+  }
+});
+
+test("Mengenüberschrift ohne Menge löst den Zusatz-OCR-Lauf aus, mit Menge nicht", () => {
+  assert.equal(Labeling.needsPackageAmount("Inhalt:"), true);
+  assert.equal(Labeling.needsPackageAmount("Inhalt: 5 kg"), false);
+  assert.equal(Labeling.needsPackageAmount("Inhaltsstoffe: Protein"), false);
+});
