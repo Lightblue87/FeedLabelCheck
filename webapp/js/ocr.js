@@ -304,7 +304,8 @@ const Ocr = (() => {
     }));
   }
 
-  const CZECH_ANALYSIS_LINE = /^(?:Hrub[yýáé]\s+(?:protein|tuk|vl[aá]knina|popel)|(?:Cukr|[ŠS]krob|V[aá]pn[ií]k|Fosfor|Sod[ií]k|Drasl[ií]k|Hor[cč][ií]k))\s+[\d.,]+\s*%/iu;
+  const CZECH_ANALYSIS_LINE = /^(?:Hrub[yýáée]\s+(?:protein|tuk|vl[aá]knina|popel)|(?:Cukr|[ŠS]krob|V[aá]pn[ií]k|Fosfor|Sod[ií]k|Drasl[ií]k|Hor[cč][ií]k))\s+[\d.,]+\s*%/iu;
+  const GERMAN_ANALYSIS_LINE = /^(?:Rohprotein|Rohfett|Rohfaser|Rohasche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Zucker|Stärke)\s+[\d.,]+\s*%/iu;
   const GERMAN_INGREDIENT_LINE = /^DE\s+(\p{L}[^\n]{20,240})$/iu;
   const COMPOSITION_HEAD = /^(?:Samenstelling|Komposition|Composition|Zusammensetzung)\s*\/[^\n]{6,260}$/iu;
 
@@ -329,10 +330,23 @@ const Ocr = (() => {
         if (heading) out.push(heading, lines[i]);
       }
     }
-    // Analytische Werte aus anderssprachiger Packungsseite: als OCR-Rohbeleg
-    // sichtbar, rechtliche Sprach- und Kennzeichnungspflicht separat prüfen.
-    const analysis = lines.filter(line => CZECH_ANALYSIS_LINE.test(line) && novel(line));
-    if (analysis.length >= 2) out.push(...analysis.slice(0, 14));
+    // Deutschsprachige Zutaten auf einsprachigen Etiketten ergänzen.
+    for (const line of lines) {
+      const m = /^Zusammensetzung\s*:\s*(.+)$/iu.exec(line);
+      if (m && m[1].split(/[,;]/).filter(x => /\p{L}{3,}/u.test(x)).length >= 3 && novel(line)) {
+        out.push(line);
+      }
+    }
+    // Analytische Werte nur mit einer tatsächlich erkannten Tabellenüberschrift
+    // übernehmen. Fremdsprachige Werte sind Rohbelege, keine Sprachkonformität.
+    const heading = lines.find(line => /Analytische\s+Bestandteile|Analytick[eé]\s+slo[zž]ky|Constituintes\s+analiticos|Analytical\s+constituents/iu.test(line));
+    if (heading) {
+      const analysis = lines.filter(line => (GERMAN_ANALYSIS_LINE.test(line) || CZECH_ANALYSIS_LINE.test(line)) && novel(line));
+      if (analysis.length >= 2) {
+        if (novel(heading)) out.push(heading);
+        out.push(...analysis.slice(0, 14));
+      }
+    }
     return [...new Set(out)].join("\n");
   }
 
