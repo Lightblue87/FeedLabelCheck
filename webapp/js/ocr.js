@@ -274,7 +274,14 @@ const Ocr = (() => {
   // Ein enger Ausschnitt mit 2–2,5-facher Skalierung kann Text retten, den
   // die Vollbild-OCR wegen Spalten oder dominanter großer Schrift übergeht.
   // Maximal 3 Zusatzläufe pro Bild, keine zusätzlichen Sprachpakete.
+  // Typisches zweispaltiges Mehrsprachen-Layout, das Tesseract zeilenweise
+  // vermischt ("Zusammensetzung ... Composition ..."). Spalten getrennt lesen.
+  function hasMixedLanguageColumns(text) {
+    return /(?:Zusammensetzung[^\n]{0,150}Composition|Rohprotein[^\n]{0,130}Crude[ \t]+protein|Analytische[ \t]+Bestandteile[^\n]{0,130}Analytical)/iu.test(text);
+  }
+
   function shouldRecoverText(text) {
+    if (hasMixedLanguageColumns(text)) return true;
     const words = String(text || "").match(/\p{L}{3,}/gu) || [];
     if (words.length < 30) return true;
     const hasComposition = /(?:^|\n)\s*DE\s+[^\n]{12,},\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]{20,},\s*\p{L}/imu.test(text);
@@ -285,9 +292,14 @@ const Ocr = (() => {
 
   // Relative Koordinaten vermeiden Geräte- und Auflösungsabhängigkeiten.
   // Jede Region wird getrennt gelesen, statt das gesamte Foto hochzuskalieren.
-  function recoveryRegions(width, height) {
+  function recoveryRegions(width, height, primaryText = "") {
     if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) return [];
-    const regions = width >= height
+    const regions = width >= height && hasMixedLanguageColumns(primaryText)
+      ? [
+        [0.035, 0.05, 0.53, 0.96, 2],
+        [0.47, 0.05, 0.97, 0.96, 2],
+        [0.075, 0.11, 0.93, 0.52, 2],
+      ] : width >= height
       ? [
         [0.075, 0.11, 0.93, 0.52, 2],
         [0.05, 0.50, 0.95, 0.96, 2],
