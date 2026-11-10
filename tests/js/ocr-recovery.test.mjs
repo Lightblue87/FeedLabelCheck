@@ -142,3 +142,60 @@ test("Nachgelesene Analysewerte behalten ihre Bezugsbasis (Trockenmasse), die 12
   const field = id => Labeling.check(merged, feedTypes[0], []).ruleResults.find(r => r.rule.id === id);
   assert.equal(field("art18_renal_12pct_phosphorus").status, "unclear");
 });
+
+// ── Fütterungstabelle (Pavo WeightLift, Rückseite) ──
+const feedingBroken = [
+  "FEEDING AD rgewicht / Body weig ko/daOE",
+  "tion: örpe",
+  "orden. Lichaamsgewicht / Körp / Laarrhorse kg/dag/T39",
+  "Pferd iaht ight",
+  "; Mageres eigh rweilg",
+  "| paagil Untergewicht / /pderwn ht / Severe unde",
+].join("\n");
+const feedingCrop = [
+  "FEEDING ADVICE PAVO WeightLift",
+  "Lichaamsgewicht / Körpergewicht / Body weight 300 kg 600 kg",
+  "Slank paard / Mageres Pferd / Lean horse 0,5 kg/dag/Tag/day 1,0 kg/dag/Tag/day",
+  "Ondergewicht / Untergewicht / Underweight 0,75 kg/dag/Tag/day 1,5 kg/dag/Tag/day",
+  "Ernstig ondergewicht / Starkes Untergewicht / Severe underweight 1,2 kg/dag/Tag/day 2,4 kg/dag/Tag/day",
+].join("\n");
+
+test("Fütterungstabelle: zerlesene Tabelle löst die Nachlese aus, eine einzelne Empfehlung nicht", () => {
+  assert.equal(Ocr.needsFeedingRecovery(feedingBroken), true);
+  assert.equal(Ocr.needsFeedingRecovery("Fütterungsempfehlung: 500 g pro Tag"), false);
+  assert.equal(Ocr.needsFeedingRecovery(feedingCrop), false, "gelesene Tabelle braucht keine Nachlese");
+});
+
+test("Fütterungstabelle: eigener Ausschnitt zuerst, höchstens drei Ausschnitte", () => {
+  for (const [w, h] of [[2576, 1450], [1450, 2576]]) {
+    const regions = Ocr.recoveryRegions(w, h, feedingBroken);
+    assert.ok(regions.length >= 1 && regions.length <= 3);
+    assert.ok(regions[0].y > 0.4 * h, `${w}x${h}: erster Ausschnitt liegt im unteren Bildteil`);
+  }
+});
+
+test("Fütterungstabelle: die deutschen Zeilen mit Mengen werden übernommen", () => {
+  assert.deepEqual(Ocr.germanView(feedingCrop).split("\n").slice(1), [
+    "Körpergewicht 300 kg 600 kg",
+    "Mageres Pferd 0,5 kg/Tag 1,0 kg/Tag",
+    "Untergewicht 0,75 kg/Tag 1,5 kg/Tag",
+    "Starkes Untergewicht 1,2 kg/Tag 2,4 kg/Tag",
+  ]);
+  const extra = Ocr.recoveredEvidence(feedingBroken, feedingCrop);
+  assert.match(extra, /^FEEDING ADVICE PAVO WeightLift\nKörpergewicht 300 kg 600 kg\nMageres Pferd 0,5 kg\/Tag 1,0 kg\/Tag/);
+  assert.match(extra, /Starkes Untergewicht 1,2 kg\/Tag 2,4 kg\/Tag$/);
+  // Danach ist die Tabelle gelesen, der Ausschnitt wird nicht erneut übernommen.
+  assert.equal(Ocr.recoveredEvidence(feedingBroken + "\n\n" + extra, feedingCrop), "");
+  assert.equal(Ocr.needsFeedingRecovery(feedingBroken + "\n\n" + extra), false);
+});
+
+test("Fütterungstabelle: ohne gelesene Überschrift oder mit zu wenigen Zeilen wird nichts übernommen", () => {
+  const rows = feedingCrop.split("\n").slice(1);
+  assert.equal(Ocr.recoveredEvidence("Nur Fragmente", rows.join("\n")), "");
+  assert.equal(Ocr.recoveredEvidence(feedingBroken, ["FEEDING ADVICE", rows[1], rows[2]].join("\n")), "");
+});
+
+test("Mengen am Zeilenende erhalten das deutsche Teilwort der Einheit, einsprachige Zeilen bleiben", () => {
+  assert.equal(Ocr.germanView("Tag / Nacht 0,5 kg/Tag"), "Tag / Nacht 0,5 kg/Tag");
+  assert.equal(Ocr.germanView("Futtermenge 0,5 kg/dag/Tag/day"), "Futtermenge 0,5 kg/dag/Tag/day");
+});

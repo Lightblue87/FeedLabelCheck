@@ -61,3 +61,15 @@ Auf der Pavo-WeightLift-Rückseite steht jede Angabe in zehn bis zwölf Sprachen
 - Die Prüfung läuft auf dieser Sicht. Das Textfeld und der Verlauf behalten den OCR-Text unverändert, die Prüfung nennt den Filter („geprüft wurden nur die deutschen Textteile“).
 - Zeilen ohne eindeutiges deutsches Segment bleiben unverändert. Zeilen mit nur zwei Segmenten werden nur bei deutlichem Vorsprung und ohne deutsche Treffer im anderen Segment gekürzt („Tag / Nacht“ bleibt).
 - Grenze: Das Segment wird an der Zeile gewählt. Absätze, die über Zeilenumbrüche mit „ / “ weiterlaufen, werden nur zeilenweise gekürzt. Der Filter ersetzt nicht die Prüfung, ob ein deutscher Text auf der Verpackung steht.
+
+## Nachlese der Fütterungstabelle (10.11.2026)
+
+Auf der Pavo-Rückseite kam die Fütterungstabelle zerstört an („FEEDING AD rgewicht / Body weig“, „Mageres eigh rweilg“). Die Nachlese kannte bisher nur Zutaten und Analyse.
+
+- `Ocr.needsFeedingRecovery(text)`: Es gibt eine Fütterungsüberschrift (auch zerlesen wie „FEEDING AD …“) und ein Tabellenmerkmal („Körpergewicht“, „Body weight“, „Lichaamsgewicht“), aber weniger als drei deutsche Zeilen. Eine einzelne Fütterungsempfehlung („500 g pro Tag“) löst nichts aus.
+- `recoveryRegions` stellt dann einen eigenen Ausschnitt der Tabelle voran (Querformat 8–72 % × 60–92 %, 2,5-fach; Hochformat 5–95 % × 45–98 %, 2-fach). Insgesamt bleiben es höchstens drei Ausschnitte.
+- `germanView` behält Mengen am Zeilenende und das deutsche Teilwort der Einheit: „Slank paard / Mageres Pferd / Lean horse 0,5 kg/dag/Tag/day 1,0 kg/dag/Tag/day“ wird zu „Mageres Pferd 0,5 kg/Tag 1,0 kg/Tag“.
+- `recoveredEvidence` übernimmt die Tabelle nur mit gelesener Überschrift (im Ausschnitt oder im Haupttext) und mindestens drei deutschen Zeilen mit Mengen je Tag.
+- `app.js` liest nach einem Treffer weiter, solange die Fütterungstabelle fehlt.
+
+Grenze: Die Ausschnittsgrenzen sind für das Pavo-Layout bestimmt. Auf anderen Layouts kann die Tabelle woanders liegen. Eine Messung auf dem iPhone steht aus.

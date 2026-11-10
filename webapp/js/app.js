@@ -1148,7 +1148,8 @@
             if (extra) {
               text += "\n\n" + extra;
               warnings.push("Kleine Schrift nachgelesen: übernommene Angaben am Originalfoto bestätigen");
-              break;
+              // Weiter nur, wenn die Fütterungstabelle noch fehlt (eigener Ausschnitt, höchstens drei Läufe insgesamt).
+              if (!Ocr.needsFeedingRecovery(text)) break;
             }
           }
         } catch (e) {

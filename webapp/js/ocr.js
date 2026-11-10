@@ -280,7 +280,28 @@ const Ocr = (() => {
     return /(?:Zusammensetzung[^\n]{0,150}Composition|Rohprotein[^\n]{0,130}Crude[ \t]+protein|Analytische[ \t]+Bestandteile[^\n]{0,130}Analytical)/iu.test(text);
   }
 
+  // ── Fütterungstabelle ──
+  // Überschrift auch bei zerlesenem OCR („FEEDING AD …“). Zeilen der deutschen Sicht: „Mageres Pferd 0,5 kg/Tag 1,0 kg/Tag“.
+  const FEEDING_HEADING = /\b(?:Feeding\s+(?:ad|guide|instr)|F[üu]tterungs?(?:empfehlung|hinweis|tabelle)|Fütterungsmenge)/iu;
+  const FEEDING_AMOUNT = String.raw`\d[\d.,]*\s*(?:kg|g)\/Tag`;
+  const FEEDING_ROW = new RegExp(String.raw`^\p{L}[\p{L} .()-]{2,45}?\s+${FEEDING_AMOUNT}(?:\s+${FEEDING_AMOUNT})*$`, "u");
+  const FEEDING_WEIGHT_ROW = /^Körpergewicht(?:\s+\d[\d.,]*\s*kg)+$/u;
+
+  function feedingRows(germanText) {
+    return String(germanText || "").split(/\r?\n/).map(l => l.trim()).filter(l => FEEDING_ROW.test(l) || FEEDING_WEIGHT_ROW.test(l));
+  }
+
+  // Fütterungstabelle erkennbar, aber die deutschen Zeilen fehlen oder sind zerlesen.
+  // Eine einzelne Fütterungsempfehlung („500 g pro Tag“) ist keine Tabelle: Es braucht ein Tabellenmerkmal (Körpergewicht
+  // als Spalte, auch zerlesen wie „rgewicht / Body weig“).
+  const FEEDING_TABLE_SIGNAL = /(?:K[öo]rpergewicht|Body\s+weig|Lichaamsgewicht|rgewicht\s*\/)/iu;
+  function needsFeedingRecovery(text) {
+    if (!FEEDING_HEADING.test(text) || !FEEDING_TABLE_SIGNAL.test(text)) return false;
+    return feedingRows(germanView(text)).length < 3;
+  }
+
   function shouldRecoverText(text) {
+    if (needsFeedingRecovery(text)) return true;
     if (hasMixedLanguageColumns(text)) return true;
     const words = String(text || "").match(/\p{L}{3,}/gu) || [];
     if (words.length < 30) return true;
@@ -312,6 +333,11 @@ const Ocr = (() => {
         [0.06, 0.02, 0.95, 0.42, 2],
         [0.06, 0.60, 0.95, 0.98, 2],
       ];
+    // Fütterungstabelle: eigener Ausschnitt zuerst (insgesamt höchstens drei Ausschnitte).
+    if (needsFeedingRecovery(primaryText)) {
+      regions.unshift(width >= height ? [0.08, 0.60, 0.72, 0.92, 2.5] : [0.05, 0.45, 0.95, 0.98, 2]);
+      regions.length = Math.min(regions.length, 3);
+    }
     return regions.map(([left, top, right, bottom, magnify]) => ({
       x: Math.floor(left * width), y: Math.floor(top * height),
       right: Math.ceil(right * width), bottom: Math.ceil(bottom * height),
@@ -372,6 +398,14 @@ const Ocr = (() => {
         out.push(...analysis.slice(0, 14));
       }
     }
+    // Fütterungstabelle: Überschrift (im Ausschnitt oder im Haupttext) und mindestens drei deutsche Zeilen.
+    const german = germanView(candidate);
+    const rows = feedingRows(german).filter(row => novel(row));
+    if (rows.length >= 3) {
+      const feedingHeading = lines.find(l => FEEDING_HEADING.test(l))
+        || String(primary || "").split(/\r?\n/).map(l => l.trim()).find(l => FEEDING_HEADING.test(l));
+      if (feedingHeading) out.push(feedingHeading, ...rows);
+    }
     return [...new Set(out)].join("\n");
   }
 
@@ -398,7 +432,23 @@ const Ocr = (() => {
   }
 
   // Wählt aus „A / B / C“ das eindeutig deutsche Segment; sonst null (Zeile bleibt, wie sie ist).
+  // Mengen am Zeilenende („… Lean horse 0,5 kg/dag/Tag/day 1,0 kg/dag/Tag/day“) gehören zu allen Segmenten. Sie werden
+  // vor der Wahl abgetrennt; die Einheit behält das deutsche Teilwort („kg/Tag“).
+  const TRAILING_AMOUNTS = /^(.*?\S)[ \t]+((?:\d[\d.,]*[ \t]*(?:kg|g)(?:\/\p{L}+)*[ \t]*)+)$/u;
+  function germanAmounts(amounts) {
+    return amounts.trim().replace(/(\d[\d.,]*)[ \t]*(kg|g)((?:\/\p{L}+)+)/gu, (all, number, unit, tail) => {
+      const options = tail.split("/").filter(Boolean);
+      const german = options.filter(o => germanScore(o) >= 1);
+      return german.length === 1 ? `${number} ${unit}/${german[0]}` : all;
+    });
+  }
+
   function germanSegment(line) {
+    const trailing = TRAILING_AMOUNTS.exec(line);
+    if (trailing && /[ \t]\/[ \t]/.test(trailing[1])) {
+      const chosenHead = germanSegment(trailing[1]);
+      return chosenHead ? `${chosenHead} ${germanAmounts(trailing[2])}` : null;
+    }
     const parts = line.split(/[ \t]\/[ \t]/).map(p => p.trim()).filter(Boolean);
     if (parts.length < 2) return null;
     const scores = parts.map(germanScore);
@@ -440,7 +490,7 @@ const Ocr = (() => {
     return out.join("\n");
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, germanView, recoveryRegions, recoveredEvidence };
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
