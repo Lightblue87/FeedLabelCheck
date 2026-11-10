@@ -1654,6 +1654,7 @@ const Labeling = (() => {
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
     matchDietPurposeAnchor: text => dietPurposeMatch(text, DIET_PURPOSE_ANCHOR),
     needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH, parseAdditiveRows, additiveContribution,
+    overallStatus,
   };
 })();
 
