@@ -411,7 +411,7 @@
         });
         counts[res.cls] = (counts[res.cls] || 0) + 1;
         row.classList.add(res.cls);
-        const pillText = res.cls === "ok" ? "KONFORM" : res.cls === "bad" ? "NICHT KONFORM" : "PRÜFEN";
+        const pillText = res.cls === "ok" ? "Grenzwert eingehalten*" : res.cls === "bad" ? "Grenzwert überschritten*" : "Nicht prüfbar";
         cell.hidden = false;
         cell.innerHTML = `<span class="status-pill ${res.cls}">${pillText}</span>${
           res.lines.map(l => `<div>${escapeHtml(l)}</div>`).join("")}`;
@@ -420,7 +420,7 @@
       const sum = $("#b-summary");
       sum.hidden = total === 0;
       sum.innerHTML = [
-        ["ok", counts.ok, "konform"], ["bad", counts.bad, "nicht konform"], ["warn", counts.warn, "zu prüfen"],
+        ["ok", counts.ok, "innerhalb Daten-Grenzwert*"], ["bad", counts.bad, "außerhalb Daten-Grenzwert*"], ["warn", counts.warn, "zu prüfen"],
       ].filter(([, n]) => n).map(([c, n, t]) => `<span class="chip ${c}">${n} ${t}</span>`).join("");
     });
   }
@@ -431,14 +431,14 @@
     unclear: "Unklar", notCheckable: "Nicht prüfbar",
   };
   const OVERALL = {
-    keineAuffaelligkeit: { cls: "ok", text: "Keine Auffälligkeit – alle Pflichtangaben gefunden." },
-    unklar: { cls: "warn", text: "Unklar – einzelne Angaben bitte manuell prüfen." },
+    keineAuffaelligkeit: { cls: "ok", text: "In den erkannten Pflichtangaben keine Auffälligkeit. Keine Bestätigung der Rechtskonformität." },
+    unklar: { cls: "warn", text: "Teilprüfung offen – Pflichtangaben fehlen im Prüftext oder sind unklar/nicht prüfbar. Originaletikett prüfen." },
     auffaellig: { cls: "bad", text: "Pflichtangaben im Prüftext nicht erkannt – Etikett prüfen." },
-    nichtPruefbar: { cls: "info", text: "Nicht prüfbar – zu wenig Text." },
+    nichtPruefbar: { cls: "info", text: "Nicht prüfbar – keine ausreichend belegten Pflichtangaben ausgewertet." },
   };
 
   const OVERALL_SHORT = {
-    keineAuffaelligkeit: { cls: "ok", text: "Unauffällig" },
+    keineAuffaelligkeit: { cls: "ok", text: "Textprüfung unauffällig" },
     unklar: { cls: "warn", text: "Unklar" },
     auffaellig: { cls: "bad", text: "Angaben nicht erkannt" },
     nichtPruefbar: { cls: "info", text: "Nicht prüfbar" },
