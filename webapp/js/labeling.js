@@ -628,12 +628,69 @@ const Labeling = (() => {
     }
     return null;
   }
-  function additivesEvidence(text) {
+  // Zusatzstoffzeilen einer Tabelle, die die OCR mit dem Text einer Nachbarspalte vermischt hat:
+  // „Fütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)“. Der Fremdtext wird nur abgeschnitten, wenn er
+  // erkennbar Fließtext ist (endet auf „-“, „:“ oder „.“) und danach eine Menge mit Einheit beginnt oder eine
+  // Zeile „Stoff als Verbindung“ folgt. Alles andere bleibt unverändert im Beleg.
+  const ROW_AMOUNT = /(?<![\p{L}\p{N},.])\d[\d.]*(?:,\d+)?[ \t]*(?:mg|µg|μg|mcg|g|[I1l]\.[ \t]?E\.|IE|IU|KBE|FTU)(?![\p{L}\p{N}\/])/u;
+  const ROW_CODE = /\(([1-4][a-z]\d{1,4}[a-z]{0,3}(?:\([a-z]\))?|E[ \t]?\d{3,4}[a-z]?)\)/i;
+
+  // Zeilenanfang einer Zusatzstoffangabe: Menge mit Einheit oder, wenn die OCR die Einheit verloren hat, eine Zahl
+  // vor Stoffname und Kennnummer in derselben Zeile.
+  const ROW_START = new RegExp(`${ROW_AMOUNT.source}|(?<![\\p{L}\\p{N},.])\\d[\\d.]*(?:,\\d+)?(?=[ \\t]+\\p{L}[^\\n]*${ROW_CODE.source})`, "iu");
+  const ROW_CODE_ONLY = new RegExp(`^${ROW_CODE.source}$`, "i");
+  const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
+
+  // Fließtext einer Nachbarspalte statt Stoffname („Vitamin E:“): Wortfragment mit Bindestrich am Ende oder ein
+  // kleingeschriebenes Funktionswort, das in Stoffnamen nicht vorkommt („Fütterungsempfehlung pro Tag:“). Wörter wie
+  // „in“, „von“, „mit“, „und“ fehlen bewusst: „Kupfer in Form von Kupfersulfat“ ist ein Stoffname.
+  const PROSE_WORD = /(?:^|[ \t])(?:pro|der|die|das|dem|den|wegen|darf|dürfen|wird|werden|gegenüber)(?=[ \t:.]|$)/u;
+  function proseFragment(prefix) {
+    return /-$/.test(prefix) || PROSE_WORD.test(prefix);
+  }
+
+  // `next` ist die Folgezeile: die Kennnummer darf dort stehen.
+  function cleanAdditiveLine(line, next = "") {
+    const start = ROW_START.exec(line);
+    if (start) {
+      const prefix = line.slice(0, start.index).trim();
+      // Ein Vorlauf wird nur abgeschnitten, wenn die Zeile als Zusatzstoffzeile belegt ist (Kennnummer in dieser
+      // oder der Folgezeile). Eine Mengenangabe allein genügt nicht: „Fütterungsempfehlung: 100 g“ ist eine Überschrift.
+      // Die Kennnummer der Folgezeile zählt nur bei einer Fortsetzung: Die Folgezeile besteht nach der Bereinigung nur
+      // noch aus der Kennnummer („(3b502)“, „minen und Spurenelementen an (3b502)“), nicht aus einem eigenen Stoff.
+      const continuation = next && ROW_CODE_ONLY.test(cleanAdditiveLine(next).trim());
+      const isRow = ROW_CODE.test(line.slice(start.index)) || continuation;
+      return isRow && prefix && /[-:.]$/.test(prefix) && proseFragment(prefix) && !ROW_HEADING_WORDS.test(prefix)
+        ? line.slice(start.index) : line;
+    }
+    const compound = /(?:^|[.:][ \t]+)(\p{Lu}\p{L}+[ \t]+als[ \t]+\p{Lu}.*)$/u.exec(line);
+    // Der Vorlauf muss erkennbar Fließtext sein („nahme gefüttert werden.“); eine Abschnittsüberschrift
+    // („Zusammensetzung:“) bleibt stehen.
+    if (compound && compound.index > 0) {
+      const lead = line.slice(0, compound.index).trim();
+      if (proseFragment(lead.replace(/[ \t:.,]+$/, "")) && !ROW_HEADING_WORDS.test(lead)) return compound[1];
+    }
+    // Nur die Kennnummer gehört zur Tabelle: „minen und Spurenelementen an (3b502)“. Der Vorlauf ist Fließtext einer
+    // Nachbarspalte, wenn er klein beginnt (Wortfragment oder Satzmitte); ein Stoffname beginnt groß.
+    const tail = new RegExp(String.raw`^(\p{Ll}[^\d()]*\p{L})[ \t]+(${ROW_CODE.source})$`, "u").exec(line);
+    return tail && tail[1].trim().split(/\s+/).length >= 3 ? tail[2] : line;
+  }
+
+  function cleanAdditiveLines(evidence) {
+    const lines = evidence.split("\n");
+    return lines.map((line, i) => cleanAdditiveLine(line, lines[i + 1] ?? "")).join("\n");
+  }
+
+  // Abschnitte mit Zusatzstoffangaben (je Überschrift ein Block Zeilen). Der Abschnitt endet an der nächsten
+  // Zusatzstoff-Überschrift oder an einer anderen Überschrift (Fütterung, Analytik, Hersteller, …).
+  function additiveSections(rawText) {
+    // Vermischte Tabellenzeilen („Fütterungsempfehlung pro Tag: 90.000 …“) würden den Abschnitt vorzeitig beenden.
+    const text = cleanAdditiveLines(rawText);
     const sections = [];
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;
-      // Der Abschnitt endet an der nächsten Zusatzstoff-Überschrift. Folgt sie unmittelbar („Zusatzstoffe:
-      // Ernährungsphysiologische Zusatzstoffe/kg: …“), zählt der Inhalt dahinter zur ersten Überschrift.
+      // Folgt die nächste Überschrift unmittelbar („Zusatzstoffe: Ernährungsphysiologische Zusatzstoffe/kg: …“),
+      // zählt der Inhalt dahinter zur ersten Überschrift.
       const window = text.slice(start, start + 900);
       const cut = window.split(ADDITIVES_SECTION_END, 1)[0];
       const section = namedAdditiveAmount(cut) ? cut : window.split(ADDITIVES_END, 1)[0];
@@ -641,6 +698,11 @@ const Labeling = (() => {
       const lines = sectionLines(text, heading.index, start, section);
       if (!sections.includes(lines)) sections.push(lines);
     }
+    return sections;
+  }
+
+  function additivesEvidence(rawText) {
+    const sections = additiveSections(rawText);
     return sections.length ? sections.join("\n") : null;
   }
 

@@ -926,6 +926,71 @@ test("Vermischte Spalten: Feuchte-Zeile, längere Analytikspalte und unbekannte 
   assert.equal(unknown.status, "probablyFound");
 });
 
+test("cleanText: Kennnummer mit Kandidaten außerhalb von a–g bleibt bei Mehrdeutigkeit unverändert", () => {
+  Ocr.setAdditiveCodes(["1a001", "1j001", "3b405"]);
+  try {
+    assert.match(Ocr.cleanText("Stoff (10001)"), /\(10001\)/);
+    Ocr.setAdditiveCodes(["1j001"]);
+    assert.match(Ocr.cleanText("Stoff (10001)"), /\(1j001\)/);
+  } finally {
+    Ocr.setAdditiveCodes([]);
+  }
+});
+
+test("cleanText: Kennnummern werden gegen die bekannte Liste geprüft, nur eindeutige Korrekturen", () => {
+  Ocr.setAdditiveCodes(["3b502", "3a502", "3b405", "3a671"]);
+  try {
+    // 3a502 und 3b502 sind beide bekannt: nicht eindeutig, Text bleibt
+    assert.match(Ocr.cleanText("2.500 mg Mangan (30502)"), /\(30502\)/);
+    Ocr.setAdditiveCodes(["3b502", "3b405", "3a671"]);
+    assert.match(Ocr.cleanText("2.500 mg Mangan (30502)"), /\(3b502\)/);
+    assert.match(Ocr.cleanText("Kupfer (3b405) Vitamin D3 (3a671)"), /\(3b405\).*\(3a671\)/);
+    assert.match(Ocr.cleanText("Wasser (30999)"), /\(30999\)/);
+  } finally {
+    Ocr.setAdditiveCodes([]);
+  }
+});
+
+test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, Stoffnamen vor Kennnummern bleiben", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const check = body => Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${body}`, FEED_TYPES[1], [rule]).ruleResults[0];
+  const feeding = check("Zusatzstoffe:\nFütterungsempfehlung: 100 g pro Tier und Tag");
+  assert.notEqual(feeding.status, "found");
+  const colon = check("Zusatzstoffe:\nVitamin E: 100 mg (3a700)");
+  assert.equal(colon.status, "found");
+  assert.ok(colon.matchedText.split("\n").includes("Vitamin E: 100 mg (3a700)"));
+  const sameLine = check("Zusatzstoffe: Kupfer als Kupfersulfat (3b405)\n10 mg Vitamin E");
+  assert.equal(sameLine.status, "found");
+  assert.match(sameLine.matchedText, /^Zusatzstoffe: Kupfer als Kupfersulfat \(3b405\)/);
+  const foreignCode = check("Zusatzstoffe:\nFütterungsempfehlung pro Tag: 100 g pro Tier und Tag\nKupfer als Kupfersulfat (3b405)");
+  assert.notEqual(foreignCode.status, "found");
+  assert.doesNotMatch(foreignCode.matchedText ?? "", /^100 g/m);
+  for (const line of ["all-rac-alpha-Tocopherylacetat: 100 mg (3a700)", "β-Apo-8-Carotinsäureethylester: 100 mg (2a160f)"]) {
+    const chemical = check(`Zusatzstoffe:\n${line}`);
+    assert.equal(chemical.status, "found", line);
+    assert.ok(chemical.matchedText.split("\n").includes(line), line);
+  }
+  const section = check("Zusatzstoffe:\nZusammensetzung: Calcium als Calciumcarbonat\n100 g Gerste");
+  assert.notEqual(section.status, "found");
+  const form = check("Zusatzstoffe:\nKupfer in Form von Kupfersulfat: 100 mg (3b405)");
+  assert.equal(form.status, "found");
+  assert.ok(form.matchedText.split("\n").includes("Kupfer in Form von Kupfersulfat: 100 mg (3b405)"));
+  const named = check("Zusatzstoffe:\n10 mg Vitamin E\nKupfer als Kupfersulfat (3b405)");
+  assert.equal(named.status, "found");
+  assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
+});
+
+test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und Kennnummer in der Folgezeile", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\nFütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)\nDieses Ergänzungsfutter darf we- 2.000 mg Beta-Carotin (3a160(a))\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)\nTechnologische Zusatzstoffe (je kg):\n100 mg Betahydroxytoluol (E321)";
+  const result = Labeling.check(label, FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.doesNotMatch(result.matchedText, /Fütterungsempfehlung|Dieses Ergänzungsfutter|minen und/);
+  for (const row of ["90.000 Vitamin D3 (3a671)", "2.000 mg Beta-Carotin (3a160(a))", "(3b502)", "100 mg Betahydroxytoluol (E321)"]) {
+    assert.ok(result.matchedText.split("\n").includes(row), row);
+  }
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];
