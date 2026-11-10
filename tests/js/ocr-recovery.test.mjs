@@ -82,3 +82,17 @@ test("generic loose words and conflicting lot or expiry numbers are never auto-a
   assert.equal(Ocr.recoveredEvidence("MHD 01/2029", text), "");
   assert.equal(Ocr.recoveredEvidence("", "DE Luzerne, Reiskleie, Leinsaat"), "");
 });
+
+
+test("two multilingual side-by-side columns are assigned separate OCR crops", () => {
+  const mixed = "Zusammensetzung: Wiesenheu, Luzerne, Karotte, Bierhefe Composition: alfalfa, carrot\n"
+    + "Analytische Bestandteile: Analytical constituents:\n"
+    + "Rohprotein 9,70 % Crude protein 9.70 %";
+  assert.equal(Ocr.shouldRecoverText(mixed), true);
+  const crops = Ocr.recoveryRegions(1560, 900, mixed);
+  assert.equal(crops.length, 3);
+  assert.ok(crops[0].right < crops[1].right);
+  assert.ok(crops[0].x < crops[1].x);
+  assert.ok(crops[0].right > crops[1].x, "overlap keeps border letters visible");
+  assert.match(Ocr.recoveredEvidence("", "Zusammensetzung: Wiesenheu, Luzerne, Karotte, Bierhefe"), /Zusammensetzung/);
+});
