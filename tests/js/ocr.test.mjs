@@ -1043,6 +1043,8 @@ test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergl
   assert.match(result.note, /bis max\. 8 g\/kg TM/);
   assert.match(result.note, /Keine Bestätigung der Einhaltung und kein Grenzwertvergleich/);
   assert.match(result.note, /Gramm Originalfutter je kg Ration-TM/);
+  assert.match(result.note, /Fall A/);
+  assert.match(result.note, /Fall B\) wird nicht gerechnet/);
   assert.match(result.note, /weitere Zusatzstoffquellen der Ration/);
   assert.match(result.note, /Art\. 8 VO \(EG\) Nr\. 767\/2009/);
   assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);
@@ -1191,6 +1193,34 @@ test("Zusatzstoffe bei Verdünnung: Bereiche und Grenzwert-Zusätze werden nicht
   assert.match(card("Zusatzstoffe (je kg):\n200 mg Zink (3b603)").matchedText, /1,6 mg\/kg TM/);
   assert.match(card("Zusatzstoffe (je kg):\nVitamin B-12 200 mg (3a820)").matchedText, /1,6 mg\/kg TM/);
   assert.match(card("Zusatzstoffe (je kg):\nMangan-(II)-oxid 200 mg (3b502)").matchedText, /1,6 mg\/kg TM/);
+});
+
+test("Zusatzstoffbeitrag eines Ergänzungsfuttermittels: validierte Rechenlogik (Pflichttests)", () => {
+  const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 5e-5, `${actual} ≠ ${expected}`);
+  near(Labeling.additiveContribution(100, 10, 20), 19.5556);
+  near(Labeling.additiveContribution(100, 12, 20), 20);
+  near(Labeling.additiveContribution(100, 20, 20), 22);
+  assert.equal(Labeling.additiveContribution(100, 10, 0), 0);
+  // Abweichende Referenzfeuchte
+  near(Labeling.additiveContribution(100, 12, 20, 0), 100 * 1 / 0.88 * 0.2);
+  // Eingabefehler
+  for (const args of [[100, 100, 20], [100, 120, 20], [-1, 10, 20], [100, -1, 20], [100, 10, -1], [100, 10, 101],
+    [NaN, 10, 20], [100, Infinity, 20], [100, 10, 20, 100], [100, 10, 20, -1], [100, 10, "20"]]) {
+    assert.throws(() => Labeling.additiveContribution(...args), /Invalid calculation parameters/, JSON.stringify(args));
+  }
+});
+
+test("Rechenkarte (Lesart A) stimmt mit der validierten Funktion überein, die Feuchte des Futters kürzt sich heraus", () => {
+  // Lesart A: Verdünnung in Gramm Originalfutter je kg Ration-TM. Der TM-Anteil des Futters an der Ration-TM ist dann
+  // Gramm × (1 − Feuchte); die Funktion liefert für jede Feuchte denselben Wert wie die Karte.
+  const label = "Mineralfutter für Rinder\nZusatzstoffe (je kg):\n7.500 mg Zink (3b603)\nbis max. 8 g/kg TM Aufnahme";
+  const line = Labeling.check(label, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung").matchedText;
+  const at12 = Number(line.match(/= ([\d,]+) mg\/kg bei 12 % Feuchte/)[1].replace(",", "."));
+  assert.equal(at12, 52.8);
+  for (const moisture of [0, 8, 10, 12, 15, 40]) {
+    const rationShare = 8 / 10 * (1 - moisture / 100); // Prozent der Rations-TM
+    assert.ok(Math.abs(Labeling.additiveContribution(7500, moisture, rationShare) - at12) < 1e-9, `Feuchte ${moisture} %`);
+  }
 });
 
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
