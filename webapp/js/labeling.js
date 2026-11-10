@@ -660,7 +660,8 @@ const Labeling = (() => {
   // „in“, „von“, „mit“, „und“ fehlen bewusst: „Kupfer in Form von Kupfersulfat“ ist ein Stoffname.
   const PROSE_WORD = /(?:^|[ \t])(?:pro|der|die|das|dem|den|wegen|darf|dürfen|wird|werden|gegenüber)(?=[ \t:.]|$)/u;
   function proseFragment(prefix) {
-    return /-$/.test(prefix) || PROSE_WORD.test(prefix);
+    // Ein Bindestrich nach einer Ziffer („100-“) gehört zu einem Bereich, nicht zu einem getrennten Wort.
+    return /\p{L}-$/u.test(prefix) || PROSE_WORD.test(prefix);
   }
 
   // `next` ist die Folgezeile: die Kennnummer darf dort stehen.
@@ -695,24 +696,236 @@ const Labeling = (() => {
     return lines.map((line, i) => cleanAdditiveLine(line, lines[i + 1] ?? "")).join("\n");
   }
 
-  // Abschnitte mit Zusatzstoffangaben (je Überschrift ein Block Zeilen). Der Abschnitt endet an der nächsten
-  // Zusatzstoff-Überschrift oder an einer anderen Überschrift (Fütterung, Analytik, Hersteller, …).
-  function additiveSections(rawText) {
-    // Vermischte Tabellenzeilen („Fütterungsempfehlung pro Tag: 90.000 …“) würden den Abschnitt vorzeitig beenden.
-    const text = cleanAdditiveLines(rawText);
-    const sections = [];
+  // Blöcke hinter Zusatzstoff-Überschriften. Der Block endet an der nächsten Zusatzstoff-Überschrift oder an einer
+  // anderen Überschrift (Fütterung, Analytik, Hersteller, …). `accept` entscheidet, ob ein Block Angaben enthält.
+  function additiveSectionBodies(text, accept) {
+    const bodies = [];
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;
       // Folgt die nächste Überschrift unmittelbar („Zusatzstoffe: Ernährungsphysiologische Zusatzstoffe/kg: …“),
       // zählt der Inhalt dahinter zur ersten Überschrift.
       const window = text.slice(start, start + 900);
       const cut = window.split(ADDITIVES_SECTION_END, 1)[0];
-      const section = namedAdditiveAmount(cut) ? cut : window.split(ADDITIVES_END, 1)[0];
-      if (!namedAdditiveAmount(section)) continue;
+      const section = accept(cut) ? cut : window.split(ADDITIVES_END, 1)[0];
+      if (accept(section)) bodies.push({ heading, start, section });
+    }
+    return bodies;
+  }
+
+  // Abschnitte mit Zusatzstoffangaben (je Überschrift ein Block Zeilen).
+  function additiveSections(rawText) {
+    // Vermischte Tabellenzeilen („Fütterungsempfehlung pro Tag: 90.000 …“) würden den Abschnitt vorzeitig beenden.
+    const text = cleanAdditiveLines(rawText);
+    const sections = [];
+    for (const { heading, start, section } of additiveSectionBodies(text, namedAdditiveAmount)) {
       const lines = sectionLines(text, heading.index, start, section);
       if (!sections.includes(lines)) sections.push(lines);
     }
     return sections;
+  }
+
+  // ── Strukturierte Zusatzstoffzeilen ──
+  // Eine gedruckte Zahl: „7.500“ (Tausenderpunkt), „1,2“ (Dezimalkomma), „1000“. „1.5“ ist nicht eindeutig.
+  function parseLabelNumber(raw) {
+    // „0.125“ ist keine Tausendergruppe: mit führender Null ist der Punkt ein Dezimalpunkt oder unklar.
+    if (/^0\./.test(raw)) return null;
+    if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(raw)) return Number(raw.replace(/\./g, "").replace(",", "."));
+    if (/^\d+(?:,\d+)?$/.test(raw)) return Number(raw.replace(",", "."));
+    return null;
+  }
+  const ROW_START_ALL = new RegExp(ROW_START.source, "giu");
+  const QUANTITY_QUALIFIER = /(?:\d[\d.,]*[ \t]*[–—-]|(?<![\p{L}\p{N}])(?:bis|ca|circa|etwa|ungefähr|max|min|mind|mindestens|höchstens|über|unter)\.?|[<>≤≥~])[ \t]*$/iu;
+  // Wissenschaftliche Schreibweise („1 x 10^9 KBE“, auch mit Exponent in Hochzahlen oder ohne Caret): Der Exponent ist
+  // keine Menge. Die Angabe wird als Ganzes gelesen und nicht berechnet.
+  const SCIENTIFIC = /(\d+(?:[.,]\d+)?)[ \t]*[x×*·][ \t]*10(?:[ \t]*\^[ \t]*-?\d+|[ \t]*[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+|[ \t]+-?\d{1,2}(?!\d))[ \t]*(KBE|CFU)?/iu;
+  // Bezug der Mengenangaben laut Überschrift: „je kg“ (kg), ausdrücklich anders („je 100 g“, „pro Tag“) oder nicht gelesen.
+  const BASIS_KG = /(?:je|pro)[ \t]*(?:1[ \t]*)?kg\b|\/[ \t]*kg\b/i;
+  // Auch ein Feuchtebezug („je kg TM“, „je kg bei 12 % Feuchte“) weicht vom unterstellten Bezug (Originalfutter) ab.
+  const BASIS_OTHER = /(?:je|pro)[ \t]*(?!1[ \t]*kg\b)\d+(?:[,.]\d+)?[ \t]*(?:mg|g|kg|t)\b|(?:je|pro)[ \t]*1[ \t]*kg[ \t]*(?:TM|TS|Trockenmasse|Trockensubstanz)\b|(?:je|pro)[ \t]+(?:Tier|Tag|Portion|Dose|Beutel|Packung|Ration|Stück)\b|(?:(?:je|pro)[ \t]*|\/[ \t]*)kg[ \t]*(?:TM|TS|Trockenmasse|Trockensubstanz)\b|\bFeuchte|\bTrockenmasse|\bTM\b/i;
+  const declaredBasis = heading => BASIS_OTHER.test(heading) ? "other" : BASIS_KG.test(heading) ? "kg" : "unknown";
+  const ROW_UNITS = [[/^(?:mg)$/i, "mg"], [/^(?:µg|μg|mcg)$/i, "µg"], [/^g$/i, "g"],
+    [/^(?:[I1l]\.[ \t]?E\.|IE|IU)$/i, "I.E."], [/^KBE$/i, "KBE"], [/^FTU$/i, "FTU"]];
+  const rowUnit = raw => (ROW_UNITS.find(([pattern]) => pattern.test(raw)) ?? [])[1] ?? null;
+  const tidyRowName = part => part.replace(ROW_CODE, "").replace(/(?:^|[ \t])(?:und|sowie)[ \t]*$/i, "")
+    .replace(/^[ \t,;:]+|[ \t,;:]+$/g, "").trim();
+
+  // Jede Angabe mit Menge ergibt eine Zeile; mehrere Angaben in einer Zeile werden einzeln gelesen. Gelesen wird nur
+  // in Zusatzstoffabschnitten, jede Quellposition höchstens einmal (überlappende Überschriften). Name und Kennnummer
+  // stehen vor oder nach der Menge; eine Kennnummer in der Folgezeile zählt nur als reine Fortsetzung („(3b502)“).
+  function parseAdditiveRows(rawText) {
+    const text = cleanAdditiveLines(rawText);
+    const rows = [];
+    const seen = new Set();
+    // Der Bezug einer Zeile kommt von der nächsten Überschrift davor, die einen Bezug nennt. Mehrere Überschriften
+    // gelten nur als Kette, wenn zwischen ihnen keine Mengenzeile steht („Zusatzstoffe je kg:“ gefolgt von
+    // „Ernährungsphysiologische Zusatzstoffe (je 100 g):“: der ausdrückliche Bezug der Untergruppe gilt).
+    const headings = [...text.matchAll(ADDITIVES_HEADING)];
+    const basisAt = position => {
+      let k = headings.reduce((last, h, i) => (h.index < position ? i : last), -1);
+      while (k >= 0) {
+        const basis = declaredBasis(headings[k][0]);
+        if (basis !== "unknown") return basis;
+        const between = k > 0 ? text.slice(headings[k - 1].index + headings[k - 1][0].length, headings[k].index) : null;
+        if (between === null || ROW_START.test(between) || SCIENTIFIC.test(between)) break;
+        k -= 1;
+      }
+      return "unknown";
+    };
+    for (const { start, section } of additiveSectionBodies(text, body => ROW_START.test(body) || SCIENTIFIC.test(body))) {
+      let offset = start;
+      let previous = null;
+      let previousLine = -2;
+      section.split("\n").forEach((line, lineIndex) => {
+        const lineOffset = offset;
+        offset += line.length + 1;
+        // Jede Angabe der Zeile wird einzeln erfasst; eine wissenschaftliche Schreibweise ersetzt die Mengen in ihrem
+        // Bereich (der Exponent ist keine Menge), die übrigen Angaben der Zeile behalten ihre Namen und Kennnummern.
+        const sciGlobal = new RegExp(SCIENTIFIC.source, "giu");
+        const sciTokens = [...line.matchAll(sciGlobal)].map(m => ({ ...m, index: m.index, 0: m[0], kind: "scientific", match: m }));
+        const inScience = index => sciTokens.some(t => index >= t.index && index < t.index + t[0].length);
+        const amountTokens = [...line.matchAll(ROW_START_ALL)].filter(m => !inScience(m.index)).map(m => ({ index: m.index, 0: m[0], kind: "amount", match: m }));
+        const amounts = [...sciTokens, ...amountTokens].sort((x, y) => x.index - y.index);
+        if (!amounts.length) {
+          if (previous && !previous.code && previousLine === lineIndex - 1 && ROW_CODE_ONLY.test(line.trim())) {
+            previous.code = ROW_CODE.exec(line)[1].replace(/\s+/g, "").toLowerCase();
+          }
+          return;
+        }
+        // Name vor der Menge („Vitamin E 50 mg, Vitamin D3 1000 IE (3a671)“): Der Text zwischen zwei Mengen
+        // gehört dann bis zum ersten Komma oder Semikolon zur vorigen Angabe, der Rest zur nächsten.
+        const nameFirst = (() => {
+          const lead = line.slice(0, amounts[0].index).trim();
+          return lead !== "" && !proseFragment(lead.replace(/[ \t:,]+$/, ""));
+        })();
+        let carried = nameFirst ? line.slice(0, amounts[0].index).trim() : "";
+        let tainted = false;
+        amounts.forEach((amount, j) => {
+          const end = amount.index + amount[0].length;
+          let after = line.slice(end, amounts[j + 1]?.index ?? line.length);
+          const named = carried;
+          carried = "";
+          // Eine Zuordnung ist unsicher, wenn zwischen zwei Mengen Namenstext steht, den kein Trennzeichen aufteilt.
+          let unsure = tainted;
+          tainted = false;
+          if (amounts[j + 1]) {
+            // „;“ und ein Komma außerhalb von Dezimalzahlen („1,2“) trennen, mit oder ohne folgendes Leerzeichen.
+            const split = /;[ \t]*|,(?!\d)[ \t]*/.exec(after);
+            if (split) {
+              const tail = after.slice(split.index + split[0].length).trim();
+              const hasName = /\p{L}{3,}/u.test(tail.replace(ROW_CODE, ""));
+              if (nameFirst) {
+                carried = tail;
+                after = after.slice(0, split.index);
+              } else if (hasName) {
+                // Amount-first-Angabe, gefolgt von einem Namen vor der nächsten Menge: gemischte Reihenfolge in einer Zeile.
+                carried = tail;
+                after = after.slice(0, split.index);
+                unsure = true;
+                tainted = true;
+              }
+            } else if (nameFirst && /\p{L}{3,}/u.test(after.replace(ROW_CODE, ""))) {
+              // Der Text gehört vermutlich zum nächsten Namen. Beide Zeilen bleiben sichtbar, werden aber nicht berechnet.
+              carried = after.trim();
+              after = "";
+              unsure = true;
+              tainted = true;
+            }
+          }
+          if (seen.has(lineOffset + amount.index)) return;
+          seen.add(lineOffset + amount.index);
+          // Name vor der Menge: eine Kennnummer beim Namen gehört zu dieser Menge, die danach zur Stoffverbindung.
+          const code = (named ? ROW_CODE.exec(named) : null) ?? ROW_CODE.exec(after);
+          const scientific = amount.kind === "scientific";
+          const printed = scientific ? amount[0].trim() : amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
+          // „7 500 mg“: Leerzeichen als Tausendertrennung. Die Menge ist nicht eindeutig (7 500 oder 500), nicht berechnen.
+          // Nur eine eigenständige Zahl davor zählt („7 500“), nicht die Ziffer eines Namens („Vitamin D3 1000“, „B12 100“).
+          const grouped = !scientific && /^\d{3}(?![\d])/.test(printed) && /(?:^|[ \t(])\d{1,3}[ \t]+$/.test(line.slice(0, amount.index));
+          // Bereich („100–200 mg“) oder Grenzwert-Zusatz („bis“, „max.“, „ca.“, „<“): keine genaue Menge, nicht berechnen.
+          const qualified = !scientific && QUANTITY_QUALIFIER.test(line.slice(0, amount.index));
+          const unitText = scientific ? (amount.match[2] || "") : amount[0].slice(printed.length).trim();
+          const row = {
+            amount: printed, value: scientific || grouped || qualified || unsure ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            ...(scientific ? { scientific: true } : {}),
+            basis: basisAt(lineOffset + amount.index),
+            name: [named, after].map(tidyRowName).filter(Boolean).join(" "),
+            code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
+            line,
+          };
+          if (!row.code && !/\p{L}{3,}/u.test(row.name)) return;
+          rows.push(row);
+          previous = row;
+          previousLine = lineIndex;
+        });
+      });
+    }
+    return rows;
+  }
+
+  // ── Aufgedruckte Verdünnung eines Ergänzungsfutters („bis max. 8 g/kg TM Aufnahme“) ──
+  // Nur mit Bezug auf Trockenmasse; ohne Bezug („max. 8 g/kg“) ist die Basis unklar und es wird nicht gerechnet.
+  const DILUTION = /(?<![\p{L}\p{N}])(?:bis[ \t\n]+(?:zu[ \t\n]+)?max(?:imal|\.)?|max(?:imal|\.)?|höchstens|bis[ \t\n]+zu)[ \t\n]*(\d+(?:[,.]\d+)?)[ \t]*(g|kg)[ \t]*(?:\/|je|pro)[ \t]*kg[ \t]*(?:TM|Trockenmasse|Trockensubstanz|TS)(?![\p{L}\p{N}])/giu;
+
+  function declaredDilution(text) {
+    const found = new Map();
+    const unclear = [];
+    for (const match of text.matchAll(DILUTION)) {
+      // Dieselbe Zahlenregel wie bei den Mengen: „1.000“ ist tausend, „0.008“ und „1.5“ sind nicht eindeutig.
+      const number = parseLabelNumber(match[1]);
+      const evidence = match[0].replace(/\s+/g, " ");
+      if (number === null) { unclear.push(evidence); continue; }
+      const gramsPerKg = match[2].toLowerCase() === "kg" ? number * 1000 : number;
+      if (!(gramsPerKg > 0 && gramsPerKg <= 1000)) continue;
+      if (!found.has(gramsPerKg)) found.set(gramsPerKg, evidence);
+    }
+    if (unclear.length) return { conflict: unclear, reason: "unclear" };
+    if (!found.size) return null;
+    return found.size === 1
+      ? { gramsPerKg: [...found.keys()][0], evidence: [...found.values()][0] }
+      : { conflict: [...found.values()], reason: "conflict" };
+  }
+
+  const DILUTION_BASIS = "Rechenhinweis aus den Etikettangaben";
+  const DM_TO_12_PERCENT = 0.88;
+  const formatCalculated = value => value.toLocaleString("de-DE", { maximumSignificantDigits: 4, useGrouping: false });
+
+  // Rechenwerte der Zusatzstoffe bei aufgedruckter Verdünnung. Es wird nicht gegen Grenzwerte verglichen: Einheit,
+  // Tierart und Bezug der Katalogwerte sind nicht belegt (Entscheidung vom 9. November 2026: unbekannte Messgröße
+  // oder fehlende Bezugsbasis blockiert die Konformitätsbewertung).
+  function additiveDilutionResult(text) {
+    const dilution = declaredDilution(text);
+    if (!dilution) return null;
+    const rows = parseAdditiveRows(text);
+    const coded = rows.filter(row => row.code);
+    if (!coded.length) return null;
+    const rule = { id: "zusatz_verduennung", titleDe: "Zusatzstoffe bei aufgedruckter Verdünnung (Rechenwert)", legalBasis: DILUTION_BASIS, severity: "info" };
+    if (dilution.conflict) {
+      return { rule, status: "notCheckable", matchedText: dilution.conflict.join("\n"), matchedLanguage: null, confidence: 0,
+        note: dilution.reason === "unclear"
+          ? "Die Verdünnungsangabe auf dem Etikett ist nicht eindeutig lesbar (Tausenderpunkt oder Dezimalpunkt?). Es wird nicht gerechnet; bitte am Original prüfen."
+          : "Widersprüchliche Verdünnungsangaben auf dem Etikett. Es wird nicht gerechnet; bitte am Original prüfen." };
+    }
+    const fraction = dilution.gramsPerKg / 1000;
+    const lines = coded.map(row => {
+      const label = `${row.amount}${row.unit && !row.scientific ? ` ${row.unit}` : ""} ${row.name}`.replace(/\s+/g, " ").trim();
+      const tag = `${label} (${row.code})`;
+      if (row.scientific) return `${tag}: wissenschaftliche Schreibweise, nicht berechnet`;
+      if (row.basis !== "kg") {
+        return `${tag}: Bezug der Mengenangabe nicht als „je kg“ gelesen${row.basis === "other" ? " (Überschrift nennt einen anderen Bezug)" : ""}, nicht berechnet`;
+      }
+      if (row.value === null) return `${tag}: Menge nicht eindeutig gelesen, nicht berechnet`;
+      if (!row.unit) return `${tag}: Einheit nicht gelesen, nicht berechnet`;
+      const perDm = row.value * fraction;
+      return `${tag}: ${formatCalculated(perDm)} ${row.unit}/kg TM = ${formatCalculated(perDm * DM_TO_12_PERCENT)} ${row.unit}/kg bei 12 % Feuchte`;
+    });
+    const skipped = rows.length - coded.length;
+    const note = `Rechenwert für den Beitrag dieses Futters, aus den Etikettangaben je kg Futter und der Verdünnung „${dilution.evidence}“ `
+      + "(Menge × Verdünnung; 12 % Feuchte = Trockenmasse × 0,88). Angenommen: Verdünnung in Gramm Originalfutter je kg "
+      + "Ration-TM; die Mengen werden wie gedruckt verwendet, die Feuchte des Futters wird nicht umgerechnet. Keine Bestätigung "
+      + "der Einhaltung und kein Grenzwertvergleich: Einheit, Tierart und Bezug der Katalogwerte sind nicht belegt; "
+      + "Zulassungsbedingungen, weitere Zusatzstoffquellen der Ration und die Konzentrationsgrenze für das Ergänzungsfutter "
+      + "selbst (Art. 8 VO (EG) Nr. 767/2009) sind nicht geprüft. Ausgangswerte und Verdünnung am Original prüfen."
+      + (skipped ? ` ${skipped} Zeile${skipped === 1 ? "" : "n"} ohne lesbare Kennnummer ${skipped === 1 ? "wurde" : "wurden"} nicht berechnet.` : "");
+    return { rule, status: "notCheckable", matchedText: lines.join("\n"), matchedLanguage: null, confidence: 0, note };
   }
 
   function additivesEvidence(rawText) {
@@ -1403,6 +1616,8 @@ const Labeling = (() => {
     const ruleResults = rules.map(rule => checkRule(rule, ocrText, normText, feedType));
     const dietary = ocrText.match(DIET_DECLARATION) !== null;
     if (dietary) ruleResults.push(...dietRuleResults(ocrText));
+    const dilutionResult = additiveDilutionResult(ocrText);
+    if (dilutionResult) ruleResults.push(dilutionResult);
     return { feedType, ruleResults, overallStatus: overallStatus(ruleResults), dietary };
   }
 
@@ -1417,7 +1632,7 @@ const Labeling = (() => {
     needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
     matchDietPurposeAnchor: text => dietPurposeMatch(text, DIET_PURPOSE_ANCHOR),
-    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
+    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH, parseAdditiveRows,
   };
 })();
 

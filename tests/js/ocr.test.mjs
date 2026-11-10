@@ -997,6 +997,217 @@ test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, 
   assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
 });
 
+test("parseAdditiveRows: Name vor oder nach der Menge, Kennnummer davor, nur Zusatzstoffabschnitte", () => {
+  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.unit, r.name, r.code]);
+  assert.deepEqual(rows("Zusatzstoffe:\nVitamin E 50 mg"), [["50", "mg", "Vitamin E", null]]);
+  assert.deepEqual(rows("Zusatzstoffe:\nVitamin E: 100 mg (3a700)"), [["100", "mg", "Vitamin E", "3a700"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n(3a700) Vitamin E 100 mg"), [["100", "mg", "Vitamin E", "3a700"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n10 mg Vitamin E\nFütterungsempfehlung: 100 g pro Tier und Tag"), [["10", "mg", "Vitamin E", null]]);
+  assert.deepEqual(rows("Fütterungsempfehlung: 100 g pro Tier und Tag"), []);
+  assert.deepEqual(rows("Zusatzstoffe:\n7.500 mg Zink als Zinkoxid (3b603)\n1,2 mg Propylgallat (E310)"),
+    [["7.500", "mg", "Zink als Zinkoxid", "3b603"], ["1,2", "mg", "Propylgallat", "e310"]]);
+});
+
+test("parseAdditiveRows: Kennnummer der Folgezeile nur als reine Fortsetzung", () => {
+  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.name, r.code]);
+  assert.deepEqual(rows("Zusatzstoffe:\n10 mg Vitamin E\nKupfer als Kupfersulfat (3b405)"), [["10", "Vitamin E", null]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n2.500 mg Mangan als Mangan-(II)-Oxid\n(3b502)"), [["2.500", "Mangan als Mangan-(II)-Oxid", "3b502"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)"), [["2.500", "Mangan als Mangan-(II)-Oxid", "3b502"]]);
+});
+
+test("parseAdditiveRows: Abschnitt nur aus Zeilen ohne gelesene Einheit, überlappende Überschriften, mehrere Angaben je Zeile", () => {
+  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.unit, r.name, r.code]);
+  assert.deepEqual(rows("Zusatzstoffe:\n90.000 Vitamin D3 (3a671)"), [["90.000", null, "Vitamin D3", "3a671"]]);
+  // Eine gedruckte Angabe ergibt einen Datensatz, auch wenn zwei Überschriften sie erfassen.
+  assert.deepEqual(rows("Zusatzstoffe:\nErnährungsphysiologische Zusatzstoffe:\n10 mg Vitamin E (3a700)"), [["10", "mg", "Vitamin E", "3a700"]]);
+  // Zweimal gedruckt bleibt zweimal.
+  assert.equal(rows("Zusatzstoffe:\n10 mg Vitamin E (3a700)\n10 mg Vitamin E (3a700)").length, 2);
+  assert.deepEqual(rows("Zusatzstoffe: Vitamin E 50 mg, Vitamin D3 1000 IE (3a671)"),
+    [["50", "mg", "Vitamin E", null], ["1000", "I.E.", "Vitamin D3", "3a671"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n50 mg Vitamin E, 1000 IE Vitamin D3 (3a671)"),
+    [["50", "mg", "Vitamin E", null], ["1000", "I.E.", "Vitamin D3", "3a671"]]);
+});
+
+test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergleich", () => {
+  const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\n90.000 Vitamin D3 (3a671)\n7.500 mg Zink als Zinkoxid (3b603)\n1,2 mg Propylgallat (E310)\n1000 mg Kupfer\nDieses Mineralfutter darf nur an Rinder bis max. 8 g/kg TM\nAufnahme gefüttert werden.";
+  const result = Labeling.check(label, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  assert.ok(result);
+  assert.equal(result.status, "notCheckable");
+  assert.equal(result.rule.severity, "info");
+  assert.deepEqual(result.matchedText.split("\n"), [
+    "625.000 I.E. Vitamin A (3a672a): 5000 I.E./kg TM = 4400 I.E./kg bei 12 % Feuchte",
+    "90.000 Vitamin D3 (3a671): Einheit nicht gelesen, nicht berechnet",
+    "7.500 mg Zink als Zinkoxid (3b603): 60 mg/kg TM = 52,8 mg/kg bei 12 % Feuchte",
+    "1,2 mg Propylgallat (e310): 0,0096 mg/kg TM = 0,008448 mg/kg bei 12 % Feuchte",
+  ]);
+  assert.match(result.note, /bis max\. 8 g\/kg TM/);
+  assert.match(result.note, /Keine Bestätigung der Einhaltung und kein Grenzwertvergleich/);
+  assert.match(result.note, /Gramm Originalfutter je kg Ration-TM/);
+  assert.match(result.note, /weitere Zusatzstoffquellen der Ration/);
+  assert.match(result.note, /Art\. 8 VO \(EG\) Nr\. 767\/2009/);
+  assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);
+});
+
+test("Zusatzstoffe bei Verdünnung: Bezug der Untergruppe und Leerzeichen als Tausendertrennung", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  // Ausdrücklicher Bezug der Untergruppe überstimmt die übergeordnete Überschrift.
+  const sub = card("Zusatzstoffe je kg:\nErnährungsphysiologische Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)");
+  assert.match(sub.matchedText, /Überschrift nennt einen anderen Bezug/);
+  assert.doesNotMatch(sub.matchedText, /\/kg TM =/);
+  // Untergruppe ohne eigenen Bezug erbt „je kg“ von der übergeordneten Überschrift.
+  assert.match(card("Zusatzstoffe je kg:\nErnährungsphysiologische Zusatzstoffe\n7.500 mg Zink (3b603)").matchedText, /60 mg\/kg TM/);
+  // Eine Überschrift ohne Bezug nach Mengenzeilen erbt nicht.
+  const later = card("Zusatzstoffe je kg:\n7.500 mg Zink (3b603)\nTechnologische Zusatzstoffe:\n100 mg Betahydroxytoluol (E321)");
+  assert.match(later.matchedText, /^7\.500 mg Zink \(3b603\): 60 mg\/kg TM/m);
+  assert.match(later.matchedText, /^100 mg Betahydroxytoluol \(e321\): Bezug der Mengenangabe nicht als „je kg“ gelesen, nicht berechnet$/m);
+  const grouped = card("Zusatzstoffe (je kg):\n7 500 mg Zink (3b603)");
+  assert.match(grouped.matchedText, /Menge nicht eindeutig gelesen, nicht berechnet/);
+  assert.doesNotMatch(grouped.matchedText, /\/kg TM =/);
+});
+
+test("Zusatzstoffe bei Verdünnung: wissenschaftliche Schreibweise und abweichender Bezug werden nicht berechnet", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const micro = card("Zusatzstoffe (je kg):\n1 x 10^9 KBE Enterococcus faecium (4b1708)");
+  assert.match(micro.matchedText, /^1 x 10\^9 KBE Enterococcus faecium \(4b1708\): wissenschaftliche Schreibweise, nicht berechnet$/);
+  assert.doesNotMatch(micro.matchedText, /0,072|\/kg TM =/);
+  for (const line of ["5 × 10⁹ KBE Bacillus (4b1823i)", "5 x 10 9 KBE Bacillus (4b1823i)"]) {
+    assert.match(card(`Zusatzstoffe (je kg):\n${line}`).matchedText, /wissenschaftliche Schreibweise, nicht berechnet/, line);
+  }
+  const per100 = card("Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)");
+  assert.match(per100.matchedText, /^750 mg Zink \(3b603\): Bezug der Mengenangabe nicht als „je kg“ gelesen \(Überschrift nennt einen anderen Bezug\), nicht berechnet$/);
+  const unknown = card("Zusatzstoffe:\n750 mg Zink (3b603)");
+  assert.match(unknown.matchedText, /Bezug der Mengenangabe nicht als „je kg“ gelesen, nicht berechnet/);
+  assert.doesNotMatch(unknown.matchedText, /überschrift/i);
+  // Mehrere Zusatzstoffüberschriften: Der Bezug gilt je Block.
+  const mixed = card("Zusatzstoffe je kg:\nErnährungsphysiologische Zusatzstoffe\n7.500 mg Zink (3b603)");
+  assert.match(mixed.matchedText, /60 mg\/kg TM/);
+});
+
+test("Zusatzstoffe bei Verdünnung: führende Null mit Punkt und Trockenmasse-Bezug der Überschrift", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const leading = card("Zusatzstoffe (je kg):\n0.125 mg Selen (3b801)");
+  assert.match(leading.matchedText, /Menge nicht eindeutig gelesen, nicht berechnet/);
+  assert.doesNotMatch(leading.matchedText, /\/kg TM =/);
+  // Tausenderpunkt und Dezimalkomma bleiben gültig.
+  assert.match(card("Zusatzstoffe (je kg):\n0,125 mg Selen (3b801)").matchedText, /0,001 mg\/kg TM/);
+  assert.match(card("Zusatzstoffe (je kg):\n1.250 mg Zink (3b603)").matchedText, /10 mg\/kg TM/);
+  for (const heading of ["Zusatzstoffe (je kg TM):", "Zusatzstoffe (je kg Trockenmasse):", "Zusatzstoffe (je kg bei 12 % Feuchte):"]) {
+    // Überschriften mit längerem Zusatz in der Klammer werden gar nicht als Zusatzstoffabschnitt gelesen (keine Karte).
+    const result = card(`${heading}\n750 mg Zink (3b603)`);
+    assert.doesNotMatch(result?.matchedText ?? "", /\/kg TM =/, heading);
+    if (result) assert.match(result.matchedText, /Überschrift nennt einen anderen Bezug/, heading);
+  }
+  assert.match(card("Zusatzstoffe (je kg):\n750 mg Zink (3b603)").matchedText, /6 mg\/kg TM/);
+});
+
+test("Zusatzstoffe bei Verdünnung: Tausenderpunkt in der Verdünnung und wissenschaftliche Angabe neben anderen Angaben", () => {
+  const card = (body, dilution = "bis max. 8 g/kg TM Aufnahme") => Labeling.check(`Mineralfutter für Rinder\n${body}\n${dilution}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const rows = "Zusatzstoffe (je kg):\n750 mg Zink (3b603)";
+  assert.match(card(rows, "bis max. 1.000 g/kg TM").matchedText, /750 mg\/kg TM/);
+  assert.match(card(rows, "bis max. 0,5 kg/kg TM").matchedText, /375 mg\/kg TM/);
+  for (const unclear of ["bis max. 0.008 g/kg TM", "bis max. 1.5 g/kg TM"]) {
+    const result = card(rows, unclear);
+    assert.match(result.note, /nicht eindeutig lesbar/, unclear);
+    assert.doesNotMatch(result.matchedText, /mg\/kg TM =/, unclear);
+  }
+  // Nachbarangaben einer wissenschaftlichen Schreibweise behalten Namen, Kennnummern und Rechnung.
+  const mixed = card("Zusatzstoffe (je kg):\n50 mg Vitamin E (3a700), 1 x 10^9 KBE Enterococcus faecium (4b1708)");
+  assert.deepEqual(mixed.matchedText.split("\n"), [
+    "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+    "1 x 10^9 KBE Enterococcus faecium (4b1708): wissenschaftliche Schreibweise, nicht berechnet",
+  ]);
+  const reversed = card("Zusatzstoffe (je kg):\n1 x 10^9 KBE Enterococcus faecium (4b1708), 50 mg Vitamin E (3a700)");
+  assert.deepEqual(reversed.matchedText.split("\n"), [
+    "1 x 10^9 KBE Enterococcus faecium (4b1708): wissenschaftliche Schreibweise, nicht berechnet",
+    "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+  ]);
+});
+
+test("Zusatzstoffe bei Verdünnung: lange Stoffnamen vor der Menge und Ziffern in Stoffnamen", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const long = card("Zusatzstoffe (je kg):\nKupfer in Form von Kupfersulfat (3b405) 100 mg, Zink (3b603) 750 mg");
+  assert.deepEqual(long.matchedText.split("\n"), [
+    "100 mg Kupfer in Form von Kupfersulfat (3b405): 0,8 mg/kg TM = 0,704 mg/kg bei 12 % Feuchte",
+    "750 mg Zink (3b603): 6 mg/kg TM = 5,28 mg/kg bei 12 % Feuchte",
+  ]);
+  for (const [line, expected] of [["Vitamin D3 1000 IE (3a671)", /1000 I\.E\. Vitamin D3 \(3a671\): 8 I\.E\.\/kg TM/],
+    ["Vitamin B12 100 mg (3a820)", /100 mg Vitamin B12 \(3a820\): 0,8 mg\/kg TM/], ["Vitamin B1 500 mg (3a821)", /500 mg Vitamin B1 \(3a821\): 4 mg\/kg TM/]]) {
+    assert.match(card(`Zusatzstoffe (je kg):\n${line}`).matchedText, expected, line);
+  }
+  // Echte Gruppierung mit Leerzeichen bleibt nicht eindeutig.
+  assert.match(card("Zusatzstoffe (je kg):\n7 500 mg Zink (3b603)").matchedText, /Menge nicht eindeutig gelesen/);
+});
+
+test("Zusatzstoffe bei Verdünnung: Trennzeichen ohne Leerzeichen, Angaben ohne Trennzeichen", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  for (const separator of [";", ",", "; ", ", "]) {
+    const result = card(`Zusatzstoffe (je kg):\nVitamin E (3a700) 50 mg${separator}Zink (3b603) 750 mg`);
+    assert.deepEqual(result.matchedText.split("\n"), [
+      "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+      "750 mg Zink (3b603): 6 mg/kg TM = 5,28 mg/kg bei 12 % Feuchte",
+    ], JSON.stringify(separator));
+  }
+  // Dezimalkomma ist kein Trennzeichen.
+  assert.match(card("Zusatzstoffe (je kg):\nSelen 0,5 mg (3b801)").matchedText, /0,5 mg Selen \(3b801\): 0,004 mg\/kg TM/);
+  // Namenstext zwischen zwei Mengen ohne Trennzeichen: Zuordnung unsicher, nicht berechnen.
+  const unsure = card("Zusatzstoffe (je kg):\nVitamin E (3a700) 50 mg Zink (3b603) 750 mg");
+  assert.doesNotMatch(unsure.matchedText, /mg\/kg TM =/);
+  assert.equal(unsure.matchedText.split("\n").length, 2);
+  assert.ok(unsure.matchedText.split("\n").every(line => /Menge nicht eindeutig gelesen/.test(line)));
+  assert.match(unsure.matchedText, /\(3a700\)/);
+});
+
+test("Zusatzstoffe bei Verdünnung: gemischte Reihenfolge in einer Zeile und ausdrücklicher Bezug je 1 kg", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const mixed = card("Zusatzstoffe (je kg):\n50 mg Vitamin E (3a700), Zink (3b603) 750 mg");
+  assert.doesNotMatch(mixed.matchedText, /mg\/kg TM =/);
+  const lines = mixed.matchedText.split("\n");
+  assert.equal(lines.length, 2);
+  assert.ok(lines.every(line => /Menge nicht eindeutig gelesen/.test(line)));
+  assert.match(mixed.matchedText, /\(3a700\)/);
+  assert.match(mixed.matchedText, /\(3b603\)/);
+  // Einheitliche Amount-first-Liste und Verbindungsangaben am Zeilenende bleiben berechenbar.
+  const uniform = card("Zusatzstoffe (je kg):\n50 mg Vitamin E (3a700), 750 mg Zink (3b603)");
+  assert.deepEqual(uniform.matchedText.split("\n"), [
+    "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+    "750 mg Zink (3b603): 6 mg/kg TM = 5,28 mg/kg bei 12 % Feuchte",
+  ]);
+  assert.match(card("Zusatzstoffe (je kg):\n1000 mg Kupfer als Kupfer-(II)-sulfat, Pentahydrat (3b405)").matchedText, /8 mg\/kg TM/);
+  for (const heading of ["Zusatzstoffe (je 1 kg):", "Zusatzstoffe (pro 1 kg):", "Zusatzstoffe (je 1kg):"]) {
+    assert.match(card(`${heading}\n750 mg Zink (3b603)`).matchedText, /6 mg\/kg TM/, heading);
+  }
+  assert.match(card("Zusatzstoffe (je 1 kg TM):\n750 mg Zink (3b603)").matchedText, /Überschrift nennt einen anderen Bezug|nicht berechnet/);
+  assert.match(card("Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)").matchedText, /Überschrift nennt einen anderen Bezug/);
+});
+
+test("Zusatzstoffe bei Verdünnung: Bereiche und Grenzwert-Zusätze werden nicht berechnet", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  for (const quantity of ["100–200 mg", "100-200 mg", "100 – 200 mg", "100—200 mg", "bis 200 mg", "max. 200 mg", "mind. 200 mg", "ca. 200 mg", "< 200 mg", "≤ 200 mg", "~200 mg", "höchstens 200 mg"]) {
+    const result = card(`Zusatzstoffe (je kg):\n${quantity} Zink (3b603)`);
+    assert.match(result.matchedText, /Menge nicht eindeutig gelesen, nicht berechnet/, quantity);
+    assert.doesNotMatch(result.matchedText, /\/kg TM =/, quantity);
+  }
+  // Gewöhnliche Mengen und Namen mit Bindestrich bleiben berechenbar.
+  assert.match(card("Zusatzstoffe (je kg):\n200 mg Zink (3b603)").matchedText, /1,6 mg\/kg TM/);
+  assert.match(card("Zusatzstoffe (je kg):\nVitamin B-12 200 mg (3a820)").matchedText, /1,6 mg\/kg TM/);
+  assert.match(card("Zusatzstoffe (je kg):\nMangan-(II)-oxid 200 mg (3b502)").matchedText, /1,6 mg\/kg TM/);
+});
+
+test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
+  const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  assert.equal(card("Dieses Futter darf bis max. 8 g/kg gefüttert werden."), undefined);
+  assert.equal(card("Keine Verdünnung angegeben."), undefined);
+  assert.equal(Labeling.check("Mineralfutter für Rinder\nZusatzstoffe:\n10 mg Vitamin E\nbis max. 8 g/kg TM Aufnahme", FEED_TYPES[2], [])
+    .ruleResults.find(r => r.rule.id === "zusatz_verduennung"), undefined);
+  const conflict = card("Rinder bis max. 8 g/kg TM Aufnahme. Pferde bis max. 5 g/kg TM Aufnahme.");
+  assert.equal(conflict.status, "notCheckable");
+  assert.match(conflict.note, /Widersprüchliche Verdünnungsangaben/);
+  assert.doesNotMatch(conflict.matchedText, /mg\/kg TM =/);
+  // Gleiche Angabe zweimal ist kein Widerspruch; kg und g werden umgerechnet.
+  assert.match(card("bis max. 8 g/kg TM. Rinder bis max. 0,008 kg/kg TM.").matchedText, /60 mg\/kg TM/);
+});
+
 test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und Kennnummer in der Folgezeile", () => {
   const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\nFütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)\nDieses Ergänzungsfutter darf we- 2.000 mg Beta-Carotin (3a160(a))\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)\nTechnologische Zusatzstoffe (je kg):\n100 mg Betahydroxytoluol (E321)";
