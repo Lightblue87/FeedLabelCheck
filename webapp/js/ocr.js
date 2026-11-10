@@ -237,7 +237,9 @@ const Ocr = (() => {
     if (!knownAdditiveCodes) return text;
     return text.replace(/\(([1-4])([0-9])(\d{2,3}[a-z]{0,3})\)/gi, (whole, group, second, rest) => {
       if (knownAdditiveCodes.has(`${group}${second}${rest}`.toLowerCase())) return whole;
-      const hits = "abcdefg".split("").filter(letter => knownAdditiveCodes.has(`${group}${letter}${rest}`.toLowerCase()));
+      // Kandidaten aus der gesamten Liste: gleiche Gruppenziffer und gleicher Rest, beliebiger Buchstabe.
+      const wanted = new RegExp(`^${group}([a-z])${rest.toLowerCase()}$`);
+      const hits = [...knownAdditiveCodes].map(code => wanted.exec(code)).filter(Boolean).map(match => match[1]);
       return hits.length === 1 ? `(${group}${hits[0]}${rest})` : whole;
     });
   }

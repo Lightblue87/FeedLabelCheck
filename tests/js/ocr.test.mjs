@@ -926,6 +926,17 @@ test("Vermischte Spalten: Feuchte-Zeile, längere Analytikspalte und unbekannte 
   assert.equal(unknown.status, "probablyFound");
 });
 
+test("cleanText: Kennnummer mit Kandidaten außerhalb von a–g bleibt bei Mehrdeutigkeit unverändert", () => {
+  Ocr.setAdditiveCodes(["1a001", "1j001", "3b405"]);
+  try {
+    assert.match(Ocr.cleanText("Stoff (10001)"), /\(10001\)/);
+    Ocr.setAdditiveCodes(["1j001"]);
+    assert.match(Ocr.cleanText("Stoff (10001)"), /\(1j001\)/);
+  } finally {
+    Ocr.setAdditiveCodes([]);
+  }
+});
+
 test("cleanText: Kennnummern werden gegen die bekannte Liste geprüft, nur eindeutige Korrekturen", () => {
   Ocr.setAdditiveCodes(["3b502", "3a502", "3b405", "3a671"]);
   try {
@@ -959,6 +970,8 @@ test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, 
     assert.equal(chemical.status, "found", line);
     assert.ok(chemical.matchedText.split("\n").includes(line), line);
   }
+  const section = check("Zusatzstoffe:\nZusammensetzung: Calcium als Calciumcarbonat\n100 g Gerste");
+  assert.notEqual(section.status, "found");
   const form = check("Zusatzstoffe:\nKupfer in Form von Kupfersulfat: 100 mg (3b405)");
   assert.equal(form.status, "found");
   assert.ok(form.matchedText.split("\n").includes("Kupfer in Form von Kupfersulfat: 100 mg (3b405)"));

@@ -664,7 +664,12 @@ const Labeling = (() => {
         ? line.slice(start.index) : line;
     }
     const compound = /(?:^|[.:][ \t]+)(\p{Lu}\p{L}+[ \t]+als[ \t]+\p{Lu}.*)$/u.exec(line);
-    if (compound && compound.index > 0 && !ROW_HEADING_WORDS.test(line.slice(0, compound.index))) return compound[1];
+    // Der Vorlauf muss erkennbar Fließtext sein („nahme gefüttert werden.“); eine Abschnittsüberschrift
+    // („Zusammensetzung:“) bleibt stehen.
+    if (compound && compound.index > 0) {
+      const lead = line.slice(0, compound.index).trim();
+      if (proseFragment(lead.replace(/[ \t:.,]+$/, "")) && !ROW_HEADING_WORDS.test(lead)) return compound[1];
+    }
     // Nur die Kennnummer gehört zur Tabelle: „minen und Spurenelementen an (3b502)“. Der Vorlauf ist Fließtext einer
     // Nachbarspalte, wenn er klein beginnt (Wortfragment oder Satzmitte); ein Stoffname beginnt groß.
     const tail = new RegExp(String.raw`^(\p{Ll}[^\d()]*\p{L})[ \t]+(${ROW_CODE.source})$`, "u").exec(line);
