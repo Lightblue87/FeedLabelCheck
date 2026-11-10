@@ -115,27 +115,63 @@
     }
   }
 
+  // Fachdaten: Prüfung beim Start und bei Rückkehr in die App (nach Drosselung). Ein Wechsel erhält die Eingaben.
+  const DATA_CHECK_GAP_MS = 30 * 60 * 1000;
+  let lastDataCheck = null;
+  let dataChecking = false;
+
+  /** Befüllt die datengetriebenen Eingabefelder neu und behält die gewählten Werte, soweit es sie weiter gibt. */
+  function keepSelections(fn) {
+    const ids = ["#s-category", "#s-species", "#s-age", "#s-unit", "#l-feedtype"];
+    const saved = Object.fromEntries(ids.map(id => [id, $(id)?.value]));
+    fn();
+    const restore = id => {
+      const el = $(id);
+      if (el && saved[id] != null && [...el.options].some(o => o.value === saved[id])) el.value = saved[id];
+    };
+    restore("#s-category");
+    refreshSpeciesForCategory();
+    for (const id of ids.slice(1)) restore(id);
+    updateContextSummary();
+  }
+
   async function backgroundUpdate() {
+    if (dataChecking) return;
+    dataChecking = true;
+    lastDataCheck = Date.now();
     try {
       const res = await DataUpdate.checkForUpdates(dataState.hashes);
+      dataState.checkedAt = Date.now();
+      dataState.published = res.generatedAt || dataState.published || null;
       if (res.updated.length) {
         const fresh = await DataUpdate.loadLocal();
         await applyBuffers(fresh.buffers);
         dataState = {
-          source: fresh.source, lastUpdate: fresh.lastUpdate, hashes: fresh.hashes,
-          updateNote: `Daten aktualisiert (Stand: ${formatDate(res.generatedAt) || "unbekannt"}).`,
+          ...dataState, source: fresh.source, lastUpdate: fresh.lastUpdate, hashes: fresh.hashes,
+          updateNote: `Neuer Stand übernommen (veröffentlicht: ${formatDate(res.generatedAt) || "unbekannt"}). Bereits angezeigte Ergebnisse stammen noch vom vorherigen Stand und sind erneut zu prüfen.`,
         };
-        populateSingleInputs();
-        toast(dataState.updateNote, "ok", true);
+        keepSelections(populateSingleInputs);
+        toast("Daten aktualisiert. Angezeigte Ergebnisse bitte erneut prüfen.", "ok", true);
       } else {
-        dataState.updateNote = "Daten sind auf dem aktuellen Stand.";
+        dataState.updateNote = "Mit dem veröffentlichten Stand verglichen: keine neueren Inhalte.";
       }
     } catch (e) {
-      // Offline oder Manifest nicht erreichbar → lokaler Stand bleibt aktiv.
-      dataState.updateNote = "Update-Prüfung nicht möglich (offline?) – lokaler Stand wird verwendet.";
+      // Offline oder Manifest nicht erreichbar → der letzte gültige Stand bleibt aktiv.
+      dataState.checkedAt = Date.now();
+      dataState.updateNote = "Abruf fehlgeschlagen (offline?) – der letzte gültige Stand bleibt aktiv.";
+    } finally {
+      dataChecking = false;
     }
     renderStatus();
   }
+
+  // Rückkehr in die App: iOS-PWAs starten selten neu, ein Start-Check allein reicht nicht.
+  function recheckDataOnReturn() {
+    if (document.visibilityState !== "visible" || !dataState) return;
+    if (PwaUpdate.dueForCheck(Date.now(), lastDataCheck, DATA_CHECK_GAP_MS)) backgroundUpdate();
+  }
+  document.addEventListener("visibilitychange", recheckDataOnReturn);
+  window.addEventListener("online", recheckDataOnReturn);
 
   function formatDate(iso) {
     if (!iso) return null;
@@ -1334,6 +1370,25 @@
   }
 
   // ── Datenstatus ───────────────────────────────────────────────
+  function formatTime(ms) {
+    return new Date(ms).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  const APP_UPDATE_TEXT = {
+    current: "Die App ist auf dem aktuellen Stand.",
+    updating: "Eine neue Version wird geladen. Die App lädt danach neu.",
+    available: "Eine neue Version ist veröffentlicht, wurde aber noch nicht übernommen. „App-Dateien neu laden“ aktualisiert sofort.",
+    offline: "Prüfung nicht möglich (offline?). Der laufende Stand bleibt aktiv.",
+    unknown: "Der veröffentlichte Stand ist nicht ermittelbar (lokale Entwicklung oder noch keine Prüfung).",
+  };
+
+  function appUpdateHtml() {
+    const info = PwaUpdate.info();
+    return `<p>Stand: <code>${escapeHtml(info.running || "unbekannt")}</code></p>
+      ${info.remote ? `<p>Veröffentlicht: <code>${escapeHtml(info.remote)}</code></p>` : ""}
+      <p>${info.checkedAt ? `Zuletzt geprüft: ${escapeHtml(formatTime(info.checkedAt))}. ` : ""}${escapeHtml(APP_UPDATE_TEXT[info.result] || APP_UPDATE_TEXT.unknown)}</p>`;
+  }
+
   function renderStatus() {
     $("#st-info").innerHTML = `
       <div class="card">
@@ -1353,15 +1408,49 @@
         <p class="meta">Rechtsgrundlage: ${escapeHtml(dbInfo.regulation)} (Stand ${escapeHtml(dbInfo.versionDate)})</p>
       </div>
       <div class="card">
-        <h3>Automatische Updates</h3>
+        <h3>Fachdaten-Updates</h3>
         <p>Datenquelle: ${escapeHtml(dataState.source)}</p>
-        ${dataState.lastUpdate ? `<p>Letztes Update: ${escapeHtml(formatDate(dataState.lastUpdate))}</p>` : ""}
-        ${dataState.updateNote ? `<p>${escapeHtml(dataState.updateNote)}</p>` : "<p>Update-Prüfung läuft …</p>"}
-        <p class="meta">Beim Start wird das Manifest aus dem FeedLabelCheck-Data-Repo geprüft;
-          geänderte Dateien werden per SHA256 verifiziert und lokal (IndexedDB) gespeichert.
-          Ohne Internet läuft die App mit dem letzten Stand weiter.</p>
+        ${dataState.published ? `<p>Veröffentlichter Stand: ${escapeHtml(formatDate(dataState.published))}</p>` : ""}
+        ${dataState.lastUpdate ? `<p>Zuletzt übernommen: ${escapeHtml(formatDate(dataState.lastUpdate))}</p>` : ""}
+        <p>${dataState.checkedAt ? `Zuletzt geprüft: ${escapeHtml(formatTime(dataState.checkedAt))}. ` : ""}${escapeHtml(dataState.updateNote || "Update-Prüfung läuft …")}</p>
+        <p class="meta">Das Manifest aus dem FeedLabelCheck-Data-Repo wird beim Start und bei Rückkehr in die App geprüft
+          (höchstens alle 30 Minuten). Geänderte Dateien werden per SHA256 verifiziert und lokal (IndexedDB) gespeichert.
+          Ohne Internet läuft die App mit dem letzten gültigen Stand weiter.</p>
+      </div>
+      <div class="card">
+        <h3>App-Version</h3>
+        ${appUpdateHtml()}
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button id="st-check-updates" type="button" class="btn">Jetzt nach Updates suchen</button>
+          <button id="st-reset-app" type="button" class="btn">App-Dateien neu laden</button>
+        </div>
+        <p class="meta">„App-Dateien neu laden“ entfernt nur die zwischengespeicherten App-Dateien und lädt neu.
+          Fachdaten, Prüfverlauf und Fotos bleiben erhalten.</p>
       </div>`;
   }
+
+  // Schaltflächen im Tab „Daten“ (Delegation: renderStatus baut den Inhalt neu auf).
+  $("#st-info").addEventListener("click", async event => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    if (button.id === "st-check-updates") {
+      button.disabled = true;
+      await Promise.all([PwaUpdate.check("manuell", { force: true }), backgroundUpdate()]);
+      renderStatus();
+    } else if (button.id === "st-reset-app") {
+      button.disabled = true;
+      PwaUpdate.reset();
+    }
+  });
+
+  let announcedAppUpdate = false;
+  PwaUpdate.onChange(info => {
+    if (info.result === "available" && !announcedAppUpdate) {
+      announcedAppUpdate = true;
+      toast("Neue App-Version verfügbar. Unter „Daten“ mit „App-Dateien neu laden“ aktualisieren.", "info");
+    }
+    if (additives.length) renderStatus();
+  });
 
   init();
 })();

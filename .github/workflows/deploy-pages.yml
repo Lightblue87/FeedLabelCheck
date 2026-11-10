@@ -30,6 +30,16 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # Jede Auslieferung bekommt eine eigene Build-ID: sw.js ändert sich dadurch bei jedem Deployment, und die
+      # Seite vergleicht den laufenden Stand mit version.json. Schlägt das Ersetzen fehl, bricht der Job ab.
+      - name: Stamp build id
+        run: |
+          BUILD="${GITHUB_SHA::12}"
+          sed -i "s/^const BUILD_ID = \"dev\";/const BUILD_ID = \"${BUILD}\";/" webapp/sw.js
+          grep -q "^const BUILD_ID = \"${BUILD}\";" webapp/sw.js
+          printf '{"build":"%s","time":"%s"}\n' "${BUILD}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > webapp/version.json
+          cat webapp/version.json
+
       - name: Upload PWA artifact
         uses: actions/upload-pages-artifact@v3
         with:
