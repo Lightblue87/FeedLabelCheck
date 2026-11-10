@@ -1148,8 +1148,8 @@
             if (extra) {
               text += "\n\n" + extra;
               warnings.push("Kleine Schrift nachgelesen: übernommene Angaben am Originalfoto bestätigen");
-              // Weiter nur, wenn die Fütterungstabelle noch fehlt (eigener Ausschnitt, höchstens drei Läufe insgesamt).
-              if (!Ocr.needsFeedingRecovery(text)) break;
+              // Weiter, solange Fütterungstabelle, Zutaten oder Analyse noch offen sind (höchstens drei Läufe insgesamt).
+              if (!Ocr.recoveryPending(text)) break;
             }
           }
         } catch (e) {

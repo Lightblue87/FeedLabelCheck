@@ -199,3 +199,26 @@ test("Mengen am Zeilenende erhalten das deutsche Teilwort der Einheit, einsprach
   assert.equal(Ocr.germanView("Tag / Nacht 0,5 kg/Tag"), "Tag / Nacht 0,5 kg/Tag");
   assert.equal(Ocr.germanView("Futtermenge 0,5 kg/dag/Tag/day"), "Futtermenge 0,5 kg/dag/Tag/day");
 });
+
+test("Fütterungstabelle: eine vollständig gelesene Tabelle repariert eine unvollständige im Haupttext", () => {
+  const heading = "FEEDING ADVICE PAVO WeightLift";
+  const partial = [heading, "Körpergewicht 300 kg 600 kg", "Mageres Pferd 0,5 kg/Tag 1,0 kg/Tag"].join("\n");
+  assert.equal(Ocr.needsFeedingRecovery(partial), true);
+  const extra = Ocr.recoveredEvidence(partial, feedingCrop);
+  assert.match(extra, /Untergewicht 0,75 kg\/Tag 1,5 kg\/Tag/);
+  assert.match(extra, /Starkes Untergewicht 1,2 kg\/Tag 2,4 kg\/Tag$/);
+  // Danach ist nichts Neues mehr zu übernehmen.
+  assert.equal(Ocr.recoveredEvidence(partial + "\n\n" + extra, feedingCrop), "");
+});
+
+test("Nach der Fütterungstabelle bleibt die Nachlese offen, solange Zutaten oder Analyse fehlen", () => {
+  const withTable = feedingBroken + "\n\n" + Ocr.recoveredEvidence(feedingBroken, feedingCrop);
+  assert.equal(Ocr.needsFeedingRecovery(withTable), false);
+  // Zutaten und Analyse sind noch zerlesen: die Schleife in app.js darf nicht abbrechen.
+  assert.equal(Ocr.recoveryPending(withTable + "\nAnalytische Bestandteile:\n???"), true);
+  assert.equal(Ocr.recoveryPending(withTable), true, "Zutaten fehlen noch");
+  // Alles gelesen: fertig.
+  const complete = withTable + "\nKomposition: Luzerne, Reiskleie, Leinsaat, Bierhefe\n"
+    + "Analytische Bestandteile:\nRohprotein 16,5 %\nRohfaser 21,6 %";
+  assert.equal(Ocr.recoveryPending(complete), false);
+});

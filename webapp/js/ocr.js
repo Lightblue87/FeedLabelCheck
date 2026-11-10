@@ -300,6 +300,21 @@ const Ocr = (() => {
     return feedingRows(germanView(text)).length < 3;
   }
 
+  const COMPOSITION_READ = /(?:^|\n)\s*DE\s+[^\n]*,[^\n]*,\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]*,[^\n]*,\s*\p{L}/imu;
+  const ANALYSIS_HEADING = /(?:Analytische\s+Bestandteile|Analytical\s+constituents|Constituintes\s+analiticos|Analytick[eé]\s+slo[zž]ky)/iu;
+
+  // Analyse: Überschrift erkennbar, aber weniger als zwei Wertzeilen gelesen.
+  function needsAnalysisRecovery(text) {
+    if (!ANALYSIS_HEADING.test(text)) return false;
+    const lines = String(text).split(/\r?\n/).map(l => l.trim());
+    return lines.filter(l => GERMAN_ANALYSIS_LINE.test(l) || CZECH_ANALYSIS_LINE.test(l)).length < 2;
+  }
+
+  // Nach einer Nachlese: Ist noch etwas offen, das ein weiterer Ausschnitt lesen könnte (Fütterungstabelle, Zutaten, Analyse)?
+  function recoveryPending(text) {
+    return needsFeedingRecovery(text) || !COMPOSITION_READ.test(text) || needsAnalysisRecovery(text);
+  }
+
   function shouldRecoverText(text) {
     if (needsFeedingRecovery(text)) return true;
     if (hasMixedLanguageColumns(text)) return true;
@@ -400,8 +415,10 @@ const Ocr = (() => {
     }
     // Fütterungstabelle: Überschrift (im Ausschnitt oder im Haupttext) und mindestens drei deutsche Zeilen.
     const german = germanView(candidate);
-    const rows = feedingRows(german).filter(row => novel(row));
-    if (rows.length >= 3) {
+    // Vollständigkeit an allen gelesenen Zeilen messen; bekannte Zeilen bleiben im Block, damit die Tabelle
+    // zusammenhängend steht. Neu muss mindestens eine Zeile sein.
+    const rows = feedingRows(german);
+    if (rows.length >= 3 && rows.some(row => novel(row))) {
       const feedingHeading = lines.find(l => FEEDING_HEADING.test(l))
         || String(primary || "").split(/\r?\n/).map(l => l.trim()).find(l => FEEDING_HEADING.test(l));
       if (feedingHeading) out.push(feedingHeading, ...rows);
@@ -490,7 +507,7 @@ const Ocr = (() => {
     return out.join("\n");
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, germanView, recoveryRegions, recoveredEvidence };
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
