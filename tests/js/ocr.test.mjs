@@ -911,6 +911,9 @@ test("Vermischte Spalten: Trennstriche der Zutatenliste werden zusammengeführt"
     "Weizengrießkleie, Natriumchlorid, Magnesiumoxid,", "Bierhefe, Rübenmelasse, Calciumcarbonat,",
     "Monocalciumphosphat, Pflanzenöl", "aus Raps, raffiniert",
   ]);
+  // Ergänzungsstrich vor einem Bindewort bleibt stehen.
+  const suspension = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizen- 4% Phosphor\nund Gerstenkleie, 10% Calcium\nNatriumchlorid 4% Natrium\nErnährungsphysiologische Zusatzstoffe (je kg):\n10.000 mg Zink (3b603)", FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.deepEqual(suspension.matchedText.split("\n").slice(1), ["Weizen-", "und Gerstenkleie,", "Natriumchlorid"]);
   // Bindestrich ohne Kleinbuchstaben dahinter (zusammengesetztes Wort, Eigenname) bleibt stehen.
   const kept = Labeling.check(label.replace("umoxid, Bierhefe", "Umoxid, Bierhefe"), FEED_TYPES[2], [rule]).ruleResults[0];
   assert.match(kept.matchedText, /Magnesi-\nUmoxid/);

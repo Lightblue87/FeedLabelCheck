@@ -554,7 +554,8 @@ const Labeling = (() => {
   function joinHyphenation(items) {
     const lines = [...items];
     for (let i = 0; i < lines.length - 1; i += 1) {
-      const next = /^(\p{Ll}\p{L}*[,;.]?)(?:[ \t]+(.*))?$/u.exec(lines[i + 1]);
+      // Bindewörter („Weizen- und Gerstenkleie“) sind kein Wortrest: der Strich ist ein Ergänzungsstrich.
+      const next = /^(?!(?:und|oder|bzw|sowie|u)(?![\p{L}\p{N}]))(\p{Ll}\p{L}*[,;.]?)(?:[ \t]+(.*))?$/u.exec(lines[i + 1]);
       if (!/\p{L}-$/u.test(lines[i]) || !next) continue;
       lines[i] = lines[i].slice(0, -1) + next[1];
       if (next[2]) lines[i + 1] = next[2]; else lines.splice(i + 1, 1);
