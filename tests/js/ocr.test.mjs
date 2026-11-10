@@ -1138,6 +1138,25 @@ test("Zusatzstoffe bei Verdünnung: lange Stoffnamen vor der Menge und Ziffern i
   assert.match(card("Zusatzstoffe (je kg):\n7 500 mg Zink (3b603)").matchedText, /Menge nicht eindeutig gelesen/);
 });
 
+test("Zusatzstoffe bei Verdünnung: Trennzeichen ohne Leerzeichen, Angaben ohne Trennzeichen", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  for (const separator of [";", ",", "; ", ", "]) {
+    const result = card(`Zusatzstoffe (je kg):\nVitamin E (3a700) 50 mg${separator}Zink (3b603) 750 mg`);
+    assert.deepEqual(result.matchedText.split("\n"), [
+      "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+      "750 mg Zink (3b603): 6 mg/kg TM = 5,28 mg/kg bei 12 % Feuchte",
+    ], JSON.stringify(separator));
+  }
+  // Dezimalkomma ist kein Trennzeichen.
+  assert.match(card("Zusatzstoffe (je kg):\nSelen 0,5 mg (3b801)").matchedText, /0,5 mg Selen \(3b801\): 0,004 mg\/kg TM/);
+  // Namenstext zwischen zwei Mengen ohne Trennzeichen: Zuordnung unsicher, nicht berechnen.
+  const unsure = card("Zusatzstoffe (je kg):\nVitamin E (3a700) 50 mg Zink (3b603) 750 mg");
+  assert.doesNotMatch(unsure.matchedText, /mg\/kg TM =/);
+  assert.equal(unsure.matchedText.split("\n").length, 2);
+  assert.ok(unsure.matchedText.split("\n").every(line => /Menge nicht eindeutig gelesen/.test(line)));
+  assert.match(unsure.matchedText, /\(3a700\)/);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");

@@ -796,18 +796,33 @@ const Labeling = (() => {
           return lead !== "" && !proseFragment(lead.replace(/[ \t:,]+$/, ""));
         })();
         let carried = nameFirst ? line.slice(0, amounts[0].index).trim() : "";
+        let tainted = false;
         amounts.forEach((amount, j) => {
           const end = amount.index + amount[0].length;
           let after = line.slice(end, amounts[j + 1]?.index ?? line.length);
           const named = carried;
           carried = "";
+          // Eine Zuordnung ist unsicher, wenn zwischen zwei Mengen Namenstext steht, den kein Trennzeichen aufteilt.
+          let unsure = tainted;
+          tainted = false;
           if (nameFirst && amounts[j + 1]) {
-            const split = /[,;][ \t]+/.exec(after);
-            if (split) { carried = after.slice(split.index + split[0].length).trim(); after = after.slice(0, split.index); }
+            // „;“ und ein Komma außerhalb von Dezimalzahlen („1,2“) trennen, mit oder ohne folgendes Leerzeichen.
+            const split = /;[ \t]*|,(?!\d)[ \t]*/.exec(after);
+            if (split) {
+              carried = after.slice(split.index + split[0].length).trim();
+              after = after.slice(0, split.index);
+            } else if (/\p{L}{3,}/u.test(after.replace(ROW_CODE, ""))) {
+              // Der Text gehört vermutlich zum nächsten Namen. Beide Zeilen bleiben sichtbar, werden aber nicht berechnet.
+              carried = after.trim();
+              after = "";
+              unsure = true;
+              tainted = true;
+            }
           }
           if (seen.has(lineOffset + amount.index)) return;
           seen.add(lineOffset + amount.index);
-          const code = ROW_CODE.exec(after) ?? (named ? ROW_CODE.exec(named) : null);
+          // Name vor der Menge: eine Kennnummer beim Namen gehört zu dieser Menge, die danach zur Stoffverbindung.
+          const code = (named ? ROW_CODE.exec(named) : null) ?? ROW_CODE.exec(after);
           const scientific = amount.kind === "scientific";
           const printed = scientific ? amount[0].trim() : amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
           // „7 500 mg“: Leerzeichen als Tausendertrennung. Die Menge ist nicht eindeutig (7 500 oder 500), nicht berechnen.
@@ -815,7 +830,7 @@ const Labeling = (() => {
           const grouped = !scientific && /^\d{3}(?![\d])/.test(printed) && /(?:^|[ \t(])\d{1,3}[ \t]+$/.test(line.slice(0, amount.index));
           const unitText = scientific ? (amount.match[2] || "") : amount[0].slice(printed.length).trim();
           const row = {
-            amount: printed, value: scientific || grouped ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            amount: printed, value: scientific || grouped || unsure ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
             ...(scientific ? { scientific: true } : {}),
             basis: basisAt(lineOffset + amount.index),
             name: [named, after].map(tidyRowName).filter(Boolean).join(" "),
