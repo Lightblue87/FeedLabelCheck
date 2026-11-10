@@ -322,6 +322,9 @@ const Ocr = (() => {
 
   const CZECH_ANALYSIS_LINE = /^(?:Hrub[yýáée]\s+(?:protein|tuk|vl[aá]knina|popel)|(?:Cukr|[ŠS]krob|V[aá]pn[ií]k|Fosfor|Sod[ií]k|Drasl[ií]k|Hor[cč][ií]k))\s+[\d.,]+\s*%/iu;
   const GERMAN_ANALYSIS_LINE = /^(?:Rohprotein|Rohfett|Rohfaser|Rohasche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Zucker|Stärke)\s+[\d.,]+\s*%/iu;
+  // Zeilen, die die Bezugsbasis der Analysewerte nennen (Trockenmasse, „bezogen auf …“). Sie ändern die Bedeutung der Werte
+  // und werden deshalb mit ihnen übernommen; ohne sie würden die Werte fälschlich als Originalsubstanz gerechnet.
+  const ANALYSIS_BASIS_LINE = /\b(?:Trockenmasse|Trockensubstanz|dry\s+matter|bezogen\s+auf|normiert\s+auf|based\s+on|Basis\s*:)|(?:%|\b(?:mg|g)\s*\/\s*kg)\s+(?:TS|TM|DM)\b/iu;
   const GERMAN_INGREDIENT_LINE = /^DE\s+(\p{L}[^\n]{20,240})$/iu;
   const COMPOSITION_HEAD = /^(?:Samenstelling|Komposition|Composition|Zusammensetzung)\s*\/[^\n]{6,260}$/iu;
 
@@ -365,6 +368,7 @@ const Ocr = (() => {
         // Die Überschrift immer mitnehmen, auch wenn der Haupttext sie schon enthält: Der Nachleseblock wird mit einer
         // Leerzeile angehängt, und ein Abschnitt endet dort. Ohne Überschrift bliebe er von den neuen Werten getrennt.
         out.push(heading);
+        out.push(...lines.filter(line => line !== heading && ANALYSIS_BASIS_LINE.test(line)));
         out.push(...analysis.slice(0, 14));
       }
     }

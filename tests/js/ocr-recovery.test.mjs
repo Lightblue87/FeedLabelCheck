@@ -130,3 +130,15 @@ test("Nachgelesene Analysewerte bleiben dem Abschnitt zugeordnet, auch wenn die 
   assert.equal(field("art18_renal_phosphor").status, "found");
   assert.equal(field("art18_renal_phosphor").matchedText, "Phosphor 0,40 %");
 });
+
+test("Nachgelesene Analysewerte behalten ihre Bezugsbasis (Trockenmasse), die 12-%-Rechnung bleibt gesperrt", () => {
+  const feedTypes = [{ id: "complete_feed", nameDe: "Alleinfuttermittel", keywordsDe: ["Alleinfuttermittel"] }];
+  const diet = "Diät-Alleinfuttermittel für ausgewachsene Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
+  const primary = diet + "Analytische Bestandteile: Feuchte 80 %\n???";
+  const candidate = "Analytische Bestandteile: Feuchte 80 %\nWerte bezogen auf Trockenmasse\nRohprotein 9,70 %\nPhosphor 0,40 %";
+  const extra = Ocr.recoveredEvidence(primary, candidate);
+  assert.match(extra, /bezogen auf Trockenmasse/);
+  const merged = primary + "\n\n" + extra;
+  const field = id => Labeling.check(merged, feedTypes[0], []).ruleResults.find(r => r.rule.id === id);
+  assert.equal(field("art18_renal_12pct_phosphorus").status, "unclear");
+});
