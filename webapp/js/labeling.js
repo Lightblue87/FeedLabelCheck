@@ -642,8 +642,9 @@ const Labeling = (() => {
   const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
 
   // Fließtext einer Nachbarspalte statt Stoffname („Vitamin E:“): Wortfragment mit Bindestrich am Ende, Beginn mit
-  // Kleinbuchstaben oder ein kleingeschriebenes Funktionswort („Fütterungsempfehlung pro Tag:“).
-  const PROSE_WORD = /(?:^|[ \t])(?:pro|je|der|die|das|dem|den|und|oder|an|bis|für|von|mit|wegen|darf|dürfen|wird|werden|gegenüber|zur|zum|im|in|auf|bei|nach)(?=[ \t:.]|$)/u;
+  // Kleinbuchstaben oder ein kleingeschriebenes Funktionswort, das in Stoffnamen nicht vorkommt („Fütterungsempfehlung pro Tag:“). Wörter wie
+  // „in“, „von“, „mit“, „und“ fehlen bewusst: „Kupfer in Form von Kupfersulfat“ ist ein Stoffname.
+  const PROSE_WORD = /(?:^|[ \t])(?:pro|der|die|das|dem|den|wegen|darf|dürfen|wird|werden|gegenüber)(?=[ \t:.]|$)/u;
   function proseFragment(prefix) {
     return /-$/.test(prefix) || /^\p{Ll}/u.test(prefix) || PROSE_WORD.test(prefix);
   }
