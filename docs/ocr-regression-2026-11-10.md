@@ -100,3 +100,49 @@ Auf dem animonda-Etikett stehen die Kennnummern ohne Klammer direkt nach der Men
 - `fixUnknownCodes` in `webapp/js/ocr.js` korrigiert jetzt auch einen unbekannten Code ohne Klammer, wenn er unmittelbar hinter einer Menge mit Einheit steht (`mg`, `g`, `µg`, `IE`/`JE`/`I.E.`, `IU`, `KBE`, `CFU`, auch verlesen wie „m0“, optional `/kg`). Der Code darf in der nächsten Zeile stehen („11,4 mg⏎36605“).
 - Es gilt dieselbe Regel wie in Klammern: Korrigiert wird nur, wenn genau ein Buchstabe nach der Gruppenziffer eine bekannte Kennnummer ergibt. Bekannte Codes, Zahlen ohne Einheit davor („3 kg 33671 Stück“, „Artikel 33671“) und nicht eindeutige Kandidaten bleiben unverändert. In den echten Daten haben „33671“, „36605“ und „36503“ je genau einen Kandidaten.
 - Grenze: Die Karte „Zusatzstoffe“ bleibt auf diesem Etikett „Wahrscheinlich“. Die Überschrift steht mehrsprachig („Ernährungsphysiologische Zusatzstoffe/Additifs nutritionnels/…“) und mit Lesefehler („Emnährungs…“), die Liste wird noch nicht als deutsche Zeile erkannt. Das wäre der nächste Schritt analog zu den Analytischen Bestandteilen.
+
+## Zwei Lesungen je Foto, aufbereitete Kacheln und Vereinigung (10.11.2026)
+
+Ausgangsbefund: Tesseract.js liest ohne weitere Angabe das ganze Foto als einen Textblock. Spalten werden dabei zeilenweise vermischt, und eine einzige Helligkeitsschwelle für das ganze Bild versagt bei ungleichmäßig beleuchteten, schräg oder gewölbt fotografierten Etiketten. Bei der Pavo-Rückseite blieben im Vollbild 103 sicher gelesene Buchstaben, mit Kacheln rund 1.730 (Maß: Buchstaben in Wörtern ab drei Buchstaben mit Sicherheit ab 75, `Ocr.linesQuality`).
+
+Ablauf in `readLabelPhoto` (`webapp/js/app.js`):
+
+1. Grundlesung mit Seitenaufteilung (Textblöcke, also spaltenweise). Danach wie bisher die Ausrichtungsprüfung.
+2. Zweite Lesung als ein Block. Sie behält Zeilen über die ganze Breite, die die Seitenaufteilung zerschneidet (z. B. eine Anschrift unter zwei Spalten).
+3. `Ocr.mergeTiles` vereinigt beide wortweise. Die Lesung mit mehr sicher gelesenem Text gibt Zeilen und Reihenfolge vor, die andere ergänzt und ersetzt. Die Seitenaufteilung führt nur bei mehr als 5 % Vorsprung: Sie zerschneidet gelegentlich Fließtext in Teilzeilen (Katzenfutter-Etikett aus der öffentlichen Stichprobe, dort ist die Blocklesung mit 347 gegen 214 Buchstaben klar besser).
+4. Bei schwacher Lesung (Sicherheit unter 70 oder `shouldRecoverText`) folgen Kacheln aus `Ocr.tileGrid` (höchstens 3 × 3, 8 % Überlappung). Je Kachel: Beleuchtungsausgleich (`flattenIllumination`), Neigung messen (`estimateSkew`, ±6°) und gerade richten, lesen, Wortrahmen zurückrechnen (`unrotateBox`). Die Kacheln ersetzen die vereinigte Vollbild-Lesung nur bei deutlich mehr sicher gelesenem Text (Faktor 1,2 plus 30 Buchstaben).
+
+Regeln der Vereinigung (`mergeTiles`), jeweils mit einem Fall aus den Testfotos:
+
+- Dasselbe Wort: Rahmen decken sich waagerecht zur Hälfte, die Mitten liegen auf gleicher Höhe (0,4 Worthöhen). Liegen mehrere Wörter an der Stelle, gewinnt das gleich gelesene.
+- Ersetzt wird nur bei mindestens zehn Punkten mehr Sicherheit und nicht weniger Zeichen („%“ ersetzt kein „11%“).
+- Ein neues Wort muss sicher gelesen sein und in seiner eigenen Lesung auf der Höhe des Nachbarn liegen, entlang der Zeilenneigung (bei Kacheln der gemessene Winkel, bei ganzen Fotos der Median über die langen Zeilen der Lesung). Sonst zieht eine Lesung Wörter der Nachbarzeile herüber („(3b502)“ beim Carolina-Etikett).
+- Zeilen derselben Lesung werden nie verbunden. Unsicher gelesene Zeichen ohne Buchstaben oder Ziffern sind kein Anker.
+- Entartete Wortrahmen: Streifen unter fünf Bildpunkten entfallen. Ein Rahmen ab dem 2,4-Fachen der Zeilenhöhe wird auf die Zeile gestutzt, das Wort bleibt („max.“ mit Rahmen über zwei Zeilen). Ein Rahmen in Zeilenhöhe neben kleinen Tabellenwerten (Faktor 2) bleibt unverändert, sonst gingen einzeln stehende Zutaten verloren.
+- Eine Zeile, die nur die spätere Lesung kennt, braucht zwei sicher gelesene Wörter.
+- Reihenfolge: die der führenden Lesung. Eine Zeile rückt vor eine frühere, die waagerecht mit ihr überlappt und deutlich tiefer steht („Siehe Aufdruck“ stand vor „Kennnummer der Partie:“).
+- An einer Innenkante abgeschnittene Wörter entfallen, die Nachbarkachel enthält sie ganz. Eine Zeile wird über die Naht fortgesetzt, auch ohne gemeinsames Wort (Tabelle „Name … Wert“).
+
+Deutsche Sicht (`germanView`), zwei Ergänzungen:
+
+- Nach der letzten fremdsprachigen Zeile eines sprachweisen Blocks („NL …“, „DE …“, „CZ …“) trennt eine Leerzeile den Abschnitt. Die Pavo-Zusammensetzung lief vorher in die bruchstückhaft gelesene Überschrift der Lagerungshinweise hinein.
+- In `webapp/js/labeling.js` zählt eine Kennnummer direkt hinter der Menge („200 IE 3a671“) wie ein Stoffname. Vorher galt eine Liste nur aus Mengen und Kennnummern nicht als Zusatzstoffangabe, die Karte zeigte stattdessen „Taurin 600 mg/kg“ aus den Analytischen Bestandteilen.
+- `germanAdditivesBlock`: „Ernährungsphysiologische Zusatzstoffe/Additifs nutritionnels/…/Additivi nutrizionali (/kg): 200 IE 3a671, …“ wird zu „Ernährungsphysiologische Zusatzstoffe (/kg): 200 IE 3a671, …“. Bedingung: vor dem Doppelpunkt stehen nur Übersetzungen der Überschrift, keine Mengen. „Zusatzstoffe/kg: …“ bleibt unverändert.
+
+Vergleich im Browser (Chromium, normaler Foto-Upload, gleicher Datenstand), vorher = Stand `14504c5`:
+
+| Etikett | Vorher | Nachher |
+| --- | --- | --- |
+| Pavo WeightLift, beide Nutzerfotos | 571 Zeichen, Zusammensetzung nicht gelesen, 27 s | 2.886 Zeichen, „Komposition: Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid“, 22 s |
+| animonda Vom Feinsten | Anschrift ohne Straße, Taurin fehlt, Zusatzstoffe „Wahrscheinlich“ (nur Überschrift), 10 s | „animonda petcare gmbh Frankfurter Str. 31 49214 Bad Rothenfelde“, Taurin 600 mg/kg, Zusatzstoffe „Gefunden“ mit „200 IE 3a671, 1 Mg 3b406, 11,4 mg 3b605, 1,4 mg 3b503, 0,1 mg 3b202“, Überschrift „Nettomasse“, 19 s |
+| Carolina Mineralfutter | alle Karten wie nachher, 13 s | unverändert vollständig, zusätzlich „Geeignet zur Herstellung gentechnikfreier Lebensmittel.“ zusammenhängend, 15 s |
+
+Stichprobe mit zwölf öffentlichen Etikettenfotos von Open Pet Food Facts (je ein Foto, automatische Typwahl, vorher gegen nachher im Browser): Der Status aller Karten ist bei den drei Fotos mit erkanntem Futtermitteltyp gleich geblieben. Acht Fotos liefern mehr Text (zwei davon erstmals überhaupt: 26 → 854 und 0 → 750 Zeichen), drei etwas weniger (höchstens 46 Zeichen), eines gleich viel. Die Laufzeit je Foto lag bei 3 bis 47 s (vorher 2 bis 38 s); bei vier Fotos stieg sie auf das Doppelte oder mehr, bei sechs sank sie. Die Bilder bleiben außerhalb des Repositorys.
+
+Grenzen:
+
+- Laufzeit: Jedes Foto wird mindestens zweimal gelesen, bei schwacher Lesung kommen bis zu neun Kacheln dazu. Die Zeiten oben stammen aus Chromium auf einem Rechner. Auf dem iPhone ist die Laufzeit nicht gemessen.
+- Die Nettomenge „e100g“ auf dem animonda-Etikett wird weiterhin nicht gelesen (große Schrift neben dem ℮-Zeichen).
+- Beim Carolina-Etikett bleiben die eng gesetzten, zweizeiligen Einträge für Kupfer, Jod und Selen in beiden Lesungen fehlerhaft. Die Vereinigung verbindet sie nicht mehr falsch, liest sie aber auch nicht besser.
+- Die Kacheln werden beim Carolina-Etikett ausgelöst, obwohl sie nichts beitragen (eine Zutat je Zeile gilt für `shouldRecoverText` als unvollständig). Das kostet Zeit, ändert aber das Ergebnis nicht.
+- Tests: `tests/js/ocr-tiles.test.mjs` (konstruierte Wortrahmen und Graustufenbilder) und `tests/js/german-view.test.mjs`. Die Nutzerfotos bleiben außerhalb des Repositorys.

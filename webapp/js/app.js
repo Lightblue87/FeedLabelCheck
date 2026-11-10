@@ -1105,6 +1105,66 @@
     }
 
     /**
+     * Liest ein Foto in überlappenden Kacheln: jede Kachel mit Beleuchtungsausgleich und eigener Geraderichtung
+     * (Ocr.flattenIllumination, Ocr.estimateSkew). Liefert die zusammengesetzten Zeilen in Bildkoordinaten oder null,
+     * wenn das Foto für Kacheln zu klein ist.
+     */
+    async function readLabelTiles(worker, input, output, step) {
+      const image = await createImageBitmap(input);
+      try {
+        const grid = Ocr.tileGrid(image.width, image.height);
+        if (!grid.length) return null;
+        const tiles = [];
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+        for (const [index, tile] of grid.entries()) {
+          step(`Ausschnitt ${index + 1} von ${grid.length} wird gelesen`);
+          const width = Math.round((tile.right - tile.x) * tile.scale);
+          const height = Math.round((tile.bottom - tile.y) * tile.scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(image, tile.x, tile.y, tile.right - tile.x, tile.bottom - tile.y, 0, 0, width, height);
+          const pixels = ctx.getImageData(0, 0, width, height);
+          const gray = new Uint8ClampedArray(width * height);
+          for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+            gray[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
+          }
+          const { flat } = Ocr.flattenIllumination(gray, width, height);
+          const angle = Ocr.estimateSkew(flat, width, height);
+          for (let i = 0, p = 0; i < flat.length; i++, p += 4) {
+            pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flat[i];
+            pixels.data[p + 3] = 255;
+          }
+          ctx.putImageData(pixels, 0, 0);
+          let source = canvas;
+          if (angle) {
+            // Zeilen fallen um `angle` Grad nach rechts ab: gegen den Uhrzeigersinn zurückdrehen.
+            source = document.createElement("canvas");
+            source.width = width;
+            source.height = height;
+            const turned = source.getContext("2d");
+            turned.fillStyle = "rgb(128,128,128)";
+            turned.fillRect(0, 0, width, height);
+            turned.translate(width / 2, height / 2);
+            turned.rotate(-angle * Math.PI / 180);
+            turned.drawImage(canvas, -width / 2, -height / 2);
+          }
+          const result = await worker.recognize(source, {}, output);
+          const lines = Ocr.flattenLines(result.data.blocks)
+            .map(words => words.map(word => ({ ...word, bbox: Ocr.unrotateBox(word.bbox, angle, width, height) })));
+          tiles.push({ ...tile, source: "tiles", angle, lines });
+          canvas.width = canvas.height = 0;
+          if (source !== canvas) source.width = source.height = 0;
+        }
+        return Ocr.mergeTiles(tiles);
+      } finally {
+        image.close();
+      }
+    }
+
+    /**
      * Liest ein Foto; bei Hinweisen auf Packungsmenge oder Aufdruck folgen Zusatzläufe.
      * step(text) meldet den Fortschritt an die Statuszeile (die Zusatzläufe dauern am Handy spürbar),
      * warnings enthält fehlgeschlagene Zusatzläufe – der bereits gelesene Text bleibt erhalten.
@@ -1112,6 +1172,8 @@
      */
     async function readLabelPhoto(worker, file, step) {
       const output = { text: true, blocks: true };
+      // Grundlesung mit automatischer Seitenaufteilung: Tesseract trennt Spalten und Textblöcke selbst.
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
       let { data } = await worker.recognize(file, {}, output);
       let input = file;
       let rotated = null;
@@ -1125,9 +1187,41 @@
           warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${e?.message || e})`);
         }
       }
+      // Zweite Lesung als ein Block und Vereinigung beider: Die Blocklesung behält Zeilen über die ganze Breite, die
+      // die Seitenaufteilung zerschneidet (z. B. eine Anschrift unter zwei Spalten). Bei schwacher Lesung folgen
+      // aufbereitete Kacheln (ungleichmäßige Beleuchtung, schräg laufende Schrift).
+      let tilesTried = false;
+      try {
+        const bitmap = await createImageBitmap(input);
+        const size = { width: bitmap.width, height: bitmap.height };
+        bitmap.close();
+        const whole = (source, lines, scale = 1) => ({ x: 0, y: 0, right: size.width, bottom: size.height, scale,
+                                                       col: 0, row: 0, cols: 1, rows: 1, source, lines });
+        step("Zweite Lesung");
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+        const block = await worker.recognize(input, {}, output);
+        const auto = whole("auto", Ocr.flattenLines(data.blocks), rotated?.dataScale ?? 1);
+        const single = whole("block", Ocr.flattenLines(block.data.blocks));
+        // Die Lesung mit mehr sicher gelesenem Text gibt Zeilen und Reihenfolge vor, die andere ergänzt. Die
+        // Seitenaufteilung führt nur bei klarem Vorsprung: Sie zerschneidet gelegentlich Fließtext in Teilzeilen.
+        const autoLeads = Ocr.linesQuality(auto.lines) > Ocr.linesQuality(single.lines) * 1.05;
+        let lines = Ocr.mergeTiles(autoLeads ? [auto, single] : [single, auto]);
+        if (data.confidence < 70 || Ocr.shouldRecoverText(Ocr.textFromLines(lines))) {
+          const tiled = await readLabelTiles(worker, input, output, step);
+          tilesTried = !!tiled;
+          // Die Kacheln ersetzen die Vollbild-Lesung nur bei deutlich mehr sicher gelesenem Text.
+          if (tiled && Ocr.linesQuality(tiled) >= Ocr.linesQuality(lines) * 1.2 + 30) lines = tiled;
+        }
+        if (lines.length) {
+          data = { ...data, blocks: [{ paragraphs: [{ lines: lines.map(words => ({ words })) }] }] };
+          if (rotated) rotated.dataScale = 1;
+        }
+      } catch (e) {
+        warnings.push(`Zweite Lesung fehlgeschlagen (${e?.message || e})`);
+      }
       const primary = Ocr.textFromResult(data);
       let text = primary;
-      if (Ocr.shouldRecoverText(primary)) {
+      if (!tilesTried && Ocr.shouldRecoverText(primary)) {
         // Bei engen, mehrsprachigen Tabellen werden kleine Zeilen im Vollbild
         // häufig komplett übergangen. Max. drei skalierte Textausschnitte,
         // nach dem ersten zusätzlichen verifizierbaren OCR-Beleg stoppen.

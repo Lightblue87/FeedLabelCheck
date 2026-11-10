@@ -1249,6 +1249,15 @@ test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und
   }
 });
 
+test("Zusatzstoffe: Liste nur aus Menge und Kennnummer ohne Stoffnamen", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Alleinfuttermittel für ausgewachsene Katzen\nAnalytische Bestandteile: Protein 11 %, Taurin 600 mg/kg.\nErnährungsphysiologische Zusatzstoffe (/kg): 200 IE 3a671, 1 mg 3b406, 11,4 mg\n3b605, 1,4 mg 3b503, 0,1 mg 3b202.\nArt.-No. 83205";
+  const result = Labeling.check(label, FEED_TYPES[0], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.match(result.matchedText, /^Ernährungsphysiologische Zusatzstoffe \(\/kg\): 200 IE 3a671/);
+  assert.match(result.matchedText, /3b605, 1,4 mg 3b503, 0,1 mg 3b202/);
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];

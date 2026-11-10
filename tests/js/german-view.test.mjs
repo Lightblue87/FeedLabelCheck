@@ -148,3 +148,50 @@ test("Analytische Bestandteile: die Prüfung belegt Analyse und Feuchte mit den 
   assert.equal(view[1].status, "found");
   assert.match(view[1].matchedText, /Feuchtigkeit 81 %/);
 });
+
+test("germanView: nach dem sprachweisen Block endet der Abschnitt vor der nächsten Überschrift", () => {
+  // Die mehrsprachige Überschrift der Lagerungshinweise ist nur bruchstückhaft gelesen und nicht als deutsch erkennbar.
+  const text = [
+    "Samenstelling / Komposition / Composition /",
+    "NL Luzerne, Rijstevoermeel, Lijnzaad, Biergist",
+    "DE Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid",
+    "EN Alfalfa, Rice bran, Linseed, Brewer's yeast",
+    "CZ Alfalfa, Ryzove otruby, Lnene semeno",
+    "ation /",
+    "advise / Opbevarings anvisning / Conseils de",
+    "Koel, droog en donker bewaren.",
+  ].join("\n");
+  const view = Ocr.germanView(text).split("\n");
+  const list = view.findIndex(line => line.includes("Bierhefe"));
+  assert.ok(list >= 0);
+  assert.equal(view[list + 1], "", "Leerzeile trennt die Liste vom folgenden Abschnitt");
+  assert.ok(view.includes("ation /"), "der folgende Text bleibt erhalten");
+});
+
+test("germanView: die deutsche Zeile am Blockende bleibt mit ihrer Fortsetzung verbunden", () => {
+  const text = ["Zusammensetzung", "EN Oats, barley, linseed", "DE Hafer, Gerste, Leinsaat,", "Bierhefe, Magnesiumoxid"].join("\n");
+  const view = Ocr.germanView(text).split("\n");
+  assert.ok(!view.includes(""), "keine Leerzeile zwischen deutscher Liste und ihrer Fortsetzung");
+});
+
+test("germanView: mehrsprachige Überschrift der Zusatzstoffe ohne Leerzeichen um die Schrägstriche", () => {
+  const text = [
+    "Taurina 600 mg/kg.",
+    "Ernährungsphysiologische Zusatzstoffe/",
+    "Additifs nutritionnels/Nutritionele toevoegingsmiddelen/Additivi nutrizionali",
+    "(/kg): 200 IE 3a671, 1 mg 3b406, 11,4 mg",
+    "3b605, 1,4 mg 3b503, 0,1 mg 3b202.",
+    "Art.-No. 83205",
+  ].join("\n");
+  const view = Ocr.germanView(text).split("\n");
+  assert.ok(view.includes("Ernährungsphysiologische Zusatzstoffe (/kg): 200 IE 3a671, 1 mg 3b406, 11,4 mg"), view.join(" | "));
+  assert.ok(view.includes("3b605, 1,4 mg 3b503, 0,1 mg 3b202."), "die Liste bleibt unverändert");
+  assert.ok(!view.some(line => /Additifs|toevoeging|Additivi/.test(line)), "Übersetzungen der Überschrift entfallen");
+});
+
+test("germanView: einsprachige Zusatzstoffzeilen mit Schrägstrich bleiben unverändert", () => {
+  for (const line of ["Zusatzstoffe/kg: Vitamin A 10.000 IE, Vitamin D3 1.000 IE", "Zusatzstoffe / kg: 3b605 Zink 50 mg",
+                      "Ernährungsphysiologische Zusatzstoffe/kg:", "Zusatzstoffe/Additives 12 mg: Zink"]) {
+    assert.equal(Ocr.germanView(line), line);
+  }
+});

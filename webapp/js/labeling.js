@@ -638,7 +638,9 @@ const Labeling = (() => {
       const after = section.slice(amount.index + amount[0].length, amount.index + amount[0].length + 40).split("\n")[0];
       const nameBefore = /\p{L}{3,}/u.test(before);
       const nameAfter = /^[ \t.]*\p{L}{3,}/u.test(after) && !ADDITIVES_END_AT_START.test(after);
-      if (nameBefore || nameAfter) return amount;
+      // Kennnummer statt Name direkt hinter der Menge („200 IE 3a671, 1 mg 3b406“).
+      const codeAfter = /^[ \t]*\(?[1-4][a-z]\d{2,4}[a-z]{0,3}(?![\p{L}\p{N}])/iu.test(after);
+      if (nameBefore || nameAfter || codeAfter) return amount;
     }
     return null;
   }

@@ -220,19 +220,428 @@ const Ocr = (() => {
    * wird Hintergrund-Rauschen herausgefiltert; sonst wird data.text verwendet.
    * Das Ergebnis läuft immer durch cleanText().
    */
+  /** Text aus Zeilen (Wortlisten mit Position): Spalten ordnen, Rauschzeilen filtern, bereinigen. Leer, wenn nichts bleibt. */
+  function textFromLines(lines) {
+    const kept = reorderColumns(lines).map(words => {
+      const origin = fragmentOrigin.get(words);
+      if (!origin) return filterLine(words);
+      // Stück einer getrennten Zeile: gilt, wenn die ursprüngliche Zeile gilt; nur schwache Randwörter fallen weg.
+      if (!filterLine(origin)) return null;
+      const strong = words.filter(w => w.confidence >= WORD_MIN_CONFIDENCE || countAlnum(w.text) >= WORD_MIN_ALNUM);
+      return strong.length ? strong.map(w => w.text).join(" ") : null;
+    }).filter(Boolean);
+    return kept.length ? cleanText(kept.join("\n")) : "";
+  }
+
   function textFromResult(data) {
     if (data && Array.isArray(data.blocks) && data.blocks.length) {
-      const kept = reorderColumns(flattenLines(data.blocks)).map(words => {
-        const origin = fragmentOrigin.get(words);
-        if (!origin) return filterLine(words);
-        // Stück einer getrennten Zeile: gilt, wenn die ursprüngliche Zeile gilt; nur schwache Randwörter fallen weg.
-        if (!filterLine(origin)) return null;
-        const kept = words.filter(w => w.confidence >= WORD_MIN_CONFIDENCE || countAlnum(w.text) >= WORD_MIN_ALNUM);
-        return kept.length ? kept.map(w => w.text).join(" ") : null;
-      }).filter(Boolean);
-      if (kept.length) return cleanText(kept.join("\n"));
+      const fromLines = textFromLines(flattenLines(data.blocks));
+      if (fromLines) return fromLines;
     }
     return cleanText(data && data.text ? data.text : "");
+  }
+
+  // ── Kachel-OCR ──
+  // Auf Fotos mit ungleichmäßiger Beleuchtung, Perspektive oder schräg laufender Schrift scheitert Tesseract am Gesamtbild
+  // (eine Helligkeitsschwelle und eine Zeilenrichtung für die ganze Seite), liest aber kleine Ausschnitte sauber. Das Foto
+  // wird deshalb in überlappende Kacheln zerlegt, jede einzeln gelesen und die Zeilen über die Wortpositionen wieder
+  // zusammengesetzt. Gemessen am Pavo-WeightLift-Foto: 8 von 20 Sollzeilen im Vollbild, 15–16 mit Kacheln.
+  const TILE_TARGET = 1100;   // angestrebte Kachelkante in Bildpunkten des Fotos
+  const TILE_MAX_PER_SIDE = 3;
+  const TILE_OVERLAP = 0.08;  // Überlappung je Innenkante, Anteil der Kachelkante
+
+  /** Kachelraster für ein Foto: [] bei kleinen Bildern, sonst Rechtecke (Bildkoordinaten) mit Vergrößerung. */
+  function tileGrid(width, height, override) {
+    if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) return [];
+    const cols = override?.cols ?? Math.min(TILE_MAX_PER_SIDE, Math.max(1, Math.ceil(width / TILE_TARGET)));
+    const rows = override?.rows ?? Math.min(TILE_MAX_PER_SIDE, Math.max(1, Math.ceil(height / TILE_TARGET)));
+    if (cols * rows < 2) return [];
+    const tiles = [];
+    const tileWidth = width / cols;
+    const tileHeight = height / rows;
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const x = Math.max(0, Math.floor(col * tileWidth - TILE_OVERLAP * tileWidth));
+        const y = Math.max(0, Math.floor(row * tileHeight - TILE_OVERLAP * tileHeight));
+        const right = Math.min(width, Math.ceil((col + 1) * tileWidth + TILE_OVERLAP * tileWidth));
+        const bottom = Math.min(height, Math.ceil((row + 1) * tileHeight + TILE_OVERLAP * tileHeight));
+        // Kleine Kacheln (niedrig aufgelöste Fotos) vergrößern, große unverändert lesen.
+        const scale = Math.min(2, Math.max(1, 1300 / Math.max(right - x, bottom - y)));
+        tiles.push({ col, row, cols, rows, x, y, right, bottom, scale });
+      }
+    }
+    return tiles;
+  }
+
+  // Dasselbe Wort aus zwei Kacheln: die Rahmen decken sich waagerecht mindestens zur Hälfte, und die Mitten liegen
+  // auf derselben Höhe. Bei schräg laufender Schrift überlappen auch Rahmen benachbarter Zeilen; die Höhe der Mitte
+  // trennt sie.
+  function samePlace(a, b) {
+    const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+    if (w <= 0 || w < Math.min(a.x1 - a.x0, b.x1 - b.x0) * 0.5) return false;
+    const heightA = a.y1 - a.y0;
+    const heightB = b.y1 - b.y0;
+    const centerA = (a.y0 + a.y1) / 2;
+    const centerB = (b.y0 + b.y1) / 2;
+    return Math.abs(centerA - centerB) < Math.min(heightA, heightB) * 0.4;
+  }
+  // Tesseract liefert gelegentlich entartete Wortrahmen: einen wenige Pixel hohen Streifen oder einen Rahmen über zwei
+  // Zeilen. Beim Vereinigen würden sie Wörter aus Nachbarzeilen in eine Zeile ziehen. Streifen fallen weg. Ein deutlich
+  // zu hoher Rahmen (ab dem 2,4-Fachen des Zeilenmedians; ein Wort mit Zeilenhöhe als Rahmen neben kleineren
+  // Tabellenwerten liegt beim Doppelten) wird auf die Höhe der Zeile gestutzt, das Wort selbst bleibt.
+  function withSaneBoxes(words) {
+    // Unsicher gelesene Zeichen ohne Buchstaben oder Ziffern (Flecken, Rahmenlinien) sind kein Anker für andere Lesungen.
+    const sane = words.filter(w => w.bbox.y1 - w.bbox.y0 >= 5 && (countAlnum(w.text) > 0 || w.confidence >= 30));
+    if (sane.length < 3) return sane;
+    const sorted = values => values.slice().sort((a, b) => a - b);
+    const median = values => sorted(values)[Math.floor(values.length / 2)];
+    const height = median(sane.map(w => w.bbox.y1 - w.bbox.y0));
+    const regular = sane.filter(w => w.bbox.y1 - w.bbox.y0 <= height * 2.4);
+    const center = median(regular.map(w => (w.bbox.y0 + w.bbox.y1) / 2));
+    return sane.filter(w => w.bbox.y1 - w.bbox.y0 >= height * 0.4).map(w => {
+      if (w.bbox.y1 - w.bbox.y0 <= height * 2.4) return w;
+      return { ...w, bbox: { ...w.bbox, y0: center - height / 2, y1: center + height / 2 } };
+    });
+  }
+  // Gleich gelesen: bis auf Groß-/Kleinschreibung, Satzzeichen und einen Lesefehler je vier Zeichen.
+  function similarText(a, b) {
+    const x = a.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    const y = b.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    if (!x || !y) return x === y;
+    if (x === y) return true;
+    if (Math.abs(x.length - y.length) > 2) return false;
+    // Editierabstand, begrenzt auf kurze Wörter
+    const prev = Array.from({ length: y.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= x.length; i++) {
+      let diagonal = prev[0];
+      prev[0] = i;
+      for (let j = 1; j <= y.length; j++) {
+        const next = Math.min(prev[j] + 1, prev[j - 1] + 1, diagonal + (x[i - 1] === y[j - 1] ? 0 : 1));
+        diagonal = prev[j];
+        prev[j] = next;
+      }
+    }
+    return prev[y.length] <= Math.max(1, Math.floor(Math.max(x.length, y.length) / 4));
+  }
+
+  // Mittlere Neigung langer Zeilen (ab vier Wörtern und 200 Bildpunkten Länge), 0 ohne solche Zeilen.
+  function medianSlope(lines) {
+    const slopes = [];
+    for (const words of lines) {
+      const boxed = words.filter(w => w.bbox);
+      if (boxed.length < 4) continue;
+      const a = boxed[0].bbox;
+      const b = boxed[boxed.length - 1].bbox;
+      const dx = (b.x0 + b.x1) / 2 - (a.x0 + a.x1) / 2;
+      if (dx > 200) slopes.push(((b.y0 + b.y1) / 2 - (a.y0 + a.y1) / 2) / dx);
+    }
+    slopes.sort((x, y) => x - y);
+    return slopes.length ? slopes[Math.floor(slopes.length / 2)] : 0;
+  }
+
+  /**
+   * Vereinigt mehrere Lesungen desselben Fotos zu Zeilen des ganzen Fotos: Kacheln (aus tileGrid) und Vollbild-Lesungen
+   * (x = y = 0, scale = 1, cols = rows = 1) in beliebiger Mischung. Reihenfolge = Rang: Frühere Lesungen geben die
+   * Zeilenstruktur vor, spätere ergänzen fehlende Wörter und ersetzen unsicher gelesene.
+   * tiles: [{ x, y, right, bottom, scale, col, row, cols, rows, angle (optional, Zeilenneigung in Grad), lines: Zeilen wie aus flattenLines (Positionen in
+   *          Koordinaten der Lesung) }]
+   * Rückgabe: Zeilen (Wortlisten) mit Positionen in Bildkoordinaten, von oben nach unten.
+   */
+  function mergeTiles(tiles) {
+    const kept = [];
+    for (const tile of tiles) {
+      const tileWidth = tile.right - tile.x;
+      // Neigung der Zeilen in dieser Lesung (positiv: nach rechts abfallend): aus dem gemessenen Winkel der Kachel,
+      // sonst aus den Zeilen selbst (Median über lange Zeilen; einzelne vermischte Zeilen fallen nicht ins Gewicht).
+      const slant = Number.isFinite(tile.angle) ? Math.tan(tile.angle * Math.PI / 180) : medianSlope(tile.lines || []);
+      for (const raw of tile.lines || []) {
+        const words = [];
+        for (const word of raw) {
+          if (!word.bbox) continue;
+          const bbox = { x0: tile.x + word.bbox.x0 / tile.scale, x1: tile.x + word.bbox.x1 / tile.scale,
+                         y0: tile.y + word.bbox.y0 / tile.scale, y1: tile.y + word.bbox.y1 / tile.scale };
+          // An einer Innenkante abgeschnittene Wörter verwerfen: Die Nachbarkachel enthält sie vollständig.
+          const margin = 2;
+          if ((tile.col > 0 && bbox.x0 <= tile.x + margin) || (tile.col < tile.cols - 1 && bbox.x1 >= tile.right - margin)
+              || (tile.row > 0 && bbox.y0 <= tile.y + margin) || (tile.row < tile.rows - 1 && bbox.y1 >= tile.bottom - margin)) continue;
+          words.push({ text: word.text, confidence: word.confidence, bbox });
+        }
+        const cleaned = withSaneBoxes(words);
+        words.length = 0;
+        words.push(...cleaned);
+        if (!words.length) continue;
+        words.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+        // 1) Jedes Wort sucht sein Gegenstück an derselben Stelle in den bisherigen Zeilen.
+        //    Liegen mehrere bisherige Wörter an der Stelle (eng gesetzte Zeilen), gewinnt das gleich gelesene.
+        const homes = words.map(word => {
+          let found = null;
+          for (const line of kept) {
+            // Zeilen derselben Lesung sind nie Gegenstücke (ein entarteter Rahmen würde sonst zwei Zeilen verbinden).
+            if (line.tile === tile) continue;
+            for (const twin of line.words) {
+              if (!samePlace(word.bbox, twin.bbox)) continue;
+              if (similarText(word.text, twin.text)) return { line, twin };
+              found ||= { line, twin };
+            }
+          }
+          return found;
+        });
+        if (homes.some(Boolean)) {
+          words.forEach((word, index) => {
+            const home = homes[index];
+            if (home) {
+              // Gleich gelesen: nichts zu tun. Sonst gewinnt die deutlich sicherere Lesung, aber nur, wenn sie nicht
+              // weniger Zeichen trägt (ein „%“ ersetzt kein „11%“).
+              if (similarText(word.text, home.twin.text)) home.twin.confidence = Math.max(home.twin.confidence, word.confidence);
+              else if (word.confidence >= home.twin.confidence + 10 && countAlnum(word.text) >= countAlnum(home.twin.text)) Object.assign(home.twin, word);
+              return;
+            }
+            // Neues Wort: nur wenn es sicher gelesen ist (Rauschzeichen am Zeilenrand fallen weg). Es kommt in die Zeile
+            // des nächsten Nachbarn mit Gegenstück (so bleibt eine in dieser Lesung vermischte Zeile nach Spalten getrennt).
+            const alnum = countAlnum(word.text);
+            if (!(alnum >= 2 && word.confidence >= 60) && !(alnum >= WORD_MIN_ALNUM && word.confidence >= WORD_MIN_CONFIDENCE)) return;
+            let nearest = null;
+            let anchor = null;
+            let distance = Infinity;
+            homes.forEach((other, k) => {
+              if (!other) return;
+              const gap = Math.max(0, Math.max(words[k].bbox.x0, word.bbox.x0) - Math.min(words[k].bbox.x1, word.bbox.x1));
+              if (gap < distance) { distance = gap; nearest = other.line; anchor = words[k]; }
+            });
+            // Das neue Wort muss in seiner eigenen Lesung auf der Höhe des Nachbarn liegen (entlang der gemessenen
+            // Zeilenneigung der Kachel). Bei eng gesetzten oder gewölbten Zeilen fasst eine Lesung sonst Wörter zweier
+            // Zeilen zusammen.
+            const run = (word.bbox.x0 + word.bbox.x1) / 2 - (anchor.bbox.x0 + anchor.bbox.x1) / 2;
+            const offset = Math.abs((word.bbox.y0 + word.bbox.y1) / 2 - (anchor.bbox.y0 + anchor.bbox.y1) / 2 - run * slant);
+            if (offset >= Math.min(word.bbox.y1 - word.bbox.y0, anchor.bbox.y1 - anchor.bbox.y0) * 0.4) return;
+            nearest.words.push(word);
+            nearest.dirty = true;
+            if (tile.col > nearest.col) nearest.col = tile.col;
+          });
+          for (const line of kept) if (line.dirty) { line.words.sort((a, b) => a.bbox.x0 - b.bbox.x0); line.dirty = false; }
+          continue;
+        }
+        // 2) Fortsetzung über die Naht ohne gemeinsames Wort (Lücke im Überlappungsbereich, z. B. Tabelle „Name … Wert“):
+        //    gleiche Höhe am Übergang und kein zu großer Abstand.
+        if (tile.col > 0) {
+          const first = words[0];
+          const height = first.bbox.y1 - first.bbox.y0;
+          let continued = null;
+          let smallest = Infinity;
+          const firstX = (first.bbox.x0 + first.bbox.x1) / 2;
+          const firstY = (first.bbox.y0 + first.bbox.y1) / 2;
+          for (const line of kept) {
+            if (line.row !== tile.row || line.col !== tile.col - 1 || line.source !== tile.source) continue;
+            const last = line.words[line.words.length - 1];
+            const gap = first.bbox.x0 - last.bbox.x1;
+            if (gap < 0 || gap > tileWidth * 0.35) continue;
+            // Die bisherige Zeile wird mit ihrer eigenen Neigung bis zum neuen Wort verlängert (schräg laufende Schrift).
+            const start = line.words[0];
+            const lastX = (last.bbox.x0 + last.bbox.x1) / 2;
+            const lastY = (last.bbox.y0 + last.bbox.y1) / 2;
+            const run = lastX - (start.bbox.x0 + start.bbox.x1) / 2;
+            const lineSlope = run > 150 ? (lastY - (start.bbox.y0 + start.bbox.y1) / 2) / run : 0;
+            const dy = Math.abs(firstY - (lastY + lineSlope * (firstX - lastX)));
+            if (dy < Math.min(height, last.bbox.y1 - last.bbox.y0) * 0.5 && dy < smallest) { continued = line; smallest = dy; }
+          }
+          if (continued) {
+            continued.words.push(...words);
+            continued.col = tile.col;
+            continue;
+          }
+        }
+        // Eine Zeile, die nur eine spätere Lesung kennt, braucht mindestens zwei sicher gelesene Wörter.
+        if (tile !== tiles[0] && tile.source !== tiles[0].source
+            && words.filter(w => w.confidence >= 60 && countAlnum(w.text) >= 2).length < 2) continue;
+        kept.push({ words, tile, row: tile.row, col: tile.col, source: tile.source, first: tile === tiles[0] });
+      }
+    }
+    // Reihenfolge von oben nach unten. Die Zeilenneigung (schräg fotografiert) wird herausgerechnet, damit eine kurze
+    // Zeile am rechten Rand nicht vor ihre linken Nachbarn rutscht.
+    const center = words => ({ x: words.reduce((sum, w) => sum + (w.bbox.x0 + w.bbox.x1) / 2, 0) / words.length,
+                               y: words.reduce((sum, w) => sum + (w.bbox.y0 + w.bbox.y1) / 2, 0) / words.length });
+    const slope = medianSlope(kept.map(line => line.words));
+    const keyed = kept.map(line => {
+      const c = center(line.words);
+      return { words: line.words, key: c.y - slope * c.x, first: line.source === tiles[0]?.source && line.first,
+               x0: line.words[0].bbox.x0, x1: Math.max(...line.words.map(w => w.bbox.x1)) };
+    });
+    // Ist die erste Lesung ein Vollbild, gibt sie die Lesereihenfolge vor (Tesseract ordnet dort nach Textblöcken, also
+    // spaltenweise). Zeilen aus späteren Lesungen werden unter der nächsten darüberliegenden Zeile eingefügt, die
+    // waagerecht mit ihnen überlappt. Ohne Vollbild als Grundlage gilt die Reihenfolge von oben nach unten.
+    const lead = tiles[0];
+    if (!(lead && lead.cols === 1 && lead.rows === 1 && keyed.some(line => line.first))) {
+      return keyed.sort((a, b) => a.key - b.key).map(line => line.words);
+    }
+    const ordered = keyed.filter(line => line.first);
+    for (const line of keyed.filter(l => !l.first).sort((a, b) => a.key - b.key)) {
+      let at = -1;
+      for (let i = 0; i < ordered.length; i++) {
+        const other = ordered[i];
+        if (other.key <= line.key && Math.min(other.x1, line.x1) > Math.max(other.x0, line.x0)) at = i;
+      }
+      if (at < 0) {
+        const below = ordered.findIndex(other => other.key > line.key && Math.min(other.x1, line.x1) > Math.max(other.x0, line.x0));
+        at = below >= 0 ? below - 1 : ordered.length - 1;
+      }
+      ordered.splice(at + 1, 0, line);
+    }
+    // Die Blockfolge der Seitenaufteilung kann übereinanderstehende Zeilen derselben Spalte vertauschen. Eine Zeile
+    // rückt vor die erste frühere Zeile, die waagerecht mit ihr überlappt und deutlich tiefer steht.
+    const sorted = [];
+    for (const line of ordered) {
+      const height = line.words[0].bbox.y1 - line.words[0].bbox.y0;
+      const before = sorted.findIndex(other => other.key > line.key + height * 0.5
+        && Math.min(other.x1, line.x1) - Math.max(other.x0, line.x0) >= Math.min(other.x1 - other.x0, line.x1 - line.x0) * 0.5);
+      if (before < 0) sorted.push(line);
+      else sorted.splice(before, 0, line);
+    }
+    return sorted.map(line => line.words);
+  }
+
+  // ── Bildaufbereitung je Kachel (reine Rechenfunktionen auf Graustufen, ohne Canvas) ──
+
+  // Lokaler Hintergrund: Mittelwerte eines groben Rasters, bilinear auf Bildgröße gebracht.
+  function localBackground(gray, width, height) {
+    const cell = Math.max(8, Math.round(Math.min(width, height) / 24));
+    const gridW = Math.max(1, Math.ceil(width / cell));
+    const gridH = Math.max(1, Math.ceil(height / cell));
+    const sums = new Float32Array(gridW * gridH);
+    const counts = new Uint32Array(gridW * gridH);
+    for (let y = 0; y < height; y++) {
+      const gy = Math.min(gridH - 1, (y / cell) | 0);
+      for (let x = 0; x < width; x++) {
+        const index = gy * gridW + Math.min(gridW - 1, (x / cell) | 0);
+        sums[index] += gray[y * width + x];
+        counts[index]++;
+      }
+    }
+    for (let i = 0; i < sums.length; i++) sums[i] /= counts[i] || 1;
+    const background = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+      const fy = Math.min(gridH - 1, Math.max(0, y / cell - 0.5));
+      const y0 = fy | 0;
+      const y1 = Math.min(gridH - 1, y0 + 1);
+      const wy = fy - y0;
+      for (let x = 0; x < width; x++) {
+        const fx = Math.min(gridW - 1, Math.max(0, x / cell - 0.5));
+        const x0 = fx | 0;
+        const x1 = Math.min(gridW - 1, x0 + 1);
+        const wx = fx - x0;
+        background[y * width + x] = (sums[y0 * gridW + x0] * (1 - wx) + sums[y0 * gridW + x1] * wx) * (1 - wy)
+          + (sums[y1 * gridW + x0] * (1 - wx) + sums[y1 * gridW + x1] * wx) * wy;
+      }
+    }
+    return { background, grid: sums };
+  }
+
+  function percentile(histogram, total, fraction) {
+    let seen = 0;
+    for (let v = 0; v < histogram.length; v++) {
+      seen += histogram[v];
+      if (seen >= total * fraction) return v;
+    }
+    return histogram.length - 1;
+  }
+
+  /**
+   * Gleicht ungleichmäßige Beleuchtung aus: Jeder Bildpunkt wird auf seinen lokalen Hintergrund bezogen und um 128
+   * gespreizt. Dunkle Schrift bleibt dunkel, helle Schrift hell. `spread` ist die Helligkeitsspanne des Hintergrunds
+   * (5.–95. Perzentil); bei kleiner Spanne lohnt der Ausgleich nicht.
+   * @returns {{flat: Uint8ClampedArray, spread: number}}
+   */
+  function flattenIllumination(gray, width, height) {
+    const { background, grid } = localBackground(gray, width, height);
+    const bgHistogram = new Uint32Array(256);
+    for (const value of grid) bgHistogram[Math.max(0, Math.min(255, Math.round(value)))]++;
+    const spread = percentile(bgHistogram, grid.length, 0.95) - percentile(bgHistogram, grid.length, 0.05);
+    const histogram = new Uint32Array(256);
+    for (let i = 0; i < gray.length; i++) histogram[Math.min(255, Math.abs(Math.round(gray[i] - background[i])))]++;
+    const gain = 110 / Math.max(8, percentile(histogram, gray.length, 0.97));
+    const flat = new Uint8ClampedArray(gray.length);
+    for (let i = 0; i < gray.length; i++) flat[i] = 128 + (gray[i] - background[i]) * gain;
+    return { flat, spread };
+  }
+
+  /**
+   * Schätzt die Neigung der Textzeilen in Grad (positiv: Zeilen fallen nach rechts ab). Das Bild wird verkleinert,
+   * die Schrift als Maske genommen und für jeden Winkel das Zeilenprofil gebildet; bei geraden Zeilen ist das Profil
+   * am schärfsten. 0, wenn kein Winkel klar besser ist als „gerade“.
+   */
+  function estimateSkew(gray, width, height, maxAngle = 6) {
+    const factor = Math.max(1, Math.ceil(width / 420));
+    const w = Math.floor(width / factor);
+    const h = Math.floor(height / factor);
+    if (w < 40 || h < 40) return 0;
+    const small = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        for (let dy = 0; dy < factor; dy++) for (let dx = 0; dx < factor; dx++) sum += gray[(y * factor + dy) * width + x * factor + dx];
+        small[y * w + x] = sum / (factor * factor);
+      }
+    }
+    const { background } = localBackground(small, w, h);
+    const histogram = new Uint32Array(256);
+    for (let i = 0; i < small.length; i++) histogram[Math.min(255, Math.abs(Math.round(small[i] - background[i])))]++;
+    const threshold = Math.max(8, percentile(histogram, small.length, 0.85));
+    const xs = [];
+    const ys = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (Math.abs(small[y * w + x] - background[y * w + x]) > threshold) { xs.push(x - w / 2); ys.push(y - h / 2); }
+    }
+    if (xs.length < 200) return 0;
+    const score = angle => {
+      const sin = Math.sin(angle * Math.PI / 180);
+      const cos = Math.cos(angle * Math.PI / 180);
+      const rows = new Float32Array(h + 2);
+      for (let i = 0; i < xs.length; i++) {
+        // Drehung gegen den Uhrzeigersinn um `angle`: y' = -dx·sin + dy·cos
+        const row = Math.round(h / 2 - xs[i] * sin + ys[i] * cos);
+        if (row >= 0 && row < rows.length) rows[row]++;
+      }
+      let total = 0;
+      for (let i = 1; i < rows.length; i++) { const d = rows[i] - rows[i - 1]; total += d * d; }
+      return total;
+    };
+    const straight = score(0);
+    let best = 0;
+    let bestScore = straight;
+    for (let angle = -maxAngle; angle <= maxAngle + 1e-9; angle += 0.25) {
+      const value = score(angle);
+      if (value > bestScore) { bestScore = value; best = angle; }
+    }
+    return bestScore > straight * 1.1 ? Math.round(best * 4) / 4 : 0;
+  }
+
+  /**
+   * Rechnet einen Wortrahmen aus einem gerade gerichteten Bild (um `angle` Grad gegen den Uhrzeigersinn um die Mitte
+   * gedreht, gleiche Größe) in die Koordinaten des ungedrehten Bildes zurück. Breite und Höhe bleiben erhalten.
+   */
+  function unrotateBox(bbox, angle, width, height) {
+    if (!angle) return bbox;
+    const sin = Math.sin(angle * Math.PI / 180);
+    const cos = Math.cos(angle * Math.PI / 180);
+    const dx = (bbox.x0 + bbox.x1) / 2 - width / 2;
+    const dy = (bbox.y0 + bbox.y1) / 2 - height / 2;
+    const cx = width / 2 + dx * cos - dy * sin;
+    const cy = height / 2 + dx * sin + dy * cos;
+    const halfW = (bbox.x1 - bbox.x0) / 2;
+    const halfH = (bbox.y1 - bbox.y0) / 2;
+    return { x0: cx - halfW, x1: cx + halfW, y0: cy - halfH, y1: cy + halfH };
+  }
+
+  /** Qualitätsmaß einer Lesung: Buchstaben in sicher erkannten Wörtern (für den Vergleich Vollbild gegen Kacheln). */
+  function linesQuality(lines) {
+    let letters = 0;
+    for (const words of lines) {
+      for (const word of words) {
+        if (word.confidence < 75) continue;
+        const count = (word.text.match(/\p{L}/gu) || []).length;
+        if (count >= 3) letters += count;
+      }
+    }
+    return letters;
   }
 
   function orientationScore(data) {
@@ -580,17 +989,47 @@ const Ocr = (() => {
     return { text: `Analytische Bestandteile: ${entries.join(", ")}.`, end };
   }
 
+  // ── Überschrift der Zusatzstoffe in mehrsprachiger Schreibweise ohne Leerzeichen ──
+  // „Ernährungsphysiologische Zusatzstoffe/⏎Additifs nutritionnels/Nutritionele toevoegingsmiddelen/Additivi
+  // nutrizionali⏎(/kg): 200 IE 3a671, …“: Die deutsche Überschrift steht vorn, die Übersetzungen folgen bis zum
+  // Doppelpunkt über Zeilenumbrüche hinweg. Daraus wird „Ernährungsphysiologische Zusatzstoffe (/kg): 200 IE 3a671, …“.
+  // Die Liste selbst bleibt unverändert.
+  const ADDITIVES_BLOCK_HEAD = /^[^\p{L}\n]*((?:(?:Ernährungsphysiologische|Technologische|Zootechnische|Sensorische)\s+)?Zusatzstoffe)\s*\/\s*(.*)$/iu;
+  const ADDITIVES_FOREIGN = /\b(?:additi[fv]\w*|additives?|toevoeging\w*|aditivos?|tilsætning\w*|dodatki)\b/i;
+  function germanAdditivesBlock(lines, start) {
+    const head = ADDITIVES_BLOCK_HEAD.exec(lines[start].trim());
+    if (!head) return null;
+    let rest = head[2];
+    for (let end = start; end < Math.min(lines.length, start + 4); end++) {
+      if (end > start) rest += ` ${lines[end].trim()}`;
+      const colon = /^([^:]{0,200}?)\s*(\([^():]{0,12}\))?\s*:\s*(.*)$/.exec(rest);
+      if (!colon) continue;
+      // Vor dem Doppelpunkt stehen nur Übersetzungen der Überschrift, keine Mengen.
+      if (/\d/.test(colon[1]) || !ADDITIVES_FOREIGN.test(colon[1])) return null;
+      return { end, text: `${head[1]}${colon[2] ? ` ${colon[2]}` : ""}: ${colon[3]}`.trim() };
+    }
+    return null;
+  }
+
   function germanView(text) {
     const source = String(text || "");
     const lines = source.split(/\r?\n/);
     const taggedScheme = lines.some(l => GERMAN_PREFIX.test(l.trim()));
     const out = [];
+    let afterForeign = false;
     for (let i = 0; i < lines.length; i++) {
       const analysis = germanAnalysisBlock(lines, i);
       if (analysis) { out.push(analysis.text); i = analysis.end; continue; }
+      const additives = germanAdditivesBlock(lines, i);
+      if (additives) { out.push(additives.text); i = additives.end; continue; }
       const line = lines[i].trim();
       // Sprachweise Zeilen („NL …“, „EN …“): nur die deutsche („DE …“) bleibt.
-      if (taggedScheme && OTHER_LANGUAGE_PREFIX.test(line)) continue;
+      if (taggedScheme && OTHER_LANGUAGE_PREFIX.test(line)) { afterForeign = true; continue; }
+      // Nach der letzten fremdsprachigen Zeile eines Blocks beginnt etwas Neues (meist die nächste mehrsprachige
+      // Überschrift, die die Texterkennung oft nur bruchstückhaft liest). Eine Leerzeile trennt den Abschnitt, damit
+      // z. B. die Zusammensetzung nicht in die Lagerungshinweise hineinläuft.
+      if (afterForeign && line && !GERMAN_PREFIX.test(line)) out.push("");
+      afterForeign = false;
       const tagged = GERMAN_PREFIX.exec(line);
       if (tagged && /,\s*\p{L}/u.test(tagged[1])) {
         // Überschrift direkt davor mit der deutschen Liste zusammenführen („Komposition: Luzerne, …“).
@@ -605,7 +1044,7 @@ const Ocr = (() => {
     return out.join("\n");
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
+  return { textFromResult, textFromLines, tileGrid, mergeTiles, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
