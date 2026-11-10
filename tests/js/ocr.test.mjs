@@ -1180,6 +1180,19 @@ test("Zusatzstoffe bei Verdünnung: gemischte Reihenfolge in einer Zeile und aus
   assert.match(card("Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)").matchedText, /Überschrift nennt einen anderen Bezug/);
 });
 
+test("Zusatzstoffe bei Verdünnung: Bereiche und Grenzwert-Zusätze werden nicht berechnet", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  for (const quantity of ["100–200 mg", "100-200 mg", "100 – 200 mg", "100—200 mg", "bis 200 mg", "max. 200 mg", "mind. 200 mg", "ca. 200 mg", "< 200 mg", "≤ 200 mg", "~200 mg", "höchstens 200 mg"]) {
+    const result = card(`Zusatzstoffe (je kg):\n${quantity} Zink (3b603)`);
+    assert.match(result.matchedText, /Menge nicht eindeutig gelesen, nicht berechnet/, quantity);
+    assert.doesNotMatch(result.matchedText, /\/kg TM =/, quantity);
+  }
+  // Gewöhnliche Mengen und Namen mit Bindestrich bleiben berechenbar.
+  assert.match(card("Zusatzstoffe (je kg):\n200 mg Zink (3b603)").matchedText, /1,6 mg\/kg TM/);
+  assert.match(card("Zusatzstoffe (je kg):\nVitamin B-12 200 mg (3a820)").matchedText, /1,6 mg\/kg TM/);
+  assert.match(card("Zusatzstoffe (je kg):\nMangan-(II)-oxid 200 mg (3b502)").matchedText, /1,6 mg\/kg TM/);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");

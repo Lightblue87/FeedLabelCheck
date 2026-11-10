@@ -660,7 +660,8 @@ const Labeling = (() => {
   // „in“, „von“, „mit“, „und“ fehlen bewusst: „Kupfer in Form von Kupfersulfat“ ist ein Stoffname.
   const PROSE_WORD = /(?:^|[ \t])(?:pro|der|die|das|dem|den|wegen|darf|dürfen|wird|werden|gegenüber)(?=[ \t:.]|$)/u;
   function proseFragment(prefix) {
-    return /-$/.test(prefix) || PROSE_WORD.test(prefix);
+    // Ein Bindestrich nach einer Ziffer („100-“) gehört zu einem Bereich, nicht zu einem getrennten Wort.
+    return /\p{L}-$/u.test(prefix) || PROSE_WORD.test(prefix);
   }
 
   // `next` ist die Folgezeile: die Kennnummer darf dort stehen.
@@ -733,6 +734,7 @@ const Labeling = (() => {
     return null;
   }
   const ROW_START_ALL = new RegExp(ROW_START.source, "giu");
+  const QUANTITY_QUALIFIER = /(?:\d[\d.,]*[ \t]*[–—-]|(?<![\p{L}\p{N}])(?:bis|ca|circa|etwa|ungefähr|max|min|mind|mindestens|höchstens|über|unter)\.?|[<>≤≥~])[ \t]*$/iu;
   // Wissenschaftliche Schreibweise („1 x 10^9 KBE“, auch mit Exponent in Hochzahlen oder ohne Caret): Der Exponent ist
   // keine Menge. Die Angabe wird als Ganzes gelesen und nicht berechnet.
   const SCIENTIFIC = /(\d+(?:[.,]\d+)?)[ \t]*[x×*·][ \t]*10(?:[ \t]*\^[ \t]*-?\d+|[ \t]*[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+|[ \t]+-?\d{1,2}(?!\d))[ \t]*(KBE|CFU)?/iu;
@@ -838,9 +840,11 @@ const Labeling = (() => {
           // „7 500 mg“: Leerzeichen als Tausendertrennung. Die Menge ist nicht eindeutig (7 500 oder 500), nicht berechnen.
           // Nur eine eigenständige Zahl davor zählt („7 500“), nicht die Ziffer eines Namens („Vitamin D3 1000“, „B12 100“).
           const grouped = !scientific && /^\d{3}(?![\d])/.test(printed) && /(?:^|[ \t(])\d{1,3}[ \t]+$/.test(line.slice(0, amount.index));
+          // Bereich („100–200 mg“) oder Grenzwert-Zusatz („bis“, „max.“, „ca.“, „<“): keine genaue Menge, nicht berechnen.
+          const qualified = !scientific && QUANTITY_QUALIFIER.test(line.slice(0, amount.index));
           const unitText = scientific ? (amount.match[2] || "") : amount[0].slice(printed.length).trim();
           const row = {
-            amount: printed, value: scientific || grouped || unsure ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            amount: printed, value: scientific || grouped || qualified || unsure ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
             ...(scientific ? { scientific: true } : {}),
             basis: basisAt(lineOffset + amount.index),
             name: [named, after].map(tidyRowName).filter(Boolean).join(" "),
