@@ -1749,3 +1749,25 @@ test("Tabelle aus Namens- und Wertespalte wird über die Wortabdeckung nicht zer
   const table = names.map((name, i) => boxed(10 + i * 30, [name, 40, 200], ["Gehalt", 210, 300], ["bezogen", 310, 400], [`${i},5 %`, 640, 700]));
   assert.deepEqual(Ocr.reorderColumns(table), table);
 });
+
+// ── Zusatzstoffcodes ohne Klammer nach der Menge („200 IE 33671“, animonda Vom Feinsten) ──
+
+test("Kennnummer ohne Klammer nach einer Menge: verlesener Buchstabe wird nur bei genau einem Kandidaten korrigiert", () => {
+  Ocr.setAdditiveCodes(["3a671", "3b406", "3b605", "3b503", "3b202", "3a672a", "3b671"]);
+  try {
+    // 3a671 als 33671: Kandidaten 3a671 und 3b671 gibt es hier beide, also bleibt der Code unverändert.
+    assert.equal(Ocr.cleanText("200 IE 33671, 1 mg 3b406"), "200 IE 33671, 1 mg 3b406");
+    Ocr.setAdditiveCodes(["3a671", "3b406", "3b605", "3b503", "3b202", "3a672a"]);
+    assert.equal(Ocr.cleanText("(kg): 200 JE 33671, 1 Mg 3b406, 11,4 mg\n36605, 1,4 m0 36503, 0,1 mo 3b202."),
+      "(kg): 200 JE 3a671, 1 Mg 3b406, 11,4 mg\n3b605, 1,4 m0 3b503, 0,1 mo 3b202.");
+    // Bekannte Codes, Zahlen ohne Einheit davor und nicht eindeutige Kandidaten bleiben unberührt.
+    assert.equal(Ocr.cleanText("200 IE 3a671"), "200 IE 3a671");
+    assert.equal(Ocr.cleanText("Nettomenge 3 kg 33671 Stück"), "Nettomenge 3 kg 33671 Stück");
+    assert.equal(Ocr.cleanText("Artikel 33671 Charge 33605"), "Artikel 33671 Charge 33605");
+    assert.equal(Ocr.cleanText("2 mg 39999"), "2 mg 39999");
+    // Mit Klammer wie bisher
+    assert.equal(Ocr.cleanText("Vitamin A (33671)"), "Vitamin A (3a671)");
+  } finally {
+    Ocr.setAdditiveCodes([]);
+  }
+});

@@ -281,13 +281,20 @@ const Ocr = (() => {
   // ((30502) statt (3b502)). Korrigiert wird nur, wenn genau ein Buchstabe eine bekannte Kennnummer ergibt.
   function fixUnknownCodes(text) {
     if (!knownAdditiveCodes) return text;
-    return text.replace(/\(([1-4])([0-9])(\d{2,3}[a-z]{0,3})\)/gi, (whole, group, second, rest) => {
+    const repair = (whole, group, second, rest, build) => {
       if (knownAdditiveCodes.has(`${group}${second}${rest}`.toLowerCase())) return whole;
       // Kandidaten aus der gesamten Liste: gleiche Gruppenziffer und gleicher Rest, beliebiger Buchstabe.
       const wanted = new RegExp(`^${group}([a-z])${rest.toLowerCase()}$`);
       const hits = [...knownAdditiveCodes].map(code => wanted.exec(code)).filter(Boolean).map(match => match[1]);
-      return hits.length === 1 ? `(${group}${hits[0]}${rest})` : whole;
-    });
+      return hits.length === 1 ? build(hits[0]) : whole;
+    };
+    const parenthesised = text.replace(/\(([1-4])([0-9])(\d{2,3}[a-z]{0,3})\)/gi,
+      (whole, group, second, rest) => repair(whole, group, second, rest, letter => `(${group}${letter}${rest})`));
+    // Kennnummer ohne Klammer unmittelbar nach einer Menge („200 IE 33671, 1 mg 3b406“): dieselbe Korrektur. Nur hinter
+    // einer Mengenangabe mit Einheit (auch verlesen: „m0“, „JE“; der Code darf in der nächsten Zeile stehen), damit Zahlen im Fließtext
+    // unberührt bleiben.
+    return parenthesised.replace(/(\d[\d.,]*[ \t]*(?:m[g0o]|g|µg|mcg|I\.E\.|[IJ]E|IU|KBE|CFU)(?:\/kg)?\s+)([1-4])(\d)(\d{2,3}[a-z]{0,3})(?![\p{L}\p{N}])/giu,
+      (whole, before, group, second, rest) => repair(whole, group, second, rest, letter => `${before}${group}${letter}${rest}`));
   }
 
   /**
