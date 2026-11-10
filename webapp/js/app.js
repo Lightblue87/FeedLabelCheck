@@ -1124,17 +1124,45 @@
         }
       }
       const primary = Ocr.textFromResult(data);
-      const checkWeight = Labeling.needsPackageAmount(primary);
-      const checkImprint = Labeling.needsImprintLot(primary);
-      const checkDiet = Labeling.needsDietDeclaration(primary);
-      const checkCalcium = Labeling.needsSplitCalcium(primary);
-      const checkMoisture = rotated && Labeling.needsMoistureCrop(primary);
-      const checkComposition = Labeling.needsCompositionCrop(primary);
+      let text = primary;
+      if (Ocr.shouldRecoverText(primary)) {
+        // Bei engen, mehrsprachigen Tabellen werden kleine Zeilen im Vollbild
+        // häufig komplett übergangen. Max. drei skalierte Textausschnitte,
+        // nach dem ersten zusätzlichen verifizierbaren OCR-Beleg stoppen.
+        try {
+          step("Kleine Schrift wird nachgelesen");
+          const image = await createImageBitmap(input);
+          let regions;
+          try {
+            regions = Ocr.recoveryRegions(image.width, image.height);
+          } finally {
+            image.close();
+          }
+          for (const region of regions) {
+            const { scale, ...bounds } = region;
+            const regionText = await readLabelCrop(worker, input, output, bounds,
+              Tesseract.PSM.SINGLE_BLOCK, scale);
+            const extra = Ocr.recoveredEvidence(text, regionText);
+            if (extra) {
+              text += "\n\n" + extra;
+              warnings.push("Kleine Schrift nachgelesen: übernommene Angaben am Originalfoto bestätigen");
+              break;
+            }
+          }
+        } catch (e) {
+          warnings.push("Nachlesen kleiner Schrift fehlgeschlagen (" + (e?.message || e) + ")");
+        }
+      }
+      const checkWeight = Labeling.needsPackageAmount(text);
+      const checkImprint = Labeling.needsImprintLot(text);
+      const checkDiet = Labeling.needsDietDeclaration(text);
+      const checkCalcium = Labeling.needsSplitCalcium(text);
+      const checkMoisture = rotated && Labeling.needsMoistureCrop(text);
+      const checkComposition = Labeling.needsCompositionCrop(text);
       if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition) {
-        return { text: primary, warnings };
+        return { text, warnings };
       }
 
-      let text = primary;
       try {
         if (checkWeight) {
           step("Zusatzprüfung Packungsmenge");
