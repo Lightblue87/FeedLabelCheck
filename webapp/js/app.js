@@ -433,6 +433,8 @@
   const OVERALL = {
     keineAuffaelligkeit: { cls: "ok", text: "In den erkannten Pflichtangaben keine Auffälligkeit. Keine Bestätigung der Rechtskonformität." },
     unklar: { cls: "warn", text: "Teilprüfung offen – Pflichtangaben fehlen im Prüftext oder sind unklar/nicht prüfbar. Originaletikett prüfen." },
+    // Der Text-Check liefert „auffaellig“ nicht mehr (ein OCR-Nichttreffer belegt keinen Verstoß); der Eintrag bleibt für
+    // ältere Verlaufseinträge und einen künftigen, belegten Befund.
     auffaellig: { cls: "warn", text: "Textprüfung auffällig – unbestätigte Angaben am Originaletikett prüfen, kein rechtlich gesicherter Verstoß." },
     nichtPruefbar: { cls: "info", text: "OCR-Text reicht für die Etikettenprüfung nicht aus. Originalfotos, erkannte Sprache und weitere Verpackungsseiten prüfen." },
   };

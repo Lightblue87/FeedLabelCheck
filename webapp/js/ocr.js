@@ -292,6 +292,10 @@ const Ocr = (() => {
 
   // Relative Koordinaten vermeiden Geräte- und Auflösungsabhängigkeiten.
   // Jede Region wird getrennt gelesen, statt das gesamte Foto hochzuskalieren.
+  // Obergrenze der Pixelfläche eines vergrößerten Ausschnitts (Canvas-Speicher auf Mobilgeräten). Eine Grenze nach
+  // Kantenlänge würde bei Fotos in Handygröße (z. B. 4032×3024) die Vergrößerung auf unter 1,3-fach drücken.
+  const MAX_CROP_PIXELS = 12e6;
+
   function recoveryRegions(width, height, primaryText = "") {
     if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) return [];
     const regions = width >= height && hasMixedLanguageColumns(primaryText)
@@ -312,7 +316,7 @@ const Ocr = (() => {
       x: Math.floor(left * width), y: Math.floor(top * height),
       right: Math.ceil(right * width), bottom: Math.ceil(bottom * height),
       // Canvas auf Mobilgeräten begrenzen, ohne die Ausschnittgeometrie zu ändern.
-      scale: Math.min(magnify, 2800 / Math.max((right - left) * width, (bottom - top) * height)),
+      scale: Math.min(magnify, Math.sqrt(MAX_CROP_PIXELS / (((right - left) * width) * ((bottom - top) * height)))),
     }));
   }
 
@@ -328,6 +332,7 @@ const Ocr = (() => {
    * fremdsprachige Analysenzeilen enthalten, aber keinen Konformitätsstatus.
    */
   function recoveredEvidence(primary, candidate) {
+    const primaryHeading = String(primary || "").split(/\r?\n/).map(l => l.trim()).find(l => COMPOSITION_HEAD.test(l));
     const lines = String(candidate || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const existing = new Set(String(primary || "").split(/\r?\n/)
       .map(l => l.toLowerCase().replace(/\s+/g, " ").trim()));
@@ -336,7 +341,9 @@ const Ocr = (() => {
     for (let i = 0; i < lines.length; i++) {
       const german = GERMAN_INGREDIENT_LINE.exec(lines[i]);
       if (german && german[1].split(/[,;]/).filter(x => /\p{L}{3,}/u.test(x)).length >= 3 && novel(lines[i])) {
-        const heading = lines.slice(Math.max(0, i - 11), i).reverse().find(l => COMPOSITION_HEAD.test(l));
+        // Die Überschrift steht im Ausschnitt oder, wenn der Ausschnitt erst unterhalb beginnt, im bereits gelesenen
+        // Haupttext. Beides ist tatsächlich gelesener Text; ohne Überschrift wird nichts übernommen.
+        const heading = lines.slice(Math.max(0, i - 11), i).reverse().find(l => COMPOSITION_HEAD.test(l)) || primaryHeading;
         // Nur die tatsächlich ausgelesene Überschrift + DE-Zeile koppeln.
         // Damit funktioniert der bestehende mehrsprachige Composition-Parser.
         if (heading) out.push(heading, lines[i]);

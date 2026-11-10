@@ -27,7 +27,7 @@ test("dense landscape photo: bounded overlapping high-resolution crops", () => {
   assert.equal(crops.length, 2);
   assert.deepEqual(crops[0], { x: 115, y: 95, right: 1429, bottom: 450, scale: 2 });
   assert.ok(crops.every(r => r.right > r.x && r.bottom > r.y));
-  assert.ok(crops.every(r => (r.right - r.x) * r.scale <= 2801));
+  assert.ok(crops.every(r => (r.right - r.x) * r.scale * (r.bottom - r.y) * r.scale <= 12e6 * 1.01));
 });
 
 test("dense portrait photo: first crop targets the narrow analytical table", () => {
@@ -95,4 +95,24 @@ test("two multilingual side-by-side columns are assigned separate OCR crops", ()
   assert.ok(crops[0].x < crops[1].x);
   assert.ok(crops[0].right > crops[1].x, "overlap keeps border letters visible");
   assert.match(Ocr.recoveredEvidence("", "Zusammensetzung: Wiesenheu, Luzerne, Karotte, Bierhefe"), /Zusammensetzung/);
+});
+
+test("Fotos in Handygröße: Ausschnitte werden spürbar vergrößert, die Pixelfläche bleibt begrenzt", () => {
+  for (const [w, h] of [[4032, 3024], [3024, 4032]]) {
+    const crops = Ocr.recoveryRegions(w, h);
+    assert.ok(crops.length > 0);
+    for (const r of crops) {
+      assert.ok(r.scale >= 1.5, `${w}x${h}: Vergrößerung ${r.scale.toFixed(2)}`);
+      assert.ok((r.right - r.x) * r.scale * (r.bottom - r.y) * r.scale <= 12e6 * 1.01);
+    }
+  }
+});
+
+test("Zutatenzeile ohne Überschrift im Ausschnitt nutzt die bereits gelesene Überschrift", () => {
+  const primary = "Zusammensetzung / Composition / Samenstelling\nFEEDING AD rgewicht";
+  const line = "DE Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid";
+  const extra = Ocr.recoveredEvidence(primary, line);
+  assert.equal(extra, "Zusammensetzung / Composition / Samenstelling\n" + line);
+  // Ohne gelesene Überschrift wird nichts erfunden.
+  assert.equal(Ocr.recoveredEvidence("FEEDING AD rgewicht", line), "");
 });
