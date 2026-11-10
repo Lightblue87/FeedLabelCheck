@@ -1048,6 +1048,23 @@ test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergl
   assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);
 });
 
+test("Zusatzstoffe bei Verdünnung: Bezug der Untergruppe und Leerzeichen als Tausendertrennung", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  // Ausdrücklicher Bezug der Untergruppe überstimmt die übergeordnete Überschrift.
+  const sub = card("Zusatzstoffe je kg:\nErnährungsphysiologische Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)");
+  assert.match(sub.matchedText, /Überschrift nennt einen anderen Bezug/);
+  assert.doesNotMatch(sub.matchedText, /\/kg TM =/);
+  // Untergruppe ohne eigenen Bezug erbt „je kg“ von der übergeordneten Überschrift.
+  assert.match(card("Zusatzstoffe je kg:\nErnährungsphysiologische Zusatzstoffe\n7.500 mg Zink (3b603)").matchedText, /60 mg\/kg TM/);
+  // Eine Überschrift ohne Bezug nach Mengenzeilen erbt nicht.
+  const later = card("Zusatzstoffe je kg:\n7.500 mg Zink (3b603)\nTechnologische Zusatzstoffe:\n100 mg Betahydroxytoluol (E321)");
+  assert.match(later.matchedText, /^7\.500 mg Zink \(3b603\): 60 mg\/kg TM/m);
+  assert.match(later.matchedText, /^100 mg Betahydroxytoluol \(e321\): Bezug der Mengenangabe nicht als „je kg“ gelesen, nicht berechnet$/m);
+  const grouped = card("Zusatzstoffe (je kg):\n7 500 mg Zink (3b603)");
+  assert.match(grouped.matchedText, /Menge nicht eindeutig gelesen, nicht berechnet/);
+  assert.doesNotMatch(grouped.matchedText, /\/kg TM =/);
+});
+
 test("Zusatzstoffe bei Verdünnung: wissenschaftliche Schreibweise und abweichender Bezug werden nicht berechnet", () => {
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
   const micro = card("Zusatzstoffe (je kg):\n1 x 10^9 KBE Enterococcus faecium (4b1708)");

@@ -751,8 +751,22 @@ const Labeling = (() => {
     const text = cleanAdditiveLines(rawText);
     const rows = [];
     const seen = new Set();
-    for (const { heading, start, section } of additiveSectionBodies(text, body => ROW_START.test(body) || SCIENTIFIC.test(body))) {
-      const basis = declaredBasis(heading[0]);
+    // Der Bezug einer Zeile kommt von der nächsten Überschrift davor, die einen Bezug nennt. Mehrere Überschriften
+    // gelten nur als Kette, wenn zwischen ihnen keine Mengenzeile steht („Zusatzstoffe je kg:“ gefolgt von
+    // „Ernährungsphysiologische Zusatzstoffe (je 100 g):“: der ausdrückliche Bezug der Untergruppe gilt).
+    const headings = [...text.matchAll(ADDITIVES_HEADING)];
+    const basisAt = position => {
+      let k = headings.reduce((last, h, i) => (h.index < position ? i : last), -1);
+      while (k >= 0) {
+        const basis = declaredBasis(headings[k][0]);
+        if (basis !== "unknown") return basis;
+        const between = k > 0 ? text.slice(headings[k - 1].index + headings[k - 1][0].length, headings[k].index) : null;
+        if (between === null || ROW_START.test(between) || SCIENTIFIC.test(between)) break;
+        k -= 1;
+      }
+      return "unknown";
+    };
+    for (const { start, section } of additiveSectionBodies(text, body => ROW_START.test(body) || SCIENTIFIC.test(body))) {
       let offset = start;
       let previous = null;
       let previousLine = -2;
@@ -767,7 +781,7 @@ const Labeling = (() => {
           const name = tidyRowName(line.slice(0, scientific.index) + " " + line.slice(scientific.index + scientific[0].length));
           if (!code && !/\p{L}{3,}/u.test(name)) return;
           const row = {
-            amount: scientific[0].trim(), value: null, scientific: true, basis,
+            amount: scientific[0].trim(), value: null, scientific: true, basis: basisAt(lineOffset + scientific.index),
             unit: scientific[2] ? rowUnit(scientific[2]) : null, name,
             code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null, line,
           };
@@ -803,9 +817,12 @@ const Labeling = (() => {
           seen.add(lineOffset + amount.index);
           const code = ROW_CODE.exec(after) ?? (named ? ROW_CODE.exec(named) : null);
           const printed = amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
+          // „7 500 mg“: Leerzeichen als Tausendertrennung. Die Menge ist nicht eindeutig (7 500 oder 500), nicht berechnen.
+          const grouped = /\d[ \t]+$/.test(line.slice(0, amount.index));
           const unitText = amount[0].slice(printed.length).trim();
           const row = {
-            amount: printed, value: parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null, basis,
+            amount: printed, value: grouped ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            basis: basisAt(lineOffset + amount.index),
             name: [named, after].map(tidyRowName).filter(Boolean).join(" "),
             code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
             line,
