@@ -25,7 +25,7 @@ test("gleiche Einheit: unverändert bewertet", () => {
 test("10 g/kg gegen Höchstwert 10 mg/kg ist NICHT konform", () => {
   const res = LavesEval.evaluateSingleValue(10, rec(), "g/kg");
   assert.equal(res.ok, false);
-  assert.ok(res.msgs[0].startsWith("Überschreitung"), "Urteil steht an erster Stelle");
+  assert.ok(res.msgs[0].startsWith("Oberhalb des hinterlegten Höchstwerts"), "Urteil steht an erster Stelle");
   assert.ok(res.msgs.some(m => m.startsWith("Umrechnung: 10 g/kg = 10.000 mg/kg")));
 });
 
@@ -71,19 +71,21 @@ test("ohne Einheitenangabe bleibt das bisherige Verhalten (Einheit des Grenzwert
   assert.equal(LavesEval.evaluateSingleValue(50, rec()).ok, false);
 });
 
-test("angenommene Datensatz-Einheit wird im Ergebnis ausgewiesen", () => {
+test("angenommene Datensatz-Einheit blockiert Grenzwerturteil", () => {
   const [a] = LavesEval.loadAdditives([
     { kennnummer: "3b603", name: "Test", max_mg_kg: "10" },
   ]);
   assert.equal(a.unit, "mg/kg");
   assert.equal(a.unitAssumed, true);
   const res = LavesEval.evaluateSingleValue(5, a, "mg/kg");
-  assert.ok(res.msgs.some(m => m.startsWith("Hinweis: Im Datensatz ist keine Einheit angegeben")));
+  assert.equal(res.ok, null);
+  assert.ok(res.msgs[0].includes("nicht belegt"));
 
   const [b] = LavesEval.loadAdditives([
     { kennnummer: "3b603", name: "Test", max_mg_kg: "10", einheit: "mg/kg" },
   ]);
   assert.equal(b.unitAssumed, false);
+  assert.equal(LavesEval.evaluateSingleValue(5, b, "mg/kg").ok, true);
 });
 
 test("Datensatz ohne Einheit und ohne Grenzwert bleibt nicht bewertbar", () => {
@@ -105,8 +107,9 @@ test("Umrechnung bei nur angenommener Datensatz-Einheit ist nicht bewertbar", ()
   const res = LavesEval.evaluateSingleValue(0.001, a, "g/kg");
   assert.equal(res.ok, null);
   assert.ok(res.msgs[0].includes("nicht belegt"));
-  // gleiche Einheit wie angenommen: weiter bewertbar (mit Hinweis)
-  assert.equal(LavesEval.evaluateSingleValue(2, a, "mg/kg").ok, true);
+  // Eine gleich benannte Eingabeeinheit macht die Datenquelle nicht verlässlich.
+  assert.equal(LavesEval.evaluateSingleValue(2, a, "mg/kg").ok, null);
+  assert.equal(LavesEval.evaluateSingleValue(2, a).ok, null);
 });
 
 test("Werte exakt auf dem Grenzwert sind nach Umrechnung nicht durch Rundung nicht konform", () => {
