@@ -641,12 +641,12 @@ const Labeling = (() => {
   const ROW_CODE_ONLY = new RegExp(`^${ROW_CODE.source}$`, "i");
   const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
 
-  // Fließtext einer Nachbarspalte statt Stoffname („Vitamin E:“): Wortfragment mit Bindestrich am Ende, Beginn mit
-  // Kleinbuchstaben oder ein kleingeschriebenes Funktionswort, das in Stoffnamen nicht vorkommt („Fütterungsempfehlung pro Tag:“). Wörter wie
+  // Fließtext einer Nachbarspalte statt Stoffname („Vitamin E:“): Wortfragment mit Bindestrich am Ende oder ein
+  // kleingeschriebenes Funktionswort, das in Stoffnamen nicht vorkommt („Fütterungsempfehlung pro Tag:“). Wörter wie
   // „in“, „von“, „mit“, „und“ fehlen bewusst: „Kupfer in Form von Kupfersulfat“ ist ein Stoffname.
   const PROSE_WORD = /(?:^|[ \t])(?:pro|der|die|das|dem|den|wegen|darf|dürfen|wird|werden|gegenüber)(?=[ \t:.]|$)/u;
   function proseFragment(prefix) {
-    return /-$/.test(prefix) || /^\p{Ll}/u.test(prefix) || PROSE_WORD.test(prefix);
+    return /-$/.test(prefix) || PROSE_WORD.test(prefix);
   }
 
   // `next` ist die Folgezeile: die Kennnummer darf dort stehen.
