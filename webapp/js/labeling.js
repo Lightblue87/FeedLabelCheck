@@ -1223,8 +1223,11 @@ const Labeling = (() => {
     }
 
     if (!best) {
+      // Ein OCR-Negativtreffer beweist niemals, dass die Angabe auf der
+      // Verpackung fehlt: Sprache, Fotoqualität und weitere Etikettseiten
+      // können den Treffer verhindern.
       return { rule, status: "missing", matchedText: null, matchedLanguage: null,
-               confidence: 0, note: "Im Prüftext nicht erkannt. Bitte Etikett manuell prüfen." };
+               confidence: 0, note: "Im OCR-Text nicht gefunden – kein Nachweis eines Etikettenfehlers. Originalfoto und weitere Verpackungsseiten prüfen." };
     }
 
     const status = best.weight >= 0.85 ? "found" : "probablyFound";
@@ -1256,10 +1259,14 @@ const Labeling = (() => {
   // hingegen kein Grund, einen vollständig gelesenen Pflichtangabensatz abzuwerten.
   function overallStatus(results) {
     const mandatory = results.filter(r => r.rule?.severity !== "info");
-    if (!mandatory.length || mandatory.every(r => r.status === "notCheckable")) return "nichtPruefbar";
-    if (mandatory.some(r => r.rule?.severity === "critical" && r.status === "missing")) return "auffaellig";
-    // Auch ohne auffällige Treffer: unlesbare, ungeprüfte oder nur wahrscheinlich
-    // gefundene Pflichtangaben verhindern "keine Auffälligkeit".
+    if (!mandatory.length) return "nichtPruefbar";
+    // Das Fehlen eines Suchtreffers im OCR-Text ist kein Nachweis eines
+    // Etikettenverstoßes. Wurden überhaupt keine Pflichtfelder erkannt,
+    // fehlt die Datengrundlage für eine sinnvolle Gesamtprüfung.
+    if (mandatory.every(r => r.status === "missing" || r.status === "notCheckable")) return "nichtPruefbar";
+    // Jeder offene Pflichteintrag (einschließlich OCR-Nichttreffer)
+    // verhindert eine positive Zusammenfassung. Das ist eine offene
+    // Textprüfung, keine juristisch festgestellte Nichtkonformität.
     if (mandatory.some(r => r.status !== "found")) return "unklar";
     return "keineAuffaelligkeit";
   }

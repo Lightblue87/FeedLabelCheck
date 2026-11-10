@@ -269,7 +269,113 @@ const Ocr = (() => {
     return fixUnknownCodes(cleaned);
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
+
+  // Fallback für Fotos mit sehr kleiner Schrift / mehrsprachigen Zeilen.
+  // Ein enger Ausschnitt mit 2–2,5-facher Skalierung kann Text retten, den
+  // die Vollbild-OCR wegen Spalten oder dominanter großer Schrift übergeht.
+  // Maximal 3 Zusatzläufe pro Bild, keine zusätzlichen Sprachpakete.
+  // Typisches zweispaltiges Mehrsprachen-Layout, das Tesseract zeilenweise
+  // vermischt ("Zusammensetzung ... Composition ..."). Spalten getrennt lesen.
+  function hasMixedLanguageColumns(text) {
+    return /(?:Zusammensetzung[^\n]{0,150}Composition|Rohprotein[^\n]{0,130}Crude[ \t]+protein|Analytische[ \t]+Bestandteile[^\n]{0,130}Analytical)/iu.test(text);
+  }
+
+  function shouldRecoverText(text) {
+    if (hasMixedLanguageColumns(text)) return true;
+    const words = String(text || "").match(/\p{L}{3,}/gu) || [];
+    if (words.length < 30) return true;
+    const hasComposition = /(?:^|\n)\s*DE\s+[^\n]*,[^\n]*,\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]*,[^\n]*,\s*\p{L}/imu.test(text);
+    const hasAnalysis = /(?:Analytische\s+Bestandteile|Analytical\s+constituents|Hrub[yý]\s+protein|Rohprotein)\b/iu.test(text);
+    const hasFeeding = /(?:Feeding\s+(?:advice|instructions)|F[üu]tterung(?:sempfehlung|shinweise)|Körpergewicht)\b/iu.test(text);
+    return !hasComposition && (hasAnalysis || hasFeeding || words.length < 75);
+  }
+
+  // Relative Koordinaten vermeiden Geräte- und Auflösungsabhängigkeiten.
+  // Jede Region wird getrennt gelesen, statt das gesamte Foto hochzuskalieren.
+  // Obergrenze der Pixelfläche eines vergrößerten Ausschnitts (Canvas-Speicher auf Mobilgeräten). Eine Grenze nach
+  // Kantenlänge würde bei Fotos in Handygröße (z. B. 4032×3024) die Vergrößerung auf unter 1,3-fach drücken.
+  const MAX_CROP_PIXELS = 12e6;
+
+  function recoveryRegions(width, height, primaryText = "") {
+    if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) return [];
+    const regions = width >= height && hasMixedLanguageColumns(primaryText)
+      ? [
+        [0.035, 0.05, 0.53, 0.96, 2],
+        [0.47, 0.05, 0.97, 0.96, 2],
+        [0.075, 0.11, 0.93, 0.52, 2],
+      ] : width >= height
+      ? [
+        [0.075, 0.11, 0.93, 0.52, 2],
+        [0.05, 0.50, 0.95, 0.96, 2],
+      ] : [
+        [0.05, 0.25, 0.75, 0.68, 2.5],
+        [0.06, 0.02, 0.95, 0.42, 2],
+        [0.06, 0.60, 0.95, 0.98, 2],
+      ];
+    return regions.map(([left, top, right, bottom, magnify]) => ({
+      x: Math.floor(left * width), y: Math.floor(top * height),
+      right: Math.ceil(right * width), bottom: Math.ceil(bottom * height),
+      // Canvas auf Mobilgeräten begrenzen, ohne die Ausschnittgeometrie zu ändern.
+      scale: Math.min(magnify, Math.sqrt(MAX_CROP_PIXELS / (((right - left) * width) * ((bottom - top) * height)))),
+    }));
+  }
+
+  const CZECH_ANALYSIS_LINE = /^(?:Hrub[yýáée]\s+(?:protein|tuk|vl[aá]knina|popel)|(?:Cukr|[ŠS]krob|V[aá]pn[ií]k|Fosfor|Sod[ií]k|Drasl[ií]k|Hor[cč][ií]k))\s+[\d.,]+\s*%/iu;
+  const GERMAN_ANALYSIS_LINE = /^(?:Rohprotein|Rohfett|Rohfaser|Rohasche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Zucker|Stärke)\s+[\d.,]+\s*%/iu;
+  // Zeilen, die die Bezugsbasis der Analysewerte nennen (Trockenmasse, „bezogen auf …“). Sie ändern die Bedeutung der Werte
+  // und werden deshalb mit ihnen übernommen; ohne sie würden die Werte fälschlich als Originalsubstanz gerechnet.
+  const ANALYSIS_BASIS_LINE = /\b(?:Trockenmasse|Trockensubstanz|dry\s+matter|bezogen\s+auf|normiert\s+auf|based\s+on|Basis\s*:)|(?:%|\b(?:mg|g)\s*\/\s*kg)\s+(?:TS|TM|DM)\b/iu;
+  const GERMAN_INGREDIENT_LINE = /^DE\s+(\p{L}[^\n]{20,240})$/iu;
+  const COMPOSITION_HEAD = /^(?:Samenstelling|Komposition|Composition|Zusammensetzung)\s*\/[^\n]{6,260}$/iu;
+
+  /**
+   * Nur spezifische neue Belegzeilen übernehmen, niemals generischen OCR-Müll
+   * oder abgeleitete/hinzugedichtete Angaben. Werte bleiben Original-OCR.
+   * Rückgabe kann eine vollständige echte DE-Zutatenzeile und unterstützende
+   * fremdsprachige Analysenzeilen enthalten, aber keinen Konformitätsstatus.
+   */
+  function recoveredEvidence(primary, candidate) {
+    const primaryHeading = String(primary || "").split(/\r?\n/).map(l => l.trim()).find(l => COMPOSITION_HEAD.test(l));
+    const lines = String(candidate || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const existing = new Set(String(primary || "").split(/\r?\n/)
+      .map(l => l.toLowerCase().replace(/\s+/g, " ").trim()));
+    const novel = line => !existing.has(line.toLowerCase().replace(/\s+/g, " ").trim());
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const german = GERMAN_INGREDIENT_LINE.exec(lines[i]);
+      if (german && german[1].split(/[,;]/).filter(x => /\p{L}{3,}/u.test(x)).length >= 3 && novel(lines[i])) {
+        // Die Überschrift steht im Ausschnitt oder, wenn der Ausschnitt erst unterhalb beginnt, im bereits gelesenen
+        // Haupttext. Beides ist tatsächlich gelesener Text; ohne Überschrift wird nichts übernommen.
+        const heading = lines.slice(Math.max(0, i - 11), i).reverse().find(l => COMPOSITION_HEAD.test(l)) || primaryHeading;
+        // Nur die tatsächlich ausgelesene Überschrift + DE-Zeile koppeln.
+        // Damit funktioniert der bestehende mehrsprachige Composition-Parser.
+        if (heading) out.push(heading, lines[i]);
+      }
+    }
+    // Deutschsprachige Zutaten auf einsprachigen Etiketten ergänzen.
+    for (const line of lines) {
+      const m = /^Zusammensetzung\s*:\s*(.+)$/iu.exec(line);
+      if (m && m[1].split(/[,;]/).filter(x => /\p{L}{3,}/u.test(x)).length >= 3 && novel(line)) {
+        out.push(line);
+      }
+    }
+    // Analytische Werte nur mit einer tatsächlich erkannten Tabellenüberschrift
+    // übernehmen. Fremdsprachige Werte sind Rohbelege, keine Sprachkonformität.
+    const heading = lines.find(line => /Analytische\s+Bestandteile|Analytick[eé]\s+slo[zž]ky|Constituintes\s+analiticos|Analytical\s+constituents/iu.test(line));
+    if (heading) {
+      const analysis = lines.filter(line => (GERMAN_ANALYSIS_LINE.test(line) || CZECH_ANALYSIS_LINE.test(line)) && novel(line));
+      if (analysis.length >= 2) {
+        // Die Überschrift immer mitnehmen, auch wenn der Haupttext sie schon enthält: Der Nachleseblock wird mit einer
+        // Leerzeile angehängt, und ein Abschnitt endet dort. Ohne Überschrift bliebe er von den neuen Werten getrennt.
+        out.push(heading);
+        out.push(...lines.filter(line => line !== heading && ANALYSIS_BASIS_LINE.test(line)));
+        out.push(...analysis.slice(0, 14));
+      }
+    }
+    return [...new Set(out)].join("\n");
+  }
+
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).

@@ -427,20 +427,22 @@
 
   // ── Kennzeichnungs-Check ──────────────────────────────────────
   const STATUS_LABELS = {
-    found: "Gefunden", probablyFound: "Wahrscheinlich", missing: "Nicht erkannt",
+    found: "Gefunden", probablyFound: "Wahrscheinlich", missing: "Kein OCR-Treffer",
     unclear: "Unklar", notCheckable: "Nicht prüfbar",
   };
   const OVERALL = {
     keineAuffaelligkeit: { cls: "ok", text: "In den erkannten Pflichtangaben keine Auffälligkeit. Keine Bestätigung der Rechtskonformität." },
     unklar: { cls: "warn", text: "Teilprüfung offen – Pflichtangaben fehlen im Prüftext oder sind unklar/nicht prüfbar. Originaletikett prüfen." },
-    auffaellig: { cls: "bad", text: "Pflichtangaben im Prüftext nicht erkannt – Etikett prüfen." },
-    nichtPruefbar: { cls: "info", text: "Nicht prüfbar – keine ausreichend belegten Pflichtangaben ausgewertet." },
+    // Der Text-Check liefert „auffaellig“ nicht mehr (ein OCR-Nichttreffer belegt keinen Verstoß); der Eintrag bleibt für
+    // ältere Verlaufseinträge und einen künftigen, belegten Befund.
+    auffaellig: { cls: "warn", text: "Textprüfung auffällig – unbestätigte Angaben am Originaletikett prüfen, kein rechtlich gesicherter Verstoß." },
+    nichtPruefbar: { cls: "info", text: "OCR-Text reicht für die Etikettenprüfung nicht aus. Originalfotos, erkannte Sprache und weitere Verpackungsseiten prüfen." },
   };
 
   const OVERALL_SHORT = {
     keineAuffaelligkeit: { cls: "ok", text: "Textprüfung unauffällig" },
     unklar: { cls: "warn", text: "Unklar" },
-    auffaellig: { cls: "bad", text: "Angaben nicht erkannt" },
+    auffaellig: { cls: "warn", text: "Textprüfung auffällig" },
     nichtPruefbar: { cls: "info", text: "Nicht prüfbar" },
   };
 
@@ -1124,17 +1126,45 @@
         }
       }
       const primary = Ocr.textFromResult(data);
-      const checkWeight = Labeling.needsPackageAmount(primary);
-      const checkImprint = Labeling.needsImprintLot(primary);
-      const checkDiet = Labeling.needsDietDeclaration(primary);
-      const checkCalcium = Labeling.needsSplitCalcium(primary);
-      const checkMoisture = rotated && Labeling.needsMoistureCrop(primary);
-      const checkComposition = Labeling.needsCompositionCrop(primary);
+      let text = primary;
+      if (Ocr.shouldRecoverText(primary)) {
+        // Bei engen, mehrsprachigen Tabellen werden kleine Zeilen im Vollbild
+        // häufig komplett übergangen. Max. drei skalierte Textausschnitte,
+        // nach dem ersten zusätzlichen verifizierbaren OCR-Beleg stoppen.
+        try {
+          step("Kleine Schrift wird nachgelesen");
+          const image = await createImageBitmap(input);
+          let regions;
+          try {
+            regions = Ocr.recoveryRegions(image.width, image.height, primary);
+          } finally {
+            image.close();
+          }
+          for (const region of regions) {
+            const { scale, ...bounds } = region;
+            const regionText = await readLabelCrop(worker, input, output, bounds,
+              Tesseract.PSM.SINGLE_BLOCK, scale);
+            const extra = Ocr.recoveredEvidence(text, regionText);
+            if (extra) {
+              text += "\n\n" + extra;
+              warnings.push("Kleine Schrift nachgelesen: übernommene Angaben am Originalfoto bestätigen");
+              break;
+            }
+          }
+        } catch (e) {
+          warnings.push("Nachlesen kleiner Schrift fehlgeschlagen (" + (e?.message || e) + ")");
+        }
+      }
+      const checkWeight = Labeling.needsPackageAmount(text);
+      const checkImprint = Labeling.needsImprintLot(text);
+      const checkDiet = Labeling.needsDietDeclaration(text);
+      const checkCalcium = Labeling.needsSplitCalcium(text);
+      const checkMoisture = rotated && Labeling.needsMoistureCrop(text);
+      const checkComposition = Labeling.needsCompositionCrop(text);
       if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition) {
-        return { text: primary, warnings };
+        return { text, warnings };
       }
 
-      let text = primary;
       try {
         if (checkWeight) {
           step("Zusatzprüfung Packungsmenge");
