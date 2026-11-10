@@ -793,7 +793,7 @@ const Labeling = (() => {
         // gehört dann bis zum ersten Komma oder Semikolon zur vorigen Angabe, der Rest zur nächsten.
         const nameFirst = (() => {
           const lead = line.slice(0, amounts[0].index).trim();
-          return lead !== "" && !proseFragment(lead.replace(/[ \t:,]+$/, "")) && lead.split(/\s+/).length <= 4;
+          return lead !== "" && !proseFragment(lead.replace(/[ \t:,]+$/, ""));
         })();
         let carried = nameFirst ? line.slice(0, amounts[0].index).trim() : "";
         amounts.forEach((amount, j) => {
@@ -811,7 +811,8 @@ const Labeling = (() => {
           const scientific = amount.kind === "scientific";
           const printed = scientific ? amount[0].trim() : amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
           // „7 500 mg“: Leerzeichen als Tausendertrennung. Die Menge ist nicht eindeutig (7 500 oder 500), nicht berechnen.
-          const grouped = !scientific && /\d[ \t]+$/.test(line.slice(0, amount.index));
+          // Nur eine eigenständige Zahl davor zählt („7 500“), nicht die Ziffer eines Namens („Vitamin D3 1000“, „B12 100“).
+          const grouped = !scientific && /^\d{3}(?![\d])/.test(printed) && /(?:^|[ \t(])\d{1,3}[ \t]+$/.test(line.slice(0, amount.index));
           const unitText = scientific ? (amount.match[2] || "") : amount[0].slice(printed.length).trim();
           const row = {
             amount: printed, value: scientific || grouped ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,

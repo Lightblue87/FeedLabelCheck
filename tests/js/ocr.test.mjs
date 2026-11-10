@@ -1123,6 +1123,21 @@ test("Zusatzstoffe bei Verdünnung: Tausenderpunkt in der Verdünnung und wissen
   ]);
 });
 
+test("Zusatzstoffe bei Verdünnung: lange Stoffnamen vor der Menge und Ziffern in Stoffnamen", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const long = card("Zusatzstoffe (je kg):\nKupfer in Form von Kupfersulfat (3b405) 100 mg, Zink (3b603) 750 mg");
+  assert.deepEqual(long.matchedText.split("\n"), [
+    "100 mg Kupfer in Form von Kupfersulfat (3b405): 0,8 mg/kg TM = 0,704 mg/kg bei 12 % Feuchte",
+    "750 mg Zink (3b603): 6 mg/kg TM = 5,28 mg/kg bei 12 % Feuchte",
+  ]);
+  for (const [line, expected] of [["Vitamin D3 1000 IE (3a671)", /1000 I\.E\. Vitamin D3 \(3a671\): 8 I\.E\.\/kg TM/],
+    ["Vitamin B12 100 mg (3a820)", /100 mg Vitamin B12 \(3a820\): 0,8 mg\/kg TM/], ["Vitamin B1 500 mg (3a821)", /500 mg Vitamin B1 \(3a821\): 4 mg\/kg TM/]]) {
+    assert.match(card(`Zusatzstoffe (je kg):\n${line}`).matchedText, expected, line);
+  }
+  // Echte Gruppierung mit Leerzeichen bleibt nicht eindeutig.
+  assert.match(card("Zusatzstoffe (je kg):\n7 500 mg Zink (3b603)").matchedText, /Menge nicht eindeutig gelesen/);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
