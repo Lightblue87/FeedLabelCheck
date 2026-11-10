@@ -243,3 +243,34 @@ python3 Data/audit_limit_units.py Data/zusatzstoffe.json --strict
 ```
 
 **Abnahmebedingungen:** Keine positive oder negative rechtliche Bewertung aus unbelegter Einheit; korrekte Zehnerpotenzen, Einheiten und Minimum/Maximum für `4a48` und `4b1823i`; dokumentierte Rechtsquelle und nachweisbare Grenzwertbasis; Tests laufen; bestehende Einzel-/Batchprüfungen und Foto-/Etikettenpfade bleiben funktional. **Kein Merge ohne ausdrückliche Freigabe.**
+
+
+## Produktentscheidung: PR #49 und #50 beibehalten (10.11.2026)
+
+**Verbindliche Entscheidung des Auftraggebers:** Die bereits nach `main` gemergten PRs [#49](https://github.com/Lightblue87/FeedLabelCheck/pull/49) (Zusatzstoffe bei aufgedruckter Verdünnung) und [#50](https://github.com/Lightblue87/FeedLabelCheck/pull/50) (automatische PWA-/Fachdatenupdates) **bleiben bestehen**. **Kein Revert** allein wegen des zeitlich überschneidenden Merge-/Freigabeablaufs. Der historische Vorgang ändert nichts daran, dass künftig **kein Merge ohne ausdrückliche Freigabe** stattfinden darf. Diese Dokumentation ist selbst keine Merge-Freigabe.
+
+### Sicherheitsgrenzen der Rechenkarte aus PR #49
+
+- Die Karte dient **ausschließlich der informativen Berechnung** des Beitrags eines einzelnen Ergänzungsfuttermittels, **nicht** als Prüfung rechtlicher Konformität. Status `Nicht prüfbar` und `info` beibehalten; **keinen positiven oder negativen Konformitätsstempel** aus dem Rechenwert ableiten.
+- Die Überschrift soll künftig unmissverständlich lauten: **„Rechnerischer Zusatzstoffbeitrag – keine Konformitätsprüfung“** (separate UI-Änderung mit Tests; nicht als bereits umgesetzt ausgeben).
+- **Bestätigte Lesart A:** `bis max. N g/kg TM` wird, sofern der Etikettkontext dies trägt, als **N g Original-Ergänzungsfutter je kg Trockenmasse der Gesamtration** verstanden, nicht als N g Ergänzungsfutter-TM. Für deklarierte Konzentration `C_f` je kg Originalfutter und einen **belegten** 12-%-Referenzbezug gilt `C_beitrag = C_f × (N/1000) × 0,88` (Einheit des Stoffes pro kg Gesamtration auf 12 % Feuchtebasis). Beispiel: `7.500 mg/kg × (8/1000) × 0,88 = 52,8 mg/kg`.
+- **Vor jeder Berechnung** muss die Deklaration eine klar erkannte Menge **mit Einheit**, einen eindeutigen Bezug **je kg Originalfutter**, eine plausible und widerspruchsfreie Verdünnungsangabe und die sichere Zuordnung zur richtigen Zusatzstoffzeile bieten. Bei unklarer Mengen-/Feuchtegrundlage, wissenschaftlicher Schreibweise ohne sichere Interpretation oder mehrdeutigen OCR-Treffern **keinen Zahlenwert ausgeben**; Grund und erforderliche Nachprüfung anzeigen.
+- Wert und Einheiten müssen sich auf denselben Stoffbezug beziehen. Element (z. B. Zink) und Verbindung (z. B. Zinkoxid) nicht gleichsetzen; mehrere Verbindungen ohne verifizierte Umrechnungs- und Aggregationsregel nicht summieren.
+- Selbst ein korrekt berechneter Beitrag zeigt **nicht** die tatsächliche Gesamtration und belegt weder die Tierartzulassung noch die Gehaltsgrenzen nach Art. 8 VO (EG) 767/2009. Weitere Stoffquellen und individuelle Zulassungsbedingungen bleiben offen. Auf Etikettenebene keine pauschale rechtliche Freigabe erzeugen.
+- Ein Grenzwertvergleich darf erst nach nachgewiesener Einheit, zutreffendem Stoff- und Feuchtebezug, Tierartkategorie, verbindlichem Grenzwert und gültigem Zulassungsakt mit seinen Sonderbedingungen ergänzt werden. Die Datenabsicherung aus [PR #51](https://github.com/Lightblue87/FeedLabelCheck/pull/51) ist dafür eine Vorarbeit, keine abschließende rechtliche Freigabe.
+
+### Betrieb und Abnahme von PR #50
+
+- Der erste GitHub-Pages-Deploy nach Merge #50 ([Actions-Lauf 42793858699](https://github.com/Lightblue87/FeedLabelCheck/actions/runs/42793858699)) **war erfolgreich**. Der Job `deploy`, insbesondere `Stamp build id`, `Upload PWA artifact` und `Deploy to GitHub Pages`, meldete jeweils `success`.
+- Das belegt die erfolgreiche GitHub-Auslieferung, **nicht** automatisch die Update-Funktion auf jedem Endgerät. Als separaten Smoke-Test die Live-Datei `https://lightblue87.github.io/FeedLabelCheck/version.json` abrufen und `build` mit dem zu diesem Deploy gehörenden SHA-Präfix `ab06f53e3e3b` vergleichen, **sofern nicht inzwischen ein neuer Deploy erfolgt ist**; außerdem Zeitstempel und HTTP-Status prüfen.
+- App-Aktualisierung und Offlineverhalten auf realem iPhone-PWA-Homescreen und Android weiter prüfen, einschließlich Rückkehr aus dem Hintergrund, OCR während Updates und Erhalt lokaler Prüfverläufe. Keine zusätzliche Freigabe allein aus einer erfolgreichen Actions-Anzeige ableiten.
+
+### Nächste Entwicklungsschritte nach dieser Entscheidung
+
+1. **P0:** Die bestehenden Quellen-/Einheitenprobleme im BVL-PDF-Parser und Grenzwertdatenmodell lösen (siehe vorheriger Abschnitt); Einheiten, Zehnerpotenzen, Min/Max, Tierarten, Zulassungsakte, Feuchte- und Stoffbezug validieren.
+2. **P0:** Regressionstests für „kein Zahlenwert bei unklarer Deklaration“ und „kein Konformitätsstempel aus Teilbeitrag“ beibehalten bzw. ergänzen.
+3. **P1:** Bezeichnung und Erklärung der Rechenkarte im UI eindeutiger machen, ohne das parallele Redesign festzuschreiben.
+4. **P1:** Den produktiven Update-Pfad anhand der Live-Build-ID und auf echten Geräten verifizieren.
+5. **Erst danach:** Einen juristisch belastbaren Grenzwertvergleich pro Zulassung/Tierart als **getrennte** Funktion entwickeln und fachlich abnehmen.
+
+**Änderungsdisziplin:** `main`, PR #49 und PR #50 durch diese Dokumentationsentscheidung nicht rückwirkend verändern. Weitere Änderungen über überprüfbare Branches/PRs; **Merge nur nach ausdrücklich erteilter Freigabe**.
