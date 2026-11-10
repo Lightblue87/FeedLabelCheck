@@ -116,3 +116,17 @@ test("Zutatenzeile ohne Überschrift im Ausschnitt nutzt die bereits gelesene Ü
   // Ohne gelesene Überschrift wird nichts erfunden.
   assert.equal(Ocr.recoveredEvidence("FEEDING AD rgewicht", line), "");
 });
+
+test("Nachgelesene Analysewerte bleiben dem Abschnitt zugeordnet, auch wenn die Überschrift schon im Haupttext steht", () => {
+  const feedTypes = [{ id: "complete_feed", nameDe: "Alleinfuttermittel", keywordsDe: ["Alleinfuttermittel"] }];
+  const diet = "Diät-Alleinfuttermittel für ausgewachsene Katzen. Unterstützung der Nierenfunktion bei chronischer Niereninsuffizienz.\n";
+  const primary = diet + "Analytische Bestandteile:\n???";
+  const candidate = "Analytische Bestandteile:\nRohprotein 9,70 %\nPhosphor 0,40 %";
+  const extra = Ocr.recoveredEvidence(primary, candidate);
+  assert.match(extra, /^Analytische Bestandteile:/);
+  // So wie readLabelPhoto() den Block anhängt.
+  const merged = primary + "\n\n" + extra;
+  const field = id => Labeling.check(merged, feedTypes[0], []).ruleResults.find(r => r.rule.id === id);
+  assert.equal(field("art18_renal_phosphor").status, "found");
+  assert.equal(field("art18_renal_phosphor").matchedText, "Phosphor 0,40 %");
+});

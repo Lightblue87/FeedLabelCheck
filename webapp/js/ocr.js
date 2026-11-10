@@ -362,7 +362,9 @@ const Ocr = (() => {
     if (heading) {
       const analysis = lines.filter(line => (GERMAN_ANALYSIS_LINE.test(line) || CZECH_ANALYSIS_LINE.test(line)) && novel(line));
       if (analysis.length >= 2) {
-        if (novel(heading)) out.push(heading);
+        // Die Überschrift immer mitnehmen, auch wenn der Haupttext sie schon enthält: Der Nachleseblock wird mit einer
+        // Leerzeile angehängt, und ein Abschnitt endet dort. Ohne Überschrift bliebe er von den neuen Werten getrennt.
+        out.push(heading);
         out.push(...analysis.slice(0, 14));
       }
     }
