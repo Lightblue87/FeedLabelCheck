@@ -997,6 +997,69 @@ test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, 
   assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
 });
 
+test("parseAdditiveRows: Name vor oder nach der Menge, Kennnummer davor, nur Zusatzstoffabschnitte", () => {
+  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.unit, r.name, r.code]);
+  assert.deepEqual(rows("Zusatzstoffe:\nVitamin E 50 mg"), [["50", "mg", "Vitamin E", null]]);
+  assert.deepEqual(rows("Zusatzstoffe:\nVitamin E: 100 mg (3a700)"), [["100", "mg", "Vitamin E", "3a700"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n(3a700) Vitamin E 100 mg"), [["100", "mg", "Vitamin E", "3a700"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n10 mg Vitamin E\nFütterungsempfehlung: 100 g pro Tier und Tag"), [["10", "mg", "Vitamin E", null]]);
+  assert.deepEqual(rows("Fütterungsempfehlung: 100 g pro Tier und Tag"), []);
+  assert.deepEqual(rows("Zusatzstoffe:\n7.500 mg Zink als Zinkoxid (3b603)\n1,2 mg Propylgallat (E310)"),
+    [["7.500", "mg", "Zink als Zinkoxid", "3b603"], ["1,2", "mg", "Propylgallat", "e310"]]);
+});
+
+test("parseAdditiveRows: Kennnummer der Folgezeile nur als reine Fortsetzung", () => {
+  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.name, r.code]);
+  assert.deepEqual(rows("Zusatzstoffe:\n10 mg Vitamin E\nKupfer als Kupfersulfat (3b405)"), [["10", "Vitamin E", null]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n2.500 mg Mangan als Mangan-(II)-Oxid\n(3b502)"), [["2.500", "Mangan als Mangan-(II)-Oxid", "3b502"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)"), [["2.500", "Mangan als Mangan-(II)-Oxid", "3b502"]]);
+});
+
+test("parseAdditiveRows: Abschnitt nur aus Zeilen ohne gelesene Einheit, überlappende Überschriften, mehrere Angaben je Zeile", () => {
+  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.unit, r.name, r.code]);
+  assert.deepEqual(rows("Zusatzstoffe:\n90.000 Vitamin D3 (3a671)"), [["90.000", null, "Vitamin D3", "3a671"]]);
+  // Eine gedruckte Angabe ergibt einen Datensatz, auch wenn zwei Überschriften sie erfassen.
+  assert.deepEqual(rows("Zusatzstoffe:\nErnährungsphysiologische Zusatzstoffe:\n10 mg Vitamin E (3a700)"), [["10", "mg", "Vitamin E", "3a700"]]);
+  // Zweimal gedruckt bleibt zweimal.
+  assert.equal(rows("Zusatzstoffe:\n10 mg Vitamin E (3a700)\n10 mg Vitamin E (3a700)").length, 2);
+  assert.deepEqual(rows("Zusatzstoffe: Vitamin E 50 mg, Vitamin D3 1000 IE (3a671)"),
+    [["50", "mg", "Vitamin E", null], ["1000", "I.E.", "Vitamin D3", "3a671"]]);
+  assert.deepEqual(rows("Zusatzstoffe:\n50 mg Vitamin E, 1000 IE Vitamin D3 (3a671)"),
+    [["50", "mg", "Vitamin E", null], ["1000", "I.E.", "Vitamin D3", "3a671"]]);
+});
+
+test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergleich", () => {
+  const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\n90.000 Vitamin D3 (3a671)\n7.500 mg Zink als Zinkoxid (3b603)\n1,2 mg Propylgallat (E310)\n1000 mg Kupfer\nDieses Mineralfutter darf nur an Rinder bis max. 8 g/kg TM\nAufnahme gefüttert werden.";
+  const result = Labeling.check(label, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  assert.ok(result);
+  assert.equal(result.status, "notCheckable");
+  assert.equal(result.rule.severity, "info");
+  assert.deepEqual(result.matchedText.split("\n"), [
+    "625.000 I.E. Vitamin A (3a672a): 5000 I.E./kg TM = 4400 I.E./kg bei 12 % Feuchte",
+    "90.000 Vitamin D3 (3a671): Einheit nicht gelesen, nicht berechnet",
+    "7.500 mg Zink als Zinkoxid (3b603): 60 mg/kg TM = 52,8 mg/kg bei 12 % Feuchte",
+    "1,2 mg Propylgallat (e310): 0,0096 mg/kg TM = 0,008448 mg/kg bei 12 % Feuchte",
+  ]);
+  assert.match(result.note, /bis max\. 8 g\/kg TM/);
+  assert.match(result.note, /Kein Grenzwertvergleich/);
+  assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);
+});
+
+test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
+  const rows = "Zusatzstoffe:\n7.500 mg Zink als Zinkoxid (3b603)\n";
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  assert.equal(card("Dieses Futter darf bis max. 8 g/kg gefüttert werden."), undefined);
+  assert.equal(card("Keine Verdünnung angegeben."), undefined);
+  assert.equal(Labeling.check("Mineralfutter für Rinder\nZusatzstoffe:\n10 mg Vitamin E\nbis max. 8 g/kg TM Aufnahme", FEED_TYPES[2], [])
+    .ruleResults.find(r => r.rule.id === "zusatz_verduennung"), undefined);
+  const conflict = card("Rinder bis max. 8 g/kg TM Aufnahme. Pferde bis max. 5 g/kg TM Aufnahme.");
+  assert.equal(conflict.status, "notCheckable");
+  assert.match(conflict.note, /Widersprüchliche Verdünnungsangaben/);
+  assert.doesNotMatch(conflict.matchedText, /mg\/kg TM =/);
+  // Gleiche Angabe zweimal ist kein Widerspruch; kg und g werden umgerechnet.
+  assert.match(card("bis max. 8 g/kg TM. Rinder bis max. 0,008 kg/kg TM.").matchedText, /60 mg\/kg TM/);
+});
+
 test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und Kennnummer in der Folgezeile", () => {
   const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\nFütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)\nDieses Ergänzungsfutter darf we- 2.000 mg Beta-Carotin (3a160(a))\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)\nTechnologische Zusatzstoffe (je kg):\n100 mg Betahydroxytoluol (E321)";
