@@ -1043,6 +1043,8 @@ test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergl
   assert.match(result.note, /bis max\. 8 g\/kg TM/);
   assert.match(result.note, /Keine Bestätigung der Einhaltung und kein Grenzwertvergleich/);
   assert.match(result.note, /Gramm Originalfutter je kg Ration-TM/);
+  assert.match(result.note, /Fall A/);
+  assert.match(result.note, /Fall B\) wird nicht gerechnet/);
   assert.match(result.note, /weitere Zusatzstoffquellen der Ration/);
   assert.match(result.note, /Art\. 8 VO \(EG\) Nr\. 767\/2009/);
   assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);

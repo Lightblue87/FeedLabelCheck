@@ -937,8 +937,8 @@ const Labeling = (() => {
     });
     const skipped = rows.length - coded.length;
     const note = `Rechenwert für den Beitrag dieses Futters, aus den Etikettangaben je kg Futter und der Verdünnung „${dilution.evidence}“ `
-      + "(Menge × Verdünnung; 12 % Feuchte = Trockenmasse × 0,88). Angenommen: Verdünnung in Gramm Originalfutter je kg "
-      + "Ration-TM; die Mengen werden wie gedruckt verwendet, die Feuchte des Futters wird nicht umgerechnet. Keine Bestätigung "
+      + "(Fall A: Menge × Verdünnung; 12 % Feuchte = Trockenmasse × 0,88). Angenommen: Verdünnung in Gramm Originalfutter je kg "
+      + "Ration-TM; der Fall „Anteil an der Trockenmasse der Ration“ (Fall B) wird nicht gerechnet; die Mengen werden wie gedruckt verwendet, die Feuchte des Futters wird nicht umgerechnet. Keine Bestätigung "
       + "der Einhaltung und kein Grenzwertvergleich: Einheit, Tierart und Bezug der Katalogwerte sind nicht belegt; "
       + "Zulassungsbedingungen, weitere Zusatzstoffquellen der Ration und die Konzentrationsgrenze für das Ergänzungsfutter "
       + "selbst (Art. 8 VO (EG) Nr. 767/2009) sind nicht geprüft. Ausgangswerte und Verdünnung am Original prüfen."
