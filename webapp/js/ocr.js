@@ -269,7 +269,74 @@ const Ocr = (() => {
     return fixUnknownCodes(cleaned);
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation };
+
+  // Fallback für Fotos mit sehr kleiner Schrift / mehrsprachigen Zeilen.
+  // Ein enger Ausschnitt mit 2–2,5-facher Skalierung kann Text retten, den
+  // die Vollbild-OCR wegen Spalten oder dominanter großer Schrift übergeht.
+  // Maximal 3 Zusatzläufe pro Bild, keine zusätzlichen Sprachpakete.
+  function shouldRecoverText(text) {
+    const words = String(text || "").match(/\p{L}{3,}/gu) || [];
+    if (words.length < 30) return true;
+    const hasComposition = /(?:^|\n)\s*DE\s+[^\n]{12,},\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]{20,},\s*\p{L}/imu.test(text);
+    const hasAnalysis = /(?:Analytische\s+Bestandteile|Analytical\s+constituents|Hrub[yý]\s+protein|Rohprotein)\b/iu.test(text);
+    const hasFeeding = /(?:Feeding\s+(?:advice|instructions)|F[üu]tterung(?:sempfehlung|shinweise)|Körpergewicht)\b/iu.test(text);
+    return !hasComposition && (hasAnalysis || hasFeeding || words.length < 75);
+  }
+
+  // Relative Koordinaten vermeiden Geräte- und Auflösungsabhängigkeiten.
+  // Jede Region wird getrennt gelesen, statt das gesamte Foto hochzuskalieren.
+  function recoveryRegions(width, height) {
+    if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) return [];
+    const regions = width >= height
+      ? [
+        [0.075, 0.11, 0.93, 0.52, 2],
+        [0.05, 0.50, 0.95, 0.96, 2],
+      ] : [
+        [0.05, 0.25, 0.75, 0.68, 2.5],
+        [0.06, 0.02, 0.95, 0.42, 2],
+        [0.06, 0.60, 0.95, 0.98, 2],
+      ];
+    return regions.map(([left, top, right, bottom, magnify]) => ({
+      x: Math.floor(left * width), y: Math.floor(top * height),
+      right: Math.ceil(right * width), bottom: Math.ceil(bottom * height),
+      // Canvas auf Mobilgeräten begrenzen, ohne die Ausschnittgeometrie zu ändern.
+      scale: Math.min(magnify, 2800 / Math.max((right - left) * width, (bottom - top) * height)),
+    }));
+  }
+
+  const CZECH_ANALYSIS_LINE = /^(?:Hrub[yýáé]\s+(?:protein|tuk|vl[aá]knina|popel)|(?:Cukr|[ŠS]krob|V[aá]pn[ií]k|Fosfor|Sod[ií]k|Drasl[ií]k|Hor[cč][ií]k))\s+[\d.,]+\s*%/iu;
+  const GERMAN_INGREDIENT_LINE = /^DE\s+(\p{L}[^\n]{20,240})$/iu;
+  const COMPOSITION_HEAD = /^(?:Samenstelling|Komposition|Composition|Zusammensetzung)\s*\/[^\n]{6,260}$/iu;
+
+  /**
+   * Nur spezifische neue Belegzeilen übernehmen, niemals generischen OCR-Müll
+   * oder abgeleitete/hinzugedichtete Angaben. Werte bleiben Original-OCR.
+   * Rückgabe kann eine vollständige echte DE-Zutatenzeile und unterstützende
+   * fremdsprachige Analysenzeilen enthalten, aber keinen Konformitätsstatus.
+   */
+  function recoveredEvidence(primary, candidate) {
+    const lines = String(candidate || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const existing = new Set(String(primary || "").split(/\r?\n/)
+      .map(l => l.toLowerCase().replace(/\s+/g, " ").trim()));
+    const novel = line => !existing.has(line.toLowerCase().replace(/\s+/g, " ").trim());
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const german = GERMAN_INGREDIENT_LINE.exec(lines[i]);
+      if (german && german[1].split(/[,;]/).filter(x => /\p{L}{3,}/u.test(x)).length >= 3 && novel(lines[i])) {
+        const heading = lines.slice(Math.max(0, i - 11), i).reverse().find(l => COMPOSITION_HEAD.test(l));
+        // Nur die tatsächlich ausgelesene Überschrift + DE-Zeile koppeln.
+        // Damit funktioniert der bestehende mehrsprachige Composition-Parser.
+        if (heading) out.push(heading, lines[i]);
+      }
+    }
+    // Analytische Werte aus anderssprachiger Packungsseite: als OCR-Rohbeleg
+    // sichtbar, rechtliche Sprach- und Kennzeichnungspflicht separat prüfen.
+    const analysis = lines.filter(line => CZECH_ANALYSIS_LINE.test(line) && novel(line));
+    if (analysis.length >= 2) out.push(...analysis.slice(0, 14));
+    return [...new Set(out)].join("\n");
+  }
+
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
