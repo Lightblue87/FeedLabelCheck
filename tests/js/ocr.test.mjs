@@ -1700,3 +1700,52 @@ test("Feuchte über 100 Prozent bleibt sichtbar und erhält einen konkreten Korr
   assert.match(result.matchedText, /80%.*809%/);
   assert.match(result.note, /über 100 %/);
 });
+
+// ── Spalten ohne „Überschrift: Überschrift“-Zeile (mehrsprachiges Etikett, animonda Vom Feinsten) ──
+
+test("zweispaltiges Etikett ohne Überschriftenpaar: die Spaltenlücke wird über die Wortabdeckung gefunden", () => {
+  // Links Deutsch (x 40–600), rechts Niederländisch (x 640–1200). Der linke Satz endet mitten im Wort, kein „:“ vor der Lücke.
+  const left = ["Zusammensetzung: 65 % Fleisch und", "tierische Neben- erzeugnisse (Schwein,", "25 % Pute, 8 % Kaninchen), Mineralstoffe.", "H = NL-08882; B = DE HB 100004.",
+                "Kennnummer der Partie / mindestens haltbar", "bis: siehe Aufdruck. Inverkehrbringer", "animonda petcare gmbh Frankfurter Str.", "31 49214 Bad Rothenfelde Art.-No.",
+                "83205 Futter für ausgewachsene Katzen", "Bitte stets frisches Wasser bereitstellen.", "Abhängig von Alter, Temperament und", "Haltung. Nettomasse siehe Deckel",
+                "Str. 31 Bad Rothenfelde Telefon Fax"];
+  const right = ["Samenstelling: 65 % vlees en dierlijke", "bijproducten (varken, 25 % kalkoen, 8 %", "konijn), mineralen. Refe- rentienummer van", "de partij / ten minste houdbaar tot:",
+                 "zie opdruk. Tijssen Goed voor Dieren", "Rijndijk 83 2394 AD Hazerswoude Volledig", "diervoeder voor volwassen katten met", "kalkoen en konijn voor volwassen katten",
+                 "Tijssen Goed voor Dieren Rijndijk 83", "Bitte stets vers water aanbieden voor", "afhankelijk van leeftijd temperament en", "houding. Netto hoeveelheid zie deksel",
+                 "Rijndijk 83 Hazerswoude Telefoon Fax"];
+  const lines = [boxed(0, ["Vom", 300, 360], ["Feinsten", 370, 520], ["Adult", 530, 640])];
+  left.forEach((text, i) => {
+    const y = 40 + i * 30;
+    const leftWords = text.split(" ").map((w, k, all) => [w, 40 + (k * 540) / all.length, 40 + (k * 540) / all.length + 480 / all.length]);
+    const rightWords = right[i].split(" ").map((w, k, all) => [w, 640 + (k * 540) / all.length, 640 + (k * 540) / all.length + 480 / all.length]);
+    lines.push(boxed(y, ...leftWords, ...rightWords));
+  });
+  const result = lineText(Ocr.reorderColumns(lines));
+  const firstRight = result.findIndex(l => l.startsWith("Samenstelling"));
+  const lastLeft = result.findIndex(l => l.startsWith("Str. 31 Bad Rothenfelde Telefon"));
+  assert.ok(firstRight > lastLeft, "alle linken Zeilen stehen vor den rechten");
+  assert.ok(result.every(l => !(/Zusammensetzung/.test(l) && /Samenstelling/.test(l))), "keine vermischte Zeile");
+  assert.ok(result.includes("Zusammensetzung: 65 % Fleisch und"));
+  assert.ok(result.includes("Samenstelling: 65 % vlees en dierlijke"));
+});
+
+test("einspaltiger Fließtext und Text ohne freie Mittellücke wird nicht getrennt", () => {
+  const rows = [];
+  for (let i = 0; i < 16; i++) {
+    // Wörter laufen durch die Mitte: kein freies Band
+    rows.push(boxed(10 + i * 30, ["Alleinfuttermittel", 40, 330], ["für", 340, 400], ["ausgewachsene", 410, 700], ["Katzen", 710, 900]));
+  }
+  assert.deepEqual(Ocr.reorderColumns(rows), rows);
+  // Wenige Zeilen: keine Trennung über die Abdeckung
+  const few = [boxed(10, ["Links", 40, 300], ["Rechts", 640, 900]), boxed(40, ["Links", 40, 300], ["Rechts", 640, 900])];
+  assert.deepEqual(Ocr.reorderColumns(few), few);
+  // Text nur auf einer Seite des Bandes
+  const oneSide = Array.from({ length: 14 }, (_, i) => boxed(10 + i * 30, ["Zusammensetzung", 40, 300], ["Weizen", 310, 380], ["Mais", 700, 760]));
+  assert.deepEqual(Ocr.reorderColumns(oneSide.map((words, i) => i < 3 ? words : words.slice(0, 2))), oneSide.map((words, i) => i < 3 ? words : words.slice(0, 2)));
+});
+
+test("Tabelle aus Namens- und Wertespalte wird über die Wortabdeckung nicht zerlegt", () => {
+  const names = ["Rohprotein", "Rohfett", "Rohfaser", "Rohasche", "Feuchtigkeit", "Calcium", "Phosphor", "Natrium", "Kalium", "Magnesium", "Taurin", "Zucker", "Stärke"];
+  const table = names.map((name, i) => boxed(10 + i * 30, [name, 40, 200], ["Gehalt", 210, 300], ["bezogen", 310, 400], [`${i},5 %`, 640, 700]));
+  assert.deepEqual(Ocr.reorderColumns(table), table);
+});

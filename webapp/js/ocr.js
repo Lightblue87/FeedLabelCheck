@@ -69,6 +69,52 @@ const Ocr = (() => {
     return heights[Math.floor(heights.length / 2)] || 1;
   }
 
+  // Zweispaltige Etiketten ohne „Überschrift: Überschrift“-Zeile (z. B. „Zusammensetzung: … Samenstelling: …“ nebeneinander,
+  // links endet die Zeile mitten im Satz): Die Lücke ist ein senkrechtes Band in der Mitte, das fast kein Wort überdeckt,
+  // mit Text auf beiden Seiten. Streng gehalten, damit einspaltiger Text mit zufälligen Lücken nicht getrennt wird.
+  function coverageGutter(lines) {
+    const rows = lines.filter(words => words.length && words.every(w => w.bbox));
+    if (rows.length < 12) return null;
+    const heights = rows.map(lineHeight).sort((a, b) => a - b);
+    const height = heights[Math.floor(heights.length / 2)];
+    const minX = Math.min(...rows.map(words => Math.min(...words.map(w => w.bbox.x0))));
+    const maxX = Math.max(...rows.map(words => Math.max(...words.map(w => w.bbox.x1))));
+    if (!(maxX - minX > height * 12)) return null;
+    const from = Math.floor(minX + (maxX - minX) * 0.3);
+    const to = Math.ceil(minX + (maxX - minX) * 0.7);
+    const covered = new Array(to - from + 1).fill(0);
+    for (const words of rows) {
+      const hit = new Set();
+      for (const word of words) {
+        for (let x = Math.max(from, Math.floor(word.bbox.x0)); x <= Math.min(to, Math.ceil(word.bbox.x1)); x++) hit.add(x);
+      }
+      for (const x of hit) covered[x - from]++;
+    }
+    const allowed = Math.max(1, Math.ceil(rows.length * 0.12));
+    let best = null;
+    for (let x = 0, start = null; x <= covered.length; x++) {
+      const free = x < covered.length && covered[x] <= allowed;
+      if (free && start === null) start = x;
+      if (!free && start !== null) {
+        if (!best || x - start > best.width) best = { start, width: x - start };
+        start = null;
+      }
+    }
+    if (!best || best.width < height * 0.6) return null;
+    const x = from + best.start + best.width / 2;
+    // Beide Seiten müssen deutlich besetzt sein (mindestens sechs Zeilen und 35 % der Zeilen mit Text je Seite).
+    const leftRows = rows.filter(words => words.some(w => (w.bbox.x0 + w.bbox.x1) / 2 < x)).length;
+    const rightRows = rows.filter(words => words.some(w => (w.bbox.x0 + w.bbox.x1) / 2 >= x)).length;
+    if (leftRows < 6 || rightRows < 6 || leftRows < rows.length * 0.35 || rightRows < rows.length * 0.35) return null;
+    // Beide Seiten müssen Fließtext tragen: Eine Tabelle aus Namens- und Wertespalte hat dieselbe freie Mitte, aber nur
+    // ein bis zwei Wörter je Zeile auf der Wertseite und darf nicht in „erst alle Namen, dann alle Werte“ zerlegt werden.
+    const median = values => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
+    const leftWords = median(rows.map(words => words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 < x).length).filter(n => n > 0));
+    const rightWords = median(rows.map(words => words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 >= x).length).filter(n => n > 0));
+    if (leftWords < 4 || rightWords < 4) return null;
+    return { x, height, width: best.width };
+  }
+
   function findColumnGutter(lines) {
     for (let index = 0; index < lines.length; index++) {
       const words = lines[index];
@@ -105,7 +151,7 @@ const Ocr = (() => {
         if (best && best.width >= height) return { x: from + best.start + best.width / 2, height, width: best.width };
       }
     }
-    return null;
+    return coverageGutter(lines);
   }
 
   // Ein an der Spaltenlücke getrenntes Stück übernimmt die Entscheidung der ursprünglichen Zeile: Hat die ganze Zeile

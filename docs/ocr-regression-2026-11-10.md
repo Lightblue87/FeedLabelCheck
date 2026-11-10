@@ -73,3 +73,13 @@ Auf der Pavo-Rückseite kam die Fütterungstabelle zerstört an („FEEDING AD r
 - `app.js` liest nach einem Treffer weiter, solange die Fütterungstabelle fehlt.
 
 Grenze: Die Ausschnittsgrenzen sind für das Pavo-Layout bestimmt. Auf anderen Layouts kann die Tabelle woanders liegen. Eine Messung auf dem iPhone steht aus.
+
+## Zweispaltige Etiketten ohne Überschriftenpaar (10.11.2026)
+
+Beispiel: animonda „Vom Feinsten Adult mit Pute + Kaninchen“ (Schale, Rückseite). Links stehen Deutsch und Französisch, rechts Niederländisch und Italienisch. Tesseract liefert das ganze Etikett als einen Block mit 40 Zeilen, und die Spalten kamen Zeile für Zeile vermischt an („Zusammensetzung: 65 % Fleisch und tierische Neben- Samenstelling: 65 % vlees en dierlijke bijproducten“). Die Belege der Karten waren dadurch Mischtext, zum Beispiel für Futtermittelart („© & € Alleinfuttermittel © Volledig diervoeder“) und Haltbarkeit („siehe zie opdruk“).
+
+Ursache: `findColumnGutter` suchte die Spaltenlücke nur in einer Zeile, in der ein Wort mit „:“ von einer Abschnittsüberschrift gefolgt wird. Hier endet die linke Zeile mitten im Satz („Neben-“).
+
+- `coverageGutter` (Ergänzung zu `findColumnGutter`): Die Lücke ist ein senkrechtes Band im mittleren Drittel, das höchstens 12 % der Zeilen überdecken (mindestens 0,6 Wörterhöhen breit). Beide Seiten brauchen mindestens sechs Zeilen und 35 % der Zeilen, und im Median mindestens vier Wörter je Zeile (Fließtext). Eine Tabelle aus Namens- und Wertespalte und einspaltiger Text werden deshalb nicht getrennt. Mindestens zwölf Zeilen mit Position sind nötig.
+- Wirkung am echten Etikett: Futtermittelart „Alleinfuttermittel“, Zusammensetzung „65 % Fleisch und tierische Nebenerzeugnisse (Schwein, 25 % Pute, 8 % Kaninchen), Mineralstoffe“, Haltbarkeit „siehe Aufdruck“, jeweils ohne niederländischen Text.
+- Grenze: Die Nettomenge („e100g“ in großer Schrift) wird nicht gelesen. Die Analytischen Bestandteile stehen als „Protein/Protéine/Eiwit/Proteine 11 %“ ohne Leerzeichen um die Schrägstriche und über Zeilenumbrüche hinweg. Beides ist offen. Eine Messung auf dem iPhone steht aus.
