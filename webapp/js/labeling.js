@@ -726,6 +726,8 @@ const Labeling = (() => {
   // ── Strukturierte Zusatzstoffzeilen ──
   // Eine gedruckte Zahl: „7.500“ (Tausenderpunkt), „1,2“ (Dezimalkomma), „1000“. „1.5“ ist nicht eindeutig.
   function parseLabelNumber(raw) {
+    // „0.125“ ist keine Tausendergruppe: mit führender Null ist der Punkt ein Dezimalpunkt oder unklar.
+    if (/^0\./.test(raw)) return null;
     if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(raw)) return Number(raw.replace(/\./g, "").replace(",", "."));
     if (/^\d+(?:,\d+)?$/.test(raw)) return Number(raw.replace(",", "."));
     return null;
@@ -736,7 +738,8 @@ const Labeling = (() => {
   const SCIENTIFIC = /(\d+(?:[.,]\d+)?)[ \t]*[x×*·][ \t]*10(?:[ \t]*\^[ \t]*-?\d+|[ \t]*[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+|[ \t]+-?\d{1,2}(?!\d))[ \t]*(KBE|CFU)?/iu;
   // Bezug der Mengenangaben laut Überschrift: „je kg“ (kg), ausdrücklich anders („je 100 g“, „pro Tag“) oder nicht gelesen.
   const BASIS_KG = /(?:je|pro)[ \t]*(?:1[ \t]*)?kg\b|\/[ \t]*kg\b/i;
-  const BASIS_OTHER = /(?:je|pro)[ \t]*\d+(?:[,.]\d+)?[ \t]*(?:mg|g|kg|t)\b|(?:je|pro)[ \t]+(?:Tier|Tag|Portion|Dose|Beutel|Packung|Ration|Stück)\b/i;
+  // Auch ein Feuchtebezug („je kg TM“, „je kg bei 12 % Feuchte“) weicht vom unterstellten Bezug (Originalfutter) ab.
+  const BASIS_OTHER = /(?:je|pro)[ \t]*\d+(?:[,.]\d+)?[ \t]*(?:mg|g|kg|t)\b|(?:je|pro)[ \t]+(?:Tier|Tag|Portion|Dose|Beutel|Packung|Ration|Stück)\b|(?:(?:je|pro)[ \t]*|\/[ \t]*)kg[ \t]*(?:TM|TS|Trockenmasse|Trockensubstanz)\b|\bFeuchte|\bTrockenmasse|\bTM\b/i;
   const declaredBasis = heading => BASIS_OTHER.test(heading) ? "other" : BASIS_KG.test(heading) ? "kg" : "unknown";
   const ROW_UNITS = [[/^(?:mg)$/i, "mg"], [/^(?:µg|μg|mcg)$/i, "µg"], [/^g$/i, "g"],
     [/^(?:[I1l]\.[ \t]?E\.|IE|IU)$/i, "I.E."], [/^KBE$/i, "KBE"], [/^FTU$/i, "FTU"]];

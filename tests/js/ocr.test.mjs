@@ -1083,6 +1083,23 @@ test("Zusatzstoffe bei Verdünnung: wissenschaftliche Schreibweise und abweichen
   assert.match(mixed.matchedText, /60 mg\/kg TM/);
 });
 
+test("Zusatzstoffe bei Verdünnung: führende Null mit Punkt und Trockenmasse-Bezug der Überschrift", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const leading = card("Zusatzstoffe (je kg):\n0.125 mg Selen (3b801)");
+  assert.match(leading.matchedText, /Menge nicht eindeutig gelesen, nicht berechnet/);
+  assert.doesNotMatch(leading.matchedText, /\/kg TM =/);
+  // Tausenderpunkt und Dezimalkomma bleiben gültig.
+  assert.match(card("Zusatzstoffe (je kg):\n0,125 mg Selen (3b801)").matchedText, /0,001 mg\/kg TM/);
+  assert.match(card("Zusatzstoffe (je kg):\n1.250 mg Zink (3b603)").matchedText, /10 mg\/kg TM/);
+  for (const heading of ["Zusatzstoffe (je kg TM):", "Zusatzstoffe (je kg Trockenmasse):", "Zusatzstoffe (je kg bei 12 % Feuchte):"]) {
+    // Überschriften mit längerem Zusatz in der Klammer werden gar nicht als Zusatzstoffabschnitt gelesen (keine Karte).
+    const result = card(`${heading}\n750 mg Zink (3b603)`);
+    assert.doesNotMatch(result?.matchedText ?? "", /\/kg TM =/, heading);
+    if (result) assert.match(result.matchedText, /Überschrift nennt einen anderen Bezug/, heading);
+  }
+  assert.match(card("Zusatzstoffe (je kg):\n750 mg Zink (3b603)").matchedText, /6 mg\/kg TM/);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
