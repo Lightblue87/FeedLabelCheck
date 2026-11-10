@@ -411,7 +411,7 @@
         });
         counts[res.cls] = (counts[res.cls] || 0) + 1;
         row.classList.add(res.cls);
-        const pillText = res.cls === "ok" ? "Grenzwert eingehalten*" : res.cls === "bad" ? "Grenzwert überschritten*" : "Nicht prüfbar";
+        const pillText = res.cls === "ok" ? "Innerhalb Daten-Grenzwert" : res.cls === "bad" ? "Außerhalb Daten-Grenzwert" : "Nicht prüfbar";
         cell.hidden = false;
         cell.innerHTML = `<span class="status-pill ${res.cls}">${pillText}</span>${
           res.lines.map(l => `<div>${escapeHtml(l)}</div>`).join("")}`;
@@ -420,7 +420,7 @@
       const sum = $("#b-summary");
       sum.hidden = total === 0;
       sum.innerHTML = [
-        ["ok", counts.ok, "innerhalb Daten-Grenzwert*"], ["bad", counts.bad, "außerhalb Daten-Grenzwert*"], ["warn", counts.warn, "zu prüfen"],
+        ["ok", counts.ok, "innerhalb Daten-Grenzwert"], ["bad", counts.bad, "außerhalb Daten-Grenzwert"], ["warn", counts.warn, "zu prüfen"],
       ].filter(([, n]) => n).map(([c, n, t]) => `<span class="chip ${c}">${n} ${t}</span>`).join("");
     });
   }
