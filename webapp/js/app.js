@@ -427,20 +427,20 @@
 
   // ── Kennzeichnungs-Check ──────────────────────────────────────
   const STATUS_LABELS = {
-    found: "Gefunden", probablyFound: "Wahrscheinlich", missing: "Nicht erkannt",
+    found: "Gefunden", probablyFound: "Wahrscheinlich", missing: "Kein OCR-Treffer",
     unclear: "Unklar", notCheckable: "Nicht prüfbar",
   };
   const OVERALL = {
     keineAuffaelligkeit: { cls: "ok", text: "In den erkannten Pflichtangaben keine Auffälligkeit. Keine Bestätigung der Rechtskonformität." },
     unklar: { cls: "warn", text: "Teilprüfung offen – Pflichtangaben fehlen im Prüftext oder sind unklar/nicht prüfbar. Originaletikett prüfen." },
-    auffaellig: { cls: "bad", text: "Pflichtangaben im Prüftext nicht erkannt – Etikett prüfen." },
-    nichtPruefbar: { cls: "info", text: "Nicht prüfbar – keine ausreichend belegten Pflichtangaben ausgewertet." },
+    auffaellig: { cls: "warn", text: "Textprüfung auffällig – unbestätigte Angaben am Originaletikett prüfen, kein rechtlich gesicherter Verstoß." },
+    nichtPruefbar: { cls: "info", text: "OCR-Text reicht für die Etikettenprüfung nicht aus. Originalfotos, erkannte Sprache und weitere Verpackungsseiten prüfen." },
   };
 
   const OVERALL_SHORT = {
     keineAuffaelligkeit: { cls: "ok", text: "Textprüfung unauffällig" },
     unklar: { cls: "warn", text: "Unklar" },
-    auffaellig: { cls: "bad", text: "Angaben nicht erkannt" },
+    auffaellig: { cls: "warn", text: "Textprüfung auffällig" },
     nichtPruefbar: { cls: "info", text: "Nicht prüfbar" },
   };
 
