@@ -884,6 +884,24 @@ const Labeling = (() => {
       : { conflict: [...found.values()], reason: "conflict" };
   }
 
+  // Beitrag eines Ergänzungsfuttermittels zum Zusatzstoffgehalt, bezogen auf Futter mit der Referenzfeuchte
+  // (Standard 12 %): Gehalt je kg Originalfutter → je kg Trockenmasse des Futters → Anteil der Futter-TM an der
+  // Rations-TM → Referenzfeuchte. Validierte Rechenlogik (Auftraggeber, 10. November 2026). Ungültige Eingaben
+  // sind ein Fehler und werden nie stillschweigend gerechnet.
+  function additiveContribution(concentrationMgKg, moisturePercent, rationDryMatterPercent, referenceMoisturePercent = 12) {
+    const values = [concentrationMgKg, moisturePercent, rationDryMatterPercent, referenceMoisturePercent];
+    if (!values.every(Number.isFinite)
+        || concentrationMgKg < 0
+        || moisturePercent < 0 || moisturePercent >= 100
+        || rationDryMatterPercent < 0 || rationDryMatterPercent > 100
+        || referenceMoisturePercent < 0 || referenceMoisturePercent >= 100) {
+      throw new Error("Invalid calculation parameters");
+    }
+    const feedDryMatter = 1 - moisturePercent / 100;
+    const referenceDryMatter = 1 - referenceMoisturePercent / 100;
+    return concentrationMgKg * referenceDryMatter / feedDryMatter * (rationDryMatterPercent / 100);
+  }
+
   const DILUTION_BASIS = "Rechenhinweis aus den Etikettangaben";
   const DM_TO_12_PERCENT = 0.88;
   const formatCalculated = value => value.toLocaleString("de-DE", { maximumSignificantDigits: 4, useGrouping: false });
@@ -1632,7 +1650,7 @@ const Labeling = (() => {
     needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
     matchDietPurposeAnchor: text => dietPurposeMatch(text, DIET_PURPOSE_ANCHOR),
-    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH, parseAdditiveRows,
+    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH, parseAdditiveRows, additiveContribution,
   };
 })();
 

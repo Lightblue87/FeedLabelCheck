@@ -1193,6 +1193,21 @@ test("Zusatzstoffe bei Verdünnung: Bereiche und Grenzwert-Zusätze werden nicht
   assert.match(card("Zusatzstoffe (je kg):\nMangan-(II)-oxid 200 mg (3b502)").matchedText, /1,6 mg\/kg TM/);
 });
 
+test("Zusatzstoffbeitrag eines Ergänzungsfuttermittels: validierte Rechenlogik (Pflichttests)", () => {
+  const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 5e-5, `${actual} ≠ ${expected}`);
+  near(Labeling.additiveContribution(100, 10, 20), 19.5556);
+  near(Labeling.additiveContribution(100, 12, 20), 20);
+  near(Labeling.additiveContribution(100, 20, 20), 22);
+  assert.equal(Labeling.additiveContribution(100, 10, 0), 0);
+  // Abweichende Referenzfeuchte
+  near(Labeling.additiveContribution(100, 12, 20, 0), 100 * 1 / 0.88 * 0.2);
+  // Eingabefehler
+  for (const args of [[100, 100, 20], [100, 120, 20], [-1, 10, 20], [100, -1, 20], [100, 10, -1], [100, 10, 101],
+    [NaN, 10, 20], [100, Infinity, 20], [100, 10, 20, 100], [100, 10, 20, -1], [100, 10, "20"]]) {
+    assert.throws(() => Labeling.additiveContribution(...args), /Invalid calculation parameters/, JSON.stringify(args));
+  }
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
