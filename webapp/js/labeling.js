@@ -1250,14 +1250,17 @@ const Labeling = (() => {
              confidence: best.weight, note: notes.join(" ") || null };
   }
 
+  // Dies ist nur die Zusammenfassung der durchgeführten TEXT-/OCR-Regeln, kein
+  // Rechtskonformitätsnachweis. Ungeprüfte Pflichtregeln dürfen nicht in einem
+  // positiven Gesamtstatus verschwinden. Rein informative Rechenkarten sind
+  // hingegen kein Grund, einen vollständig gelesenen Pflichtangabensatz abzuwerten.
   function overallStatus(results) {
-    if (results.every(r => r.status === "notCheckable")) return "nichtPruefbar";
-    if (results.some(r => r.rule.severity === "critical" && r.status === "missing")) return "auffaellig";
-    const hasCriticalUncertain = results.some(r =>
-      r.rule.severity === "critical" && (r.status === "probablyFound" || r.status === "unclear"));
-    const hasUnclear = results.some(r => r.status === "unclear");
-    const hasWarningMissing = results.some(r => r.rule.severity === "warning" && r.status === "missing");
-    if (hasCriticalUncertain || hasUnclear || hasWarningMissing) return "unklar";
+    const mandatory = results.filter(r => r.rule?.severity !== "info");
+    if (!mandatory.length || mandatory.every(r => r.status === "notCheckable")) return "nichtPruefbar";
+    if (mandatory.some(r => r.rule?.severity === "critical" && r.status === "missing")) return "auffaellig";
+    // Auch ohne auffällige Treffer: unlesbare, ungeprüfte oder nur wahrscheinlich
+    // gefundene Pflichtangaben verhindern "keine Auffälligkeit".
+    if (mandatory.some(r => r.status !== "found")) return "unklar";
     return "keineAuffaelligkeit";
   }
 
