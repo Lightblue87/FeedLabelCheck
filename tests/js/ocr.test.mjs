@@ -956,15 +956,6 @@ test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, 
   assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
 });
 
-test("parseAdditiveRows: Name vor der Menge, Kennnummer davor, Fütterungsmengen zählen nicht", () => {
-  const rows = text => Labeling.parseAdditiveRows(text).map(r => [r.amount, r.unit, r.name, r.code]);
-  assert.deepEqual(rows("Zusatzstoffe:\nVitamin E 50 mg"), [["50", "mg", "Vitamin E", null]]);
-  assert.deepEqual(rows("Zusatzstoffe:\nVitamin E: 100 mg (3a700)"), [["100", "mg", "Vitamin E", "3a700"]]);
-  assert.deepEqual(rows("Zusatzstoffe:\n(3a700) Vitamin E 100 mg"), [["100", "mg", "Vitamin E", "3a700"]]);
-  assert.deepEqual(rows("Zusatzstoffe:\n10 mg Vitamin E\nFütterungsempfehlung: 100 g pro Tier und Tag"), [["10", "mg", "Vitamin E", null]]);
-  assert.deepEqual(rows("Fütterungsempfehlung: 100 g pro Tier und Tag"), []);
-});
-
 test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und Kennnummer in der Folgezeile", () => {
   const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const label = "Mineralfutter für Rinder\nErnährungsphysiologische Zusatzstoffe (je kg):\n625.000 I.E. Vitamin A (3a672a)\nFütterungsempfehlung pro Tag: 90.000 Vitamin D3 (3a671)\nDieses Ergänzungsfutter darf we- 2.000 mg Beta-Carotin (3a160(a))\n2.500 mg Mangan als Mangan-(II)-Oxid\nminen und Spurenelementen an (3b502)\nTechnologische Zusatzstoffe (je kg):\n100 mg Betahydroxytoluol (E321)";
@@ -974,12 +965,6 @@ test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und
   for (const row of ["90.000 Vitamin D3 (3a671)", "2.000 mg Beta-Carotin (3a160(a))", "(3b502)", "100 mg Betahydroxytoluol (E321)"]) {
     assert.ok(result.matchedText.split("\n").includes(row), row);
   }
-  const rows = Labeling.parseAdditiveRows(label);
-  assert.deepEqual(rows.map(r => [r.amount, r.unit, r.code]), [
-    ["625.000", "I.E.", "3a672a"], ["90.000", null, "3a671"], ["2.000", "mg", "3a160(a)"],
-    ["2.500", "mg", "3b502"], ["100", "mg", "e321"],
-  ]);
-  assert.equal(rows[3].name, "Mangan als Mangan-(II)-Oxid");
 });
 
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {

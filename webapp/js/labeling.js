@@ -691,39 +691,6 @@ const Labeling = (() => {
     return sections;
   }
 
-  // Strukturierte Zusatzstoffzeilen: Menge, Einheit (null, wenn nicht gelesen), Name, Kennnummer. Gelesen werden nur
-  // Zeilen innerhalb von Zusatzstoffabschnitten; Mengen aus Fütterungsempfehlungen u. Ä. zählen nicht. Name und
-  // Kennnummer dürfen vor oder nach der Menge stehen, die Kennnummer auch in der Folgezeile.
-  function parseAdditiveRows(text) {
-    const rows = [];
-    for (const section of additiveSections(text)) {
-      const lines = section.split("\n").map(line => line.replace(ADDITIVES_HEADING, "").trim());
-      for (let i = 0; i < lines.length; i += 1) {
-        const start = ROW_START.exec(lines[i]);
-        if (!start) continue;
-        const withUnit = ROW_AMOUNT.exec(lines[i].slice(start.index));
-        const hasUnit = withUnit && withUnit.index === 0;
-        const number = (hasUnit ? withUnit[0] : start[0]).match(/^[\d.]*(?:,\d+)?/)[0];
-        const unit = hasUnit ? withUnit[0].slice(number.length).trim().replace(/^[I1l]\.[ \t]?E\./, "I.E.") : null;
-        // Ein Vorlauf zählt nur als Stoffname, wenn er kurz und kein Fließtext der Nachbarspalte ist.
-        const lead = lines[i].slice(0, start.index).trim();
-        const before = lead && !proseFragment(lead.replace(/[ \t:,]+$/, "")) && lead.split(/\s+/).length <= 4 ? lead : "";
-        const after = lines[i].slice(start.index + (hasUnit ? withUnit[0].length : number.length)).trim();
-        let code = ROW_CODE.exec(after) ?? ROW_CODE.exec(before);
-        if (!code && i + 1 < lines.length && !ROW_START.test(lines[i + 1])) code = ROW_CODE.exec(lines[i + 1]);
-        const name = [before, after].map(part => part.replace(ROW_CODE, "").replace(/^[ \t,;:]+|[ \t,;:]+$/g, "").trim())
-          .filter(Boolean).join(" ");
-        if (!code && !/\p{L}{3,}/u.test(name)) continue;
-        rows.push({
-          amount: number, unit, name,
-          code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
-          line: lines[i],
-        });
-      }
-    }
-    return rows;
-  }
-
   function additivesEvidence(rawText) {
     const sections = additiveSections(rawText);
     return sections.length ? sections.join("\n") : null;
@@ -1426,7 +1393,7 @@ const Labeling = (() => {
     needsDietDeclaration, dietDeclarationHint, dietPurposeHint, needsSplitCalcium, matchingSplitCalcium,
     matchSplitCalciumLine: text => text.match(SPLIT_CALCIUM_LINE),
     matchDietPurposeAnchor: text => dietPurposeMatch(text, DIET_PURPOSE_ANCHOR),
-    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH, parseAdditiveRows,
+    needsImprintLot, matchingImprintLot, MIN_OCR_LENGTH,
   };
 })();
 
