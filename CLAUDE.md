@@ -203,3 +203,43 @@ Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütte
 
 - Lege fest, welche Etikettsprachen, Produkttypen und realen Beispiele für die erste Abnahme bereitstehen. Die aktuelle PWA lädt nur das deutsche OCR-Sprachmodell.
 - Ergänze zu dem Beispiel für die 12-%-Umrechnung verbindliche Testfälle aus realen Laborberichten, auch für bereits normierte Ergebnisse, fehlende Bezugsangaben, Verdünnung und Toleranz.
+
+
+## Grenzwertdaten: Umsetzung und nächste Arbeitsschritte (10.11.2026, PR #51)
+
+**Verbindlicher Stand:** [Draft-PR #51](https://github.com/Lightblue87/FeedLabelCheck/pull/51) implementiert eine erste Fail-closed-Absicherung. Dieser PR ist **nicht gemergt**. `main`, PR #49 und das laufende Redesign bleiben unberührt. Die JS-/Python-Tests wurden bei Erstellung noch nicht ausgeführt; vor Merge explizit testen und bestehende UI-Prüfpfade auf Nebenwirkungen prüfen.
+
+### Bereits implementiert auf `fix/fail-closed-unverified-limit-units`
+
+1. **`webapp/js/eval.js`**: Grenzwertdatensätze mit fehlender oder **nur angenommener** Einheit (`unitAssumed`) liefern unabhängig von der Eingabeeinheit `ok: null` / „nicht bewertbar“ – auch wenn `mg/kg` auf beiden Seiten steht. Eine passende Zeichenfolge ist kein Beleg für eine rechtlich korrekte Messgröße. Diese Änderung blockiert sowohl positive als auch negative unbegründete Grenzwerturteile.
+2. **`tests/js/eval-units.test.mjs`**: Regressionsfälle für identische angenommene Einheiten, unterschiedliche Einheiten sowie explizite Einheiten ergänzt bzw. angepasst.
+3. **`Data/audit_limit_units.py`**: Nicht veränderndes Audit für Grenzwertdatensätze; meldet fehlende explizite Einheit, fehlenden Quellenbeleg, nicht dokumentierte Referenzbasis und bekannte manuell zu prüfende Fälle. Optionaler JSON-Bericht und `--strict`-Exitcode bei offenen Befunden. Nicht als Beleg rechtlicher Validierung missverstehen.
+4. **`tests/python/test_audit_limit_units.py`**: Tests für fehlende Einheiten, vollständig annotierte Testdatensätze, offene Referenzfälle und Datensätze ohne Grenzwerte.
+5. **[Detailprotokoll](docs/limit-unit-provenance-audit.md)**: Vorgehen, Grenzen und einzelne Quellen.
+
+**Besonders kritische Referenzfälle:**
+- **`4a48` (6-Phytase)**: Zulassungsakt [VO (EU) 2024/2177](https://eur-lex.europa.eu/eli/reg_impl/2024/2177/oj/deu) verwendet **FYT/kg** als Enzymaktivitätseinheit, nicht `mg/kg` und nicht ohne Nachweis `FTU/kg`. Tierartabhängige Zeilen und spätere Änderungen beachten; nicht mit einer pauschalen Zahl pro Kennnummer überschreiben.
+- **`4b1823i` (Bacillus velezensis)**: [VO (EU) 2026/92](https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX:32026R0092) weist für die dort geregelten Tiergruppen **1 × 10⁸ KBE/kg als Mindestgehalt** aus. Speicherung als Höchstgehalt `1 mg/kg` wäre fehlerhaft. Einheit, wissenschaftliche Schreibweise und Mindest-/Höchst-Spalte gesondert prüfen.
+
+### Nächster verpflichtender Entwicklungsschritt: BVL-PDF-Parser absichern
+
+**Priorität P0, noch NICHT erledigt:**
+
+- In `Data/laves_updater_v6.py` die tatsächliche Einheit pro Tabelle/Tabellenkopf und betroffener Wertspalte extrahieren und **ohne Schätzung** zu jeder Grenzwertzeile speichern; bei unleserlicher Einheit Ergebnis sperren und Quelle zur manuellen Prüfung markieren.
+- Größenordnung und wissenschaftliche Notation (`1 × 10⁸`, hochgestellte Ziffern, Tausendertrennung, Zeilenumbruch) als exakt nachvollziehbaren Zahlenwert importieren; keine stillschweigende Verkürzung auf `1`.
+- Verbindlichen **Mindestwert** und **Höchstwert** korrekt zuordnen; `empfohlen` getrennt von rechtsverbindlich dokumentieren. Tabellenköpfe, Fortsetzungsseiten, Fußnoten und Mehrfachzeilen abdecken.
+- Je Datensatz Herkunft/Seite, Zulassungsakt inkl. Änderungen, Zieltierspezies/Tierkategorie, Messgröße (Zusatzstoff/Wirkstoff), Bezugsfutter und Feuchtebasis sowie Verwendungsbedingungen versioniert und überprüfbar speichern. Die derzeitigen `min_mg_kg`/`max_mg_kg`-Feldnamen dürfen keine allgemeine Massen-Einheit suggerieren.
+- **Vor** Veröffentlichung der neuen BVL-Daten Audit und Regressionsfälle ausführen, mehrdeutige Zeilen in Quarantäne halten und geltende Zulassungsakte fachlich bestätigen. Erst dann Daten zusammenhängend veröffentlichen; keine automatische Korrektur allein aus einer Kennnummer.
+- PWA, Python und Swift dürfen bei gleichen Quelldaten nicht widersprüchlich „konform“ ausgeben. Im Browser ist das aktuelle „nicht bewertbar“ eine **Sicherheitsmaßnahme**, kein Ersatz für die Wiederherstellung verifizierter Grenzwerte.
+
+**Prüfbefehle (auf einem Checkout ausführen):**
+
+```bash
+node --test tests/js/eval-units.test.mjs
+python3 -m unittest discover -s tests/python -p 'test_audit_limit_units.py'
+python3 Data/audit_limit_units.py Data/zusatzstoffe.json --output /tmp/feedlabelcheck-unit-audit.json
+# Optional als späteres CI-Gate, derzeit erwartete offene Bestandsdaten:
+python3 Data/audit_limit_units.py Data/zusatzstoffe.json --strict
+```
+
+**Abnahmebedingungen:** Keine positive oder negative rechtliche Bewertung aus unbelegter Einheit; korrekte Zehnerpotenzen, Einheiten und Minimum/Maximum für `4a48` und `4b1823i`; dokumentierte Rechtsquelle und nachweisbare Grenzwertbasis; Tests laufen; bestehende Einzel-/Batchprüfungen und Foto-/Etikettenpfade bleiben funktional. **Kein Merge ohne ausdrückliche Freigabe.**
