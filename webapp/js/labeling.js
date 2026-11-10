@@ -739,7 +739,7 @@ const Labeling = (() => {
   // Bezug der Mengenangaben laut Überschrift: „je kg“ (kg), ausdrücklich anders („je 100 g“, „pro Tag“) oder nicht gelesen.
   const BASIS_KG = /(?:je|pro)[ \t]*(?:1[ \t]*)?kg\b|\/[ \t]*kg\b/i;
   // Auch ein Feuchtebezug („je kg TM“, „je kg bei 12 % Feuchte“) weicht vom unterstellten Bezug (Originalfutter) ab.
-  const BASIS_OTHER = /(?:je|pro)[ \t]*\d+(?:[,.]\d+)?[ \t]*(?:mg|g|kg|t)\b|(?:je|pro)[ \t]+(?:Tier|Tag|Portion|Dose|Beutel|Packung|Ration|Stück)\b|(?:(?:je|pro)[ \t]*|\/[ \t]*)kg[ \t]*(?:TM|TS|Trockenmasse|Trockensubstanz)\b|\bFeuchte|\bTrockenmasse|\bTM\b/i;
+  const BASIS_OTHER = /(?:je|pro)[ \t]*(?!1[ \t]*kg\b)\d+(?:[,.]\d+)?[ \t]*(?:mg|g|kg|t)\b|(?:je|pro)[ \t]*1[ \t]*kg[ \t]*(?:TM|TS|Trockenmasse|Trockensubstanz)\b|(?:je|pro)[ \t]+(?:Tier|Tag|Portion|Dose|Beutel|Packung|Ration|Stück)\b|(?:(?:je|pro)[ \t]*|\/[ \t]*)kg[ \t]*(?:TM|TS|Trockenmasse|Trockensubstanz)\b|\bFeuchte|\bTrockenmasse|\bTM\b/i;
   const declaredBasis = heading => BASIS_OTHER.test(heading) ? "other" : BASIS_KG.test(heading) ? "kg" : "unknown";
   const ROW_UNITS = [[/^(?:mg)$/i, "mg"], [/^(?:µg|μg|mcg)$/i, "µg"], [/^g$/i, "g"],
     [/^(?:[I1l]\.[ \t]?E\.|IE|IU)$/i, "I.E."], [/^KBE$/i, "KBE"], [/^FTU$/i, "FTU"]];
@@ -805,13 +805,23 @@ const Labeling = (() => {
           // Eine Zuordnung ist unsicher, wenn zwischen zwei Mengen Namenstext steht, den kein Trennzeichen aufteilt.
           let unsure = tainted;
           tainted = false;
-          if (nameFirst && amounts[j + 1]) {
+          if (amounts[j + 1]) {
             // „;“ und ein Komma außerhalb von Dezimalzahlen („1,2“) trennen, mit oder ohne folgendes Leerzeichen.
             const split = /;[ \t]*|,(?!\d)[ \t]*/.exec(after);
             if (split) {
-              carried = after.slice(split.index + split[0].length).trim();
-              after = after.slice(0, split.index);
-            } else if (/\p{L}{3,}/u.test(after.replace(ROW_CODE, ""))) {
+              const tail = after.slice(split.index + split[0].length).trim();
+              const hasName = /\p{L}{3,}/u.test(tail.replace(ROW_CODE, ""));
+              if (nameFirst) {
+                carried = tail;
+                after = after.slice(0, split.index);
+              } else if (hasName) {
+                // Amount-first-Angabe, gefolgt von einem Namen vor der nächsten Menge: gemischte Reihenfolge in einer Zeile.
+                carried = tail;
+                after = after.slice(0, split.index);
+                unsure = true;
+                tainted = true;
+              }
+            } else if (nameFirst && /\p{L}{3,}/u.test(after.replace(ROW_CODE, ""))) {
               // Der Text gehört vermutlich zum nächsten Namen. Beide Zeilen bleiben sichtbar, werden aber nicht berechnet.
               carried = after.trim();
               after = "";

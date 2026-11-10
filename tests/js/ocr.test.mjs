@@ -1157,6 +1157,29 @@ test("Zusatzstoffe bei Verdünnung: Trennzeichen ohne Leerzeichen, Angaben ohne 
   assert.match(unsure.matchedText, /\(3a700\)/);
 });
 
+test("Zusatzstoffe bei Verdünnung: gemischte Reihenfolge in einer Zeile und ausdrücklicher Bezug je 1 kg", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const mixed = card("Zusatzstoffe (je kg):\n50 mg Vitamin E (3a700), Zink (3b603) 750 mg");
+  assert.doesNotMatch(mixed.matchedText, /mg\/kg TM =/);
+  const lines = mixed.matchedText.split("\n");
+  assert.equal(lines.length, 2);
+  assert.ok(lines.every(line => /Menge nicht eindeutig gelesen/.test(line)));
+  assert.match(mixed.matchedText, /\(3a700\)/);
+  assert.match(mixed.matchedText, /\(3b603\)/);
+  // Einheitliche Amount-first-Liste und Verbindungsangaben am Zeilenende bleiben berechenbar.
+  const uniform = card("Zusatzstoffe (je kg):\n50 mg Vitamin E (3a700), 750 mg Zink (3b603)");
+  assert.deepEqual(uniform.matchedText.split("\n"), [
+    "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+    "750 mg Zink (3b603): 6 mg/kg TM = 5,28 mg/kg bei 12 % Feuchte",
+  ]);
+  assert.match(card("Zusatzstoffe (je kg):\n1000 mg Kupfer als Kupfer-(II)-sulfat, Pentahydrat (3b405)").matchedText, /8 mg\/kg TM/);
+  for (const heading of ["Zusatzstoffe (je 1 kg):", "Zusatzstoffe (pro 1 kg):", "Zusatzstoffe (je 1kg):"]) {
+    assert.match(card(`${heading}\n750 mg Zink (3b603)`).matchedText, /6 mg\/kg TM/, heading);
+  }
+  assert.match(card("Zusatzstoffe (je 1 kg TM):\n750 mg Zink (3b603)").matchedText, /Überschrift nennt einen anderen Bezug|nicht berechnet/);
+  assert.match(card("Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)").matchedText, /Überschrift nennt einen anderen Bezug/);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
