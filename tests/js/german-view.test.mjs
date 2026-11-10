@@ -77,3 +77,20 @@ test("Einsprachige Aufzählungen mit Schrägstrichen bleiben vollständig", () =
   const text = "Ergänzungsfuttermittel für Pferde.\nZusammensetzung: Getreide / Mais / Erbsen";
   assert.equal(Ocr.germanView(text), text);
 });
+
+test("Gemeinsame Zutatenliste nach einer mehrsprachigen Überschrift bleibt erhalten", () => {
+  assert.equal(Ocr.germanView("Samenstelling / Zusammensetzung / Composition: Hafer, Gerste, Mais"),
+    "Zusammensetzung: Hafer, Gerste, Mais");
+  const feedType = { id: "complete_feed", nameDe: "Alleinfuttermittel", keywordsDe: ["Alleinfuttermittel"] };
+  const rule = { id: "art17_003_complete", severity: "critical", patterns: [{
+    patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const view = Ocr.germanView("Ergänzungsfuttermittel für Pferde.\nSamenstelling / Zusammensetzung / Composition: Hafer, Gerste, Mais");
+  assert.equal(Labeling.check(view, feedType, [rule]).ruleResults[0].status, "found");
+});
+
+test("Anschrift mit Länderkennzeichen wird nicht als Sprachzeile verworfen", () => {
+  const text = "DE Hafer, Gerste, Mais\nMusterfutter NV\nBeispielstraat 41\nNL 5823 AC Musterort";
+  assert.equal(Ocr.germanView(text), text);
+  // Eine echte Sprachzeile entfällt weiterhin.
+  assert.equal(Ocr.germanView("NL Haver, Gerst, Mais\nDE Hafer, Gerste, Mais"), "DE Hafer, Gerste, Mais");
+});

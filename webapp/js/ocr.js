@@ -380,7 +380,8 @@ const Ocr = (() => {
   // Mehrsprachige Packungen drucken jede Angabe in vielen Sprachen, getrennt durch „ / “ oder mit Sprachkürzel am
   // Zeilenanfang („NL …“, „DE …“). Die Prüfung nach VO (EG) 767/2009 gilt dem deutschen Text. germanView() liefert
   // eine Sicht, in der nur die deutschen Teile stehen; der OCR-Text selbst bleibt unverändert.
-  const OTHER_LANGUAGE_PREFIX = /^(?:NL|EN|FR|IT|ES|DA|DK|SE|SV|PL|PT|CZ|FI|RO|HU|EL|GR)[ \t]+\S/;
+  // Nach dem Kürzel muss ein Wort folgen: „NL 5823 AC Musterort“ ist eine Anschrift mit Länderkennzeichen, keine Sprachzeile.
+  const OTHER_LANGUAGE_PREFIX = /^(?:NL|EN|FR|IT|ES|DA|DK|SE|SV|PL|PT|CZ|FI|RO|HU|EL|GR)[ \t]+\p{L}/u;
   const GERMAN_PREFIX = /^DE[ \t]+(\S.*)$/;
   // Wörter, die in den Etiketten häufig vorkommen und in den anderen Sprachen nicht gleich lauten.
   const GERMAN_WORDS = /\b(?:der|die|das|den|dem|und|oder|nicht|mit|für|von|zur|zum|nach|bei|bis|auf|wird|werden|ist|sind|nur|auch|wieder|Pferd(?:e|en)?|Hund(?:e|en)?|Katze[n]?|Futter\p{L}*|Fütterung\p{L}*|Zusammensetzung|Komposition|Gewicht|Körpergewicht|Untergewicht|Übergewicht|Mageres|Starkes|Tag|kühl|trocken|dunkel|lagern|Verpackung|Gebrauch|verschließen|Lagerungshinweis|Hinweis\p{L}*|Analytische|Bestandteile|Zusatzstoffe|Gebrauchsanweisung|Inhalt|Nettomenge|Haltbarkeit)\b/giu;
@@ -409,6 +410,10 @@ const Ocr = (() => {
     // Ein deutsches Segment allein genügt nicht (z. B. „Zusammensetzung: Getreide / Mais / Erbsen“): Ein anderes
     // Segment muss erkennbar einer anderen Sprache angehören.
     if (!parts.some((part, index) => index !== chosen && OTHER_LANGUAGE_WORDS.test(part))) return null;
+    // „Samenstelling / Zusammensetzung / Composition: Hafer, Gerste“: Die Liste nach dem Doppelpunkt gehört zu allen
+    // Überschriften und bleibt erhalten.
+    const shared = /^[^:]{1,80}:[ \t]*(\S.*)$/.exec(parts[parts.length - 1]);
+    if (shared && chosen !== parts.length - 1 && !parts[chosen].includes(":")) return `${parts[chosen]}: ${shared[1]}`;
     return parts[chosen];
   }
 
