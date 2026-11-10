@@ -530,12 +530,57 @@ const Ocr = (() => {
     return parts[chosen];
   }
 
+
+  // ── Analytische Bestandteile in mehrsprachiger Schreibweise ohne Leerzeichen ──
+  // „Analytische Bestandteile/Constituants analytiques/… analitici: Protein/Protéine/Eiwit/Proteine 11 % + Fett-
+  // gehalt/Teneur en matières grasses/… 5 % + …“: Die Angaben laufen als Fließtext über Zeilenumbrüche, jeder Eintrag
+  // nennt den Namen in mehreren Sprachen, durch „/“ ohne Leerzeichen getrennt, danach den Wert. Daraus wird eine
+  // deutsche Zeile mit denselben Werten („Analytische Bestandteile: Protein 11 %, Fettgehalt 5 %, …“).
+  const ANALYSIS_BLOCK_HEAD = /^[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?Analytische\s+Bestandteile\s*\//u;
+  const OCR_LINE_NOISE = /^(?:[=~\-–—_*|<>]+|[A-Z]{1,2})\s+/;
+  const ANALYSIS_BLOCK_END = /^(?:[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?)?(?:Ern[äa]hrungsphysiologische|Emn[äa]hrungsphysiologische|Technologische|Zootechnische|Sensorische|Zusatzstoffe|Additifs|Fütterungsempfehlung|Inverkehrbringer|Hersteller)/iu;
+  const GERMAN_ANALYTIC_NAME = /^(?:Roh(?:protein|fett|faser|asche)|Protein|Eiwei[ßs]|Fett(?:gehalt)?|Feuchtigkeit|Feuchte|Asche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Taurin|Stärke|Zucker|Kohlenhydrate)$/iu;
+  const OTHER_ANALYSIS_WORDS = /\b(?:constituants|componenti|bestanddelen|teneur|mati[eè]res|vetgehalte|tenore|materia|cellulose|cellulosa|celstof|ruwe|cendres|ceneri|humidit[eé&]|vocht|umidit[aà]|taurine|taurina|prot[eé&]ine|eiwit|proteine)\b/giu;
+  const ANALYSIS_ENTRY = /(.+?)\s+(\d[\d.,]*)\s*(%|mg\/kg|g\/kg)(?![\p{L}\p{N}])/gu;
+
+  // Liefert { text, end } für den Block ab Zeile `start` oder null, wenn kein mehrsprachiger Analyseblock vorliegt.
+  function germanAnalysisBlock(lines, start) {
+    if (!ANALYSIS_BLOCK_HEAD.test(lines[start].trim())) return null;
+    const body = [];
+    let end = start;
+    for (let k = start; k < lines.length && k < start + 14; k++) {
+      const line = lines[k].trim();
+      if (!line || (k > start && ANALYSIS_BLOCK_END.test(line))) break;
+      body.push(line.replace(OCR_LINE_NOISE, ""));
+      end = k;
+    }
+    // Zeilen zusammenführen; ein Trennstrich am Zeilenende („Fett-“ + „gehalt/…“) verbindet das Wort.
+    let joined = "";
+    for (const line of body) {
+      joined = /\p{L}-$/u.test(joined) && /^\p{Ll}/u.test(line) ? joined.slice(0, -1) + line : (joined ? `${joined} ${line}` : line);
+    }
+    const colon = joined.indexOf(":");
+    if (colon < 0) return null;
+    const content = joined.slice(colon + 1);
+    if ((content.match(OTHER_ANALYSIS_WORDS) || []).length < 2) return null;
+    const entries = [];
+    for (const match of content.matchAll(ANALYSIS_ENTRY)) {
+      const names = match[1].replace(/^[\s•·+«»*,;.]+|[\s•·+«»*,;]+$/g, "").split("/").map(n => n.trim());
+      const name = names.find(n => GERMAN_ANALYTIC_NAME.test(n));
+      if (name) entries.push(`${name} ${match[2]} ${match[3]}`);
+    }
+    if (entries.length < 2) return null;
+    return { text: `Analytische Bestandteile: ${entries.join(", ")}.`, end };
+  }
+
   function germanView(text) {
     const source = String(text || "");
     const lines = source.split(/\r?\n/);
     const taggedScheme = lines.some(l => GERMAN_PREFIX.test(l.trim()));
     const out = [];
     for (let i = 0; i < lines.length; i++) {
+      const analysis = germanAnalysisBlock(lines, i);
+      if (analysis) { out.push(analysis.text); i = analysis.end; continue; }
       const line = lines[i].trim();
       // Sprachweise Zeilen („NL …“, „EN …“): nur die deutsche („DE …“) bleibt.
       if (taggedScheme && OTHER_LANGUAGE_PREFIX.test(line)) continue;
