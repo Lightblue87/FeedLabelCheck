@@ -280,7 +280,43 @@ const Ocr = (() => {
     return /(?:Zusammensetzung[^\n]{0,150}Composition|Rohprotein[^\n]{0,130}Crude[ \t]+protein|Analytische[ \t]+Bestandteile[^\n]{0,130}Analytical)/iu.test(text);
   }
 
+  // ── Fütterungstabelle ──
+  // Überschrift auch bei zerlesenem OCR („FEEDING AD …“). Zeilen der deutschen Sicht: „Mageres Pferd 0,5 kg/Tag 1,0 kg/Tag“.
+  const FEEDING_HEADING = /\b(?:Feeding\s+(?:ad|guide|instr)|F[üu]tterungs?(?:empfehlung|hinweis|tabelle)|Fütterungsmenge)/iu;
+  const FEEDING_AMOUNT = String.raw`\d[\d.,]*\s*(?:kg|g)\/Tag`;
+  const FEEDING_ROW = new RegExp(String.raw`^\p{L}[\p{L} .()-]{2,45}?\s+${FEEDING_AMOUNT}(?:\s+${FEEDING_AMOUNT})*$`, "u");
+  const FEEDING_WEIGHT_ROW = /^Körpergewicht(?:\s+\d[\d.,]*\s*kg)+$/u;
+
+  function feedingRows(germanText) {
+    return String(germanText || "").split(/\r?\n/).map(l => l.trim()).filter(l => FEEDING_ROW.test(l) || FEEDING_WEIGHT_ROW.test(l));
+  }
+
+  // Fütterungstabelle erkennbar, aber die deutschen Zeilen fehlen oder sind zerlesen.
+  // Eine einzelne Fütterungsempfehlung („500 g pro Tag“) ist keine Tabelle: Es braucht ein Tabellenmerkmal (Körpergewicht
+  // als Spalte, auch zerlesen wie „rgewicht / Body weig“).
+  const FEEDING_TABLE_SIGNAL = /(?:K[öo]rpergewicht|Body\s+weig|Lichaamsgewicht|rgewicht\s*\/)/iu;
+  function needsFeedingRecovery(text) {
+    if (!FEEDING_HEADING.test(text) || !FEEDING_TABLE_SIGNAL.test(text)) return false;
+    return feedingRows(germanView(text)).length < 3;
+  }
+
+  const COMPOSITION_READ = /(?:^|\n)\s*DE\s+[^\n]*,[^\n]*,\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]*,[^\n]*,\s*\p{L}/imu;
+  const ANALYSIS_HEADING = /(?:Analytische\s+Bestandteile|Analytical\s+constituents|Constituintes\s+analiticos|Analytick[eé]\s+slo[zž]ky)/iu;
+
+  // Analyse: Überschrift erkennbar, aber weniger als zwei Wertzeilen gelesen.
+  function needsAnalysisRecovery(text) {
+    if (!ANALYSIS_HEADING.test(text)) return false;
+    const lines = String(text).split(/\r?\n/).map(l => l.trim());
+    return lines.filter(l => GERMAN_ANALYSIS_LINE.test(l) || CZECH_ANALYSIS_LINE.test(l)).length < 2;
+  }
+
+  // Nach einer Nachlese: Ist noch etwas offen, das ein weiterer Ausschnitt lesen könnte (Fütterungstabelle, Zutaten, Analyse)?
+  function recoveryPending(text) {
+    return needsFeedingRecovery(text) || !COMPOSITION_READ.test(text) || needsAnalysisRecovery(text);
+  }
+
   function shouldRecoverText(text) {
+    if (needsFeedingRecovery(text)) return true;
     if (hasMixedLanguageColumns(text)) return true;
     const words = String(text || "").match(/\p{L}{3,}/gu) || [];
     if (words.length < 30) return true;
@@ -312,6 +348,11 @@ const Ocr = (() => {
         [0.06, 0.02, 0.95, 0.42, 2],
         [0.06, 0.60, 0.95, 0.98, 2],
       ];
+    // Fütterungstabelle: eigener Ausschnitt zuerst (insgesamt höchstens drei Ausschnitte).
+    if (needsFeedingRecovery(primaryText)) {
+      regions.unshift(width >= height ? [0.08, 0.60, 0.72, 0.92, 2.5] : [0.05, 0.45, 0.95, 0.98, 2]);
+      regions.length = Math.min(regions.length, 3);
+    }
     return regions.map(([left, top, right, bottom, magnify]) => ({
       x: Math.floor(left * width), y: Math.floor(top * height),
       right: Math.ceil(right * width), bottom: Math.ceil(bottom * height),
@@ -372,10 +413,101 @@ const Ocr = (() => {
         out.push(...analysis.slice(0, 14));
       }
     }
+    // Fütterungstabelle: Überschrift (im Ausschnitt oder im Haupttext) und mindestens drei deutsche Zeilen.
+    const german = germanView(candidate);
+    // Vollständigkeit an allen gelesenen Zeilen messen; bekannte Zeilen bleiben im Block, damit die Tabelle
+    // zusammenhängend steht. Neu muss mindestens eine Zeile sein.
+    const rows = feedingRows(german);
+    if (rows.length >= 3 && rows.some(row => novel(row))) {
+      const feedingHeading = lines.find(l => FEEDING_HEADING.test(l))
+        || String(primary || "").split(/\r?\n/).map(l => l.trim()).find(l => FEEDING_HEADING.test(l));
+      if (feedingHeading) out.push(feedingHeading, ...rows);
+    }
     return [...new Set(out)].join("\n");
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, recoveryRegions, recoveredEvidence };
+
+  // ── Deutsche Textteile aus mehrsprachigen Etiketten ──
+  // Mehrsprachige Packungen drucken jede Angabe in vielen Sprachen, getrennt durch „ / “ oder mit Sprachkürzel am
+  // Zeilenanfang („NL …“, „DE …“). Die Prüfung nach VO (EG) 767/2009 gilt dem deutschen Text. germanView() liefert
+  // eine Sicht, in der nur die deutschen Teile stehen; der OCR-Text selbst bleibt unverändert.
+  // Nach dem Kürzel muss ein Wort folgen: „NL 5823 AC Musterort“ ist eine Anschrift mit Länderkennzeichen, keine Sprachzeile.
+  const OTHER_LANGUAGE_PREFIX = /^(?:NL|EN|FR|IT|ES|DA|DK|SE|SV|PL|PT|CZ|FI|RO|HU|EL|GR)[ \t]+\p{L}/u;
+  const GERMAN_PREFIX = /^DE[ \t]+(\S.*)$/;
+  // Wörter, die in den Etiketten häufig vorkommen und in den anderen Sprachen nicht gleich lauten.
+  const GERMAN_WORDS = /\b(?:der|die|das|den|dem|und|oder|nicht|mit|für|von|zur|zum|nach|bei|bis|auf|wird|werden|ist|sind|nur|auch|wieder|Pferd(?:e|en)?|Hund(?:e|en)?|Katze[n]?|Futter\p{L}*|Fütterung\p{L}*|Zusammensetzung|Komposition|Gewicht|Körpergewicht|Untergewicht|Übergewicht|Mageres|Starkes|Tag|kühl|trocken|dunkel|lagern|Verpackung|Gebrauch|verschließen|Lagerungshinweis|Hinweis\p{L}*|Analytische|Bestandteile|Zusatzstoffe|Gebrauchsanweisung|Inhalt|Nettomenge|Haltbarkeit)\b/giu;
+
+  // Wörter anderer Sprachen, wie sie auf mehrsprachigen Futtermitteletiketten vorkommen (Niederländisch, Englisch,
+  // Französisch, Spanisch, Italienisch, Skandinavisch, Polnisch, Portugiesisch, Tschechisch). Ohne einen solchen
+  // Hinweis in einem anderen Segment ist „A / B / C“ eine einsprachige Aufzählung und bleibt unverändert.
+  const OTHER_LANGUAGE_WORDS = /\b(?:samenstelling|composition|composici[oó]n|composizione|sammens[æa]tning|sammans[äa]ttning|kompozycja|composi[çc][ãa]o|slo[zž]en[ií]|koostumus|lichaamsgewicht|ondergewicht|paard|body\s+weight|underweight|lean|severe|horse|storage|advi[cs]e|advice|feeding|analytical|constituents?|ingredients|conseils?|conservation|koel|droog|donker|bewaren|verpakking|hersluiten|bewaaradvies|opbevarings|f[öo]rvarings|przechowanie|skladov[aá]n[ií]|constituintes|analiticos|analytick[eé])\b/iu;
+
+  function germanScore(segment) {
+    const words = (String(segment).match(GERMAN_WORDS) || []).length;
+    // Umlaute allein entscheiden nicht (Schwedisch, Dänisch, Tschechisch haben sie auch), sie brechen nur Gleichstände.
+    return words + (/[äöüßÄÖÜ]/.test(segment) ? 0.5 : 0);
+  }
+
+  // Wählt aus „A / B / C“ das eindeutig deutsche Segment; sonst null (Zeile bleibt, wie sie ist).
+  // Mengen am Zeilenende („… Lean horse 0,5 kg/dag/Tag/day 1,0 kg/dag/Tag/day“) gehören zu allen Segmenten. Sie werden
+  // vor der Wahl abgetrennt; die Einheit behält das deutsche Teilwort („kg/Tag“).
+  const TRAILING_AMOUNTS = /^(.*?\S)[ \t]+((?:\d[\d.,]*[ \t]*(?:kg|g)(?:\/\p{L}+)*[ \t]*)+)$/u;
+  function germanAmounts(amounts) {
+    return amounts.trim().replace(/(\d[\d.,]*)[ \t]*(kg|g)((?:\/\p{L}+)+)/gu, (all, number, unit, tail) => {
+      const options = tail.split("/").filter(Boolean);
+      const german = options.filter(o => germanScore(o) >= 1);
+      return german.length === 1 ? `${number} ${unit}/${german[0]}` : all;
+    });
+  }
+
+  function germanSegment(line) {
+    const trailing = TRAILING_AMOUNTS.exec(line);
+    if (trailing && /[ \t]\/[ \t]/.test(trailing[1])) {
+      const chosenHead = germanSegment(trailing[1]);
+      return chosenHead ? `${chosenHead} ${germanAmounts(trailing[2])}` : null;
+    }
+    const parts = line.split(/[ \t]\/[ \t]/).map(p => p.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    const scores = parts.map(germanScore);
+    const best = Math.max(...scores);
+    if (best < 1 || scores.filter(x => x === best).length !== 1) return null;
+    // Nur zwei Segmente („Tag / Nacht“ ist einsprachig): nur bei deutlichem Vorsprung und sonst ohne deutsche Treffer.
+    if (parts.length === 2 && (best < 3 || Math.min(...scores) > 0)) return null;
+    const chosen = scores.indexOf(best);
+    // Ein deutsches Segment allein genügt nicht (z. B. „Zusammensetzung: Getreide / Mais / Erbsen“): Ein anderes
+    // Segment muss erkennbar einer anderen Sprache angehören.
+    if (!parts.some((part, index) => index !== chosen && OTHER_LANGUAGE_WORDS.test(part))) return null;
+    // „Samenstelling / Zusammensetzung / Composition: Hafer, Gerste“: Die Liste nach dem Doppelpunkt gehört zu allen
+    // Überschriften und bleibt erhalten.
+    const shared = /^[^:]{1,80}:[ \t]*(\S.*)$/.exec(parts[parts.length - 1]);
+    if (shared && chosen !== parts.length - 1 && !parts[chosen].includes(":")) return `${parts[chosen]}: ${shared[1]}`;
+    return parts[chosen];
+  }
+
+  function germanView(text) {
+    const source = String(text || "");
+    const lines = source.split(/\r?\n/);
+    const taggedScheme = lines.some(l => GERMAN_PREFIX.test(l.trim()));
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // Sprachweise Zeilen („NL …“, „EN …“): nur die deutsche („DE …“) bleibt.
+      if (taggedScheme && OTHER_LANGUAGE_PREFIX.test(line)) continue;
+      const tagged = GERMAN_PREFIX.exec(line);
+      if (tagged && /,\s*\p{L}/u.test(tagged[1])) {
+        // Überschrift direkt davor mit der deutschen Liste zusammenführen („Komposition: Luzerne, …“).
+        const previous = out[out.length - 1];
+        if (previous && /^(?:Zusammensetzung|Komposition)$/iu.test(previous)) out[out.length - 1] = `${previous}: ${tagged[1]}`;
+        else out.push(line);
+        continue;
+      }
+      const german = germanSegment(line);
+      out.push(german || lines[i]);
+    }
+    return out.join("\n");
+  }
+
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
