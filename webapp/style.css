@@ -443,7 +443,8 @@ body.kb .toast { bottom: 12px; }
 .chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .chip.found::before, .chip.ok::before { background: var(--ok); }
 .chip.probablyFound::before { background: var(--maybe); }
-.chip.missing::before, .chip.bad::before { background: var(--bad); }
+.chip.missing::before { background: var(--muted); }
+.chip.bad::before { background: var(--bad); }
 .chip.unclear::before, .chip.warn::before { background: var(--warn); }
 
 .rule-card {
@@ -456,7 +457,7 @@ body.kb .toast { bottom: 12px; }
 }
 .rule-card.found { border-left-color: var(--ok); }
 .rule-card.probablyFound { border-left-color: var(--maybe); }
-.rule-card.missing { border-left-color: var(--bad); }
+.rule-card.missing { border-left-color: var(--muted); }
 .rule-card.unclear { border-left-color: var(--warn); }
 .rule-card.notCheckable { border-left-color: var(--muted); }
 .rule-card h4 { margin: 0 0 4px; font-size: 0.9375rem; line-height: 1.35; }
@@ -478,7 +479,8 @@ body.kb .toast { bottom: 12px; }
 }
 .status-pill.found, .status-pill.ok { background: var(--ok); }
 .status-pill.probablyFound { background: var(--maybe); }
-.status-pill.missing, .status-pill.bad { background: var(--bad); }
+.status-pill.missing { background: var(--muted); }
+.status-pill.bad { background: var(--bad); }
 .status-pill.unclear, .status-pill.warn { background: var(--warn); }
 @media (prefers-color-scheme: dark) {
   .status-pill { color: #0d1414; }
