@@ -1045,8 +1045,26 @@ test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergl
   assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);
 });
 
+test("Zusatzstoffe bei Verdünnung: wissenschaftliche Schreibweise und abweichender Bezug werden nicht berechnet", () => {
+  const card = body => Labeling.check(`Mineralfutter für Rinder\n${body}\nbis max. 8 g/kg TM Aufnahme`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const micro = card("Zusatzstoffe (je kg):\n1 x 10^9 KBE Enterococcus faecium (4b1708)");
+  assert.match(micro.matchedText, /^1 x 10\^9 KBE Enterococcus faecium \(4b1708\): wissenschaftliche Schreibweise, nicht berechnet$/);
+  assert.doesNotMatch(micro.matchedText, /0,072|\/kg TM =/);
+  for (const line of ["5 × 10⁹ KBE Bacillus (4b1823i)", "5 x 10 9 KBE Bacillus (4b1823i)"]) {
+    assert.match(card(`Zusatzstoffe (je kg):\n${line}`).matchedText, /wissenschaftliche Schreibweise, nicht berechnet/, line);
+  }
+  const per100 = card("Zusatzstoffe (je 100 g):\n750 mg Zink (3b603)");
+  assert.match(per100.matchedText, /^750 mg Zink \(3b603\): Bezug der Mengenangabe nicht als „je kg“ gelesen \(Überschrift nennt einen anderen Bezug\), nicht berechnet$/);
+  const unknown = card("Zusatzstoffe:\n750 mg Zink (3b603)");
+  assert.match(unknown.matchedText, /Bezug der Mengenangabe nicht als „je kg“ gelesen, nicht berechnet/);
+  assert.doesNotMatch(unknown.matchedText, /überschrift/i);
+  // Mehrere Zusatzstoffüberschriften: Der Bezug gilt je Block.
+  const mixed = card("Zusatzstoffe je kg:\nErnährungsphysiologische Zusatzstoffe\n7.500 mg Zink (3b603)");
+  assert.match(mixed.matchedText, /60 mg\/kg TM/);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
-  const rows = "Zusatzstoffe:\n7.500 mg Zink als Zinkoxid (3b603)\n";
+  const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
   assert.equal(card("Dieses Futter darf bis max. 8 g/kg gefüttert werden."), undefined);
   assert.equal(card("Keine Verdünnung angegeben."), undefined);

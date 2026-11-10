@@ -731,6 +731,13 @@ const Labeling = (() => {
     return null;
   }
   const ROW_START_ALL = new RegExp(ROW_START.source, "giu");
+  // Wissenschaftliche Schreibweise („1 x 10^9 KBE“, auch mit Exponent in Hochzahlen oder ohne Caret): Der Exponent ist
+  // keine Menge. Die Angabe wird als Ganzes gelesen und nicht berechnet.
+  const SCIENTIFIC = /(\d+(?:[.,]\d+)?)[ \t]*[x×*·][ \t]*10(?:[ \t]*\^[ \t]*-?\d+|[ \t]*[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+|[ \t]+-?\d{1,2}(?!\d))[ \t]*(KBE|CFU)?/iu;
+  // Bezug der Mengenangaben laut Überschrift: „je kg“ (kg), ausdrücklich anders („je 100 g“, „pro Tag“) oder nicht gelesen.
+  const BASIS_KG = /(?:je|pro)[ \t]*(?:1[ \t]*)?kg\b|\/[ \t]*kg\b/i;
+  const BASIS_OTHER = /(?:je|pro)[ \t]*\d+(?:[,.]\d+)?[ \t]*(?:mg|g|kg|t)\b|(?:je|pro)[ \t]+(?:Tier|Tag|Portion|Dose|Beutel|Packung|Ration|Stück)\b/i;
+  const declaredBasis = heading => BASIS_OTHER.test(heading) ? "other" : BASIS_KG.test(heading) ? "kg" : "unknown";
   const ROW_UNITS = [[/^(?:mg)$/i, "mg"], [/^(?:µg|μg|mcg)$/i, "µg"], [/^g$/i, "g"],
     [/^(?:[I1l]\.[ \t]?E\.|IE|IU)$/i, "I.E."], [/^KBE$/i, "KBE"], [/^FTU$/i, "FTU"]];
   const rowUnit = raw => (ROW_UNITS.find(([pattern]) => pattern.test(raw)) ?? [])[1] ?? null;
@@ -744,13 +751,31 @@ const Labeling = (() => {
     const text = cleanAdditiveLines(rawText);
     const rows = [];
     const seen = new Set();
-    for (const { start, section } of additiveSectionBodies(text, body => ROW_START.test(body))) {
+    for (const { heading, start, section } of additiveSectionBodies(text, body => ROW_START.test(body) || SCIENTIFIC.test(body))) {
+      const basis = declaredBasis(heading[0]);
       let offset = start;
       let previous = null;
       let previousLine = -2;
       section.split("\n").forEach((line, lineIndex) => {
         const lineOffset = offset;
         offset += line.length + 1;
+        const scientific = SCIENTIFIC.exec(line);
+        if (scientific) {
+          if (seen.has(lineOffset + scientific.index)) return;
+          seen.add(lineOffset + scientific.index);
+          const code = ROW_CODE.exec(line);
+          const name = tidyRowName(line.slice(0, scientific.index) + " " + line.slice(scientific.index + scientific[0].length));
+          if (!code && !/\p{L}{3,}/u.test(name)) return;
+          const row = {
+            amount: scientific[0].trim(), value: null, scientific: true, basis,
+            unit: scientific[2] ? rowUnit(scientific[2]) : null, name,
+            code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null, line,
+          };
+          rows.push(row);
+          previous = row;
+          previousLine = lineIndex;
+          return;
+        }
         const amounts = [...line.matchAll(ROW_START_ALL)];
         if (!amounts.length) {
           if (previous && !previous.code && previousLine === lineIndex - 1 && ROW_CODE_ONLY.test(line.trim())) {
@@ -780,7 +805,7 @@ const Labeling = (() => {
           const printed = amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
           const unitText = amount[0].slice(printed.length).trim();
           const row = {
-            amount: printed, value: parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            amount: printed, value: parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null, basis,
             name: [named, after].map(tidyRowName).filter(Boolean).join(" "),
             code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
             line,
@@ -833,8 +858,12 @@ const Labeling = (() => {
     }
     const fraction = dilution.gramsPerKg / 1000;
     const lines = coded.map(row => {
-      const label = `${row.amount}${row.unit ? ` ${row.unit}` : ""} ${row.name}`.replace(/\s+/g, " ").trim();
+      const label = `${row.amount}${row.unit && !row.scientific ? ` ${row.unit}` : ""} ${row.name}`.replace(/\s+/g, " ").trim();
       const tag = `${label} (${row.code})`;
+      if (row.scientific) return `${tag}: wissenschaftliche Schreibweise, nicht berechnet`;
+      if (row.basis !== "kg") {
+        return `${tag}: Bezug der Mengenangabe nicht als „je kg“ gelesen${row.basis === "other" ? " (Überschrift nennt einen anderen Bezug)" : ""}, nicht berechnet`;
+      }
       if (row.value === null) return `${tag}: Menge nicht eindeutig gelesen, nicht berechnet`;
       if (!row.unit) return `${tag}: Einheit nicht gelesen, nicht berechnet`;
       const perDm = row.value * fraction;
