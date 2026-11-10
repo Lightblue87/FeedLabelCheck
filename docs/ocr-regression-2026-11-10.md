@@ -52,3 +52,12 @@ Aus den **Layouttypen** wurden eigenständige, künstliche Prüfbilder angelegt 
 - **Vergrößerung auf großen Fotos:** Die Skalierung der Nachlese-Ausschnitte wird nach Pixelfläche begrenzt (12 Mio. Pixel) statt nach Kantenlänge. Bei Fotos in Handygröße (4032×3024, 3024×4032) liegt die Vergrößerung damit bei 1,5- bis 1,8-fach statt bei 0,8- bis 1,3-fach. Der Speicherverbrauch auf dem iPhone ist damit höher und noch nicht gemessen.
 - **Überschrift der Zutatenzeile:** Liegt die Überschrift „Zusammensetzung / Composition / …“ nicht im Ausschnitt, wird die bereits im Haupttext gelesene Überschrift verwendet. Ohne gelesene Überschrift wird weiterhin nichts übernommen.
 - **Status `auffaellig`:** Der Text-Check erzeugt ihn nicht mehr. Die Anzeige bleibt für ältere Verlaufseinträge erhalten.
+
+## Deutsche Textteile bei mehrsprachigen Etiketten (10.11.2026)
+
+Auf der Pavo-WeightLift-Rückseite steht jede Angabe in zehn bis zwölf Sprachen („Samenstelling / Komposition / Composition / …“, „Slank paard / Mageres Pferd / Lean horse“, „NL …“, „DE …“). Die Zusammensetzungskarte zeigte deshalb die ganze Überschrift mit allen Sprachen („Compasicäo/Sloden!/: Luzerne, …“) als Beleg.
+
+- `Ocr.germanView(text)` liefert eine Sicht auf den Text, in der nur die deutschen Teile stehen: Zeilen mit anderem Sprachkürzel entfallen, sobald eine „DE …“-Zeile vorhanden ist; aus „A / B / C“ wird das eindeutig deutsche Segment gewählt (Wortliste, Umlaute brechen nur Gleichstände); eine deutsche Überschrift („Komposition“, „Zusammensetzung“) wird mit der „DE“-Zutatenzeile zusammengeführt.
+- Die Prüfung läuft auf dieser Sicht. Das Textfeld und der Verlauf behalten den OCR-Text unverändert, die Prüfung nennt den Filter („geprüft wurden nur die deutschen Textteile“).
+- Zeilen ohne eindeutiges deutsches Segment bleiben unverändert. Zeilen mit nur zwei Segmenten werden nur bei deutlichem Vorsprung und ohne deutsche Treffer im anderen Segment gekürzt („Tag / Nacht“ bleibt).
+- Grenze: Das Segment wird an der Zeile gewählt. Absätze, die über Zeilenumbrüche mit „ / “ weiterlaufen, werden nur zeilenweise gekürzt. Der Filter ersetzt nicht die Prüfung, ob ein deutscher Text auf der Verpackung steht.
