@@ -1273,7 +1273,10 @@
     // ── Prüfung ───────────────────────────────────────────────────
     /** @returns {object|null} Kurzfassung des Ergebnisses (für den Verlauf) oder null */
     function runLabelCheck({ scroll = true, save = true } = {}) {
-      const text = textEl.value.trim();
+      const rawText = textEl.value.trim();
+      // Mehrsprachige Etiketten: geprüft wird der deutsche Text. Das Textfeld und der Verlauf behalten den OCR-Text.
+      const text = Ocr.germanView(rawText);
+      const germanOnly = text !== rawText;
       const resultBox = $("#l-result");
       const overall = $("#l-overall");
       const rulesBox = $("#l-rules");
@@ -1303,7 +1306,8 @@
       const typeName = result.dietary && ["complete_feed", "complementary_feed"].includes(feedType.id)
         ? `Diät-${feedType.nameDe}` : feedType.nameDe;
       const detectionNote = confidence === null ? "" : ` (automatisch erkannt: ${typeName}, ${Math.round(confidence * 100)} %)`;
-      overall.textContent = o.text + detectionNote;
+      overall.textContent = o.text + detectionNote
+        + (germanOnly ? " Mehrsprachiger Text: geprüft wurden nur die deutschen Textteile." : "");
 
       const tally = {};
       for (const r of result.ruleResults) tally[r.status] = (tally[r.status] || 0) + 1;

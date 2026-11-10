@@ -375,7 +375,58 @@ const Ocr = (() => {
     return [...new Set(out)].join("\n");
   }
 
-  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, recoveryRegions, recoveredEvidence };
+
+  // ── Deutsche Textteile aus mehrsprachigen Etiketten ──
+  // Mehrsprachige Packungen drucken jede Angabe in vielen Sprachen, getrennt durch „ / “ oder mit Sprachkürzel am
+  // Zeilenanfang („NL …“, „DE …“). Die Prüfung nach VO (EG) 767/2009 gilt dem deutschen Text. germanView() liefert
+  // eine Sicht, in der nur die deutschen Teile stehen; der OCR-Text selbst bleibt unverändert.
+  const OTHER_LANGUAGE_PREFIX = /^(?:NL|EN|FR|IT|ES|DA|DK|SE|SV|PL|PT|CZ|FI|RO|HU|EL|GR)[ \t]+\S/;
+  const GERMAN_PREFIX = /^DE[ \t]+(\S.*)$/;
+  // Wörter, die in den Etiketten häufig vorkommen und in den anderen Sprachen nicht gleich lauten.
+  const GERMAN_WORDS = /\b(?:der|die|das|den|dem|und|oder|nicht|mit|für|von|zur|zum|nach|bei|bis|auf|wird|werden|ist|sind|nur|auch|wieder|Pferd(?:e|en)?|Hund(?:e|en)?|Katze[n]?|Futter\p{L}*|Fütterung\p{L}*|Zusammensetzung|Komposition|Gewicht|Körpergewicht|Untergewicht|Übergewicht|Mageres|Starkes|Tag|kühl|trocken|dunkel|lagern|Verpackung|Gebrauch|verschließen|Lagerungshinweis|Hinweis\p{L}*|Analytische|Bestandteile|Zusatzstoffe|Gebrauchsanweisung|Inhalt|Nettomenge|Haltbarkeit)\b/giu;
+
+  function germanScore(segment) {
+    const words = (String(segment).match(GERMAN_WORDS) || []).length;
+    // Umlaute allein entscheiden nicht (Schwedisch, Dänisch, Tschechisch haben sie auch), sie brechen nur Gleichstände.
+    return words + (/[äöüßÄÖÜ]/.test(segment) ? 0.5 : 0);
+  }
+
+  // Wählt aus „A / B / C“ das eindeutig deutsche Segment; sonst null (Zeile bleibt, wie sie ist).
+  function germanSegment(line) {
+    const parts = line.split(/[ \t]\/[ \t]/).map(p => p.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    const scores = parts.map(germanScore);
+    const best = Math.max(...scores);
+    if (best < 1 || scores.filter(x => x === best).length !== 1) return null;
+    // Nur zwei Segmente („Tag / Nacht“ ist einsprachig): nur bei deutlichem Vorsprung und sonst ohne deutsche Treffer.
+    if (parts.length === 2 && (best < 3 || Math.min(...scores) > 0)) return null;
+    return parts[scores.indexOf(best)];
+  }
+
+  function germanView(text) {
+    const source = String(text || "");
+    const lines = source.split(/\r?\n/);
+    const taggedScheme = lines.some(l => GERMAN_PREFIX.test(l.trim()));
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // Sprachweise Zeilen („NL …“, „EN …“): nur die deutsche („DE …“) bleibt.
+      if (taggedScheme && OTHER_LANGUAGE_PREFIX.test(line)) continue;
+      const tagged = GERMAN_PREFIX.exec(line);
+      if (tagged && /,\s*\p{L}/u.test(tagged[1])) {
+        // Überschrift direkt davor mit der deutschen Liste zusammenführen („Komposition: Luzerne, …“).
+        const previous = out[out.length - 1];
+        if (previous && /^(?:Zusammensetzung|Komposition)$/iu.test(previous)) out[out.length - 1] = `${previous}: ${tagged[1]}`;
+        else out.push(line);
+        continue;
+      }
+      const german = germanSegment(line);
+      out.push(german || lines[i]);
+    }
+    return out.join("\n");
+  }
+
+  return { textFromResult, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
