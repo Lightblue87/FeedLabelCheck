@@ -671,41 +671,16 @@ const Labeling = (() => {
     return lines.map((line, i) => cleanAdditiveLine(line, lines[i + 1] ?? "")).join("\n");
   }
 
-  // Strukturierte Zusatzstoffzeilen: Menge, Einheit (null, wenn nicht gelesen), Name, Kennnummer. Eine Zeile zählt
-  // nur mit Kennnummer oder Stoffname. Die Kennnummer darf in der Folgezeile stehen („als Mangan-(II)-Oxid⏎(3b502)“).
-  function parseAdditiveRows(text) {
-    const rows = [];
-    const raw = String(text || "").split("\n");
-    const lines = raw.map((line, i) => cleanAdditiveLine(line, raw[i + 1] ?? ""));
-    for (let i = 0; i < lines.length; i += 1) {
-      const start = ROW_START.exec(lines[i]);
-      if (!start) continue;
-      const withUnit = ROW_AMOUNT.exec(lines[i].slice(start.index));
-      const hasUnit = withUnit && withUnit.index === 0;
-      const number = (hasUnit ? withUnit[0] : start[0]).match(/^[\d.]*(?:,\d+)?/)[0];
-      const unit = hasUnit ? withUnit[0].slice(number.length).trim().replace(/^[I1l]\.[ \t]?E\./, "I.E.") : null;
-      const rest = lines[i].slice(start.index + (hasUnit ? withUnit[0].length : number.length)).trim();
-      let code = ROW_CODE.exec(rest);
-      if (!code && i + 1 < lines.length && !ROW_START.test(lines[i + 1])) code = ROW_CODE.exec(lines[i + 1]);
-      const name = rest.replace(ROW_CODE, "").replace(/[ \t,;:]+$/, "").trim();
-      if (!code && !/\p{L}{3,}/u.test(name)) continue;
-      rows.push({
-        amount: number, unit, name,
-        code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
-        line: lines[i],
-      });
-    }
-    return rows;
-  }
-
-  function additivesEvidence(rawText) {
+  // Abschnitte mit Zusatzstoffangaben (je Überschrift ein Block Zeilen). Der Abschnitt endet an der nächsten
+  // Zusatzstoff-Überschrift oder an einer anderen Überschrift (Fütterung, Analytik, Hersteller, …).
+  function additiveSections(rawText) {
     // Vermischte Tabellenzeilen („Fütterungsempfehlung pro Tag: 90.000 …“) würden den Abschnitt vorzeitig beenden.
     const text = cleanAdditiveLines(rawText);
     const sections = [];
     for (const heading of text.matchAll(ADDITIVES_HEADING)) {
       const start = heading.index + heading[0].length;
-      // Der Abschnitt endet an der nächsten Zusatzstoff-Überschrift. Folgt sie unmittelbar („Zusatzstoffe:
-      // Ernährungsphysiologische Zusatzstoffe/kg: …“), zählt der Inhalt dahinter zur ersten Überschrift.
+      // Folgt die nächste Überschrift unmittelbar („Zusatzstoffe: Ernährungsphysiologische Zusatzstoffe/kg: …“),
+      // zählt der Inhalt dahinter zur ersten Überschrift.
       const window = text.slice(start, start + 900);
       const cut = window.split(ADDITIVES_SECTION_END, 1)[0];
       const section = namedAdditiveAmount(cut) ? cut : window.split(ADDITIVES_END, 1)[0];
@@ -713,6 +688,44 @@ const Labeling = (() => {
       const lines = sectionLines(text, heading.index, start, section);
       if (!sections.includes(lines)) sections.push(lines);
     }
+    return sections;
+  }
+
+  // Strukturierte Zusatzstoffzeilen: Menge, Einheit (null, wenn nicht gelesen), Name, Kennnummer. Gelesen werden nur
+  // Zeilen innerhalb von Zusatzstoffabschnitten; Mengen aus Fütterungsempfehlungen u. Ä. zählen nicht. Name und
+  // Kennnummer dürfen vor oder nach der Menge stehen, die Kennnummer auch in der Folgezeile.
+  function parseAdditiveRows(text) {
+    const rows = [];
+    for (const section of additiveSections(text)) {
+      const lines = section.split("\n").map(line => line.replace(ADDITIVES_HEADING, "").trim());
+      for (let i = 0; i < lines.length; i += 1) {
+        const start = ROW_START.exec(lines[i]);
+        if (!start) continue;
+        const withUnit = ROW_AMOUNT.exec(lines[i].slice(start.index));
+        const hasUnit = withUnit && withUnit.index === 0;
+        const number = (hasUnit ? withUnit[0] : start[0]).match(/^[\d.]*(?:,\d+)?/)[0];
+        const unit = hasUnit ? withUnit[0].slice(number.length).trim().replace(/^[I1l]\.[ \t]?E\./, "I.E.") : null;
+        // Ein Vorlauf zählt nur als Stoffname, wenn er kurz und kein Fließtext der Nachbarspalte ist.
+        const lead = lines[i].slice(0, start.index).trim();
+        const before = lead && !proseFragment(lead.replace(/[ \t:,]+$/, "")) && lead.split(/\s+/).length <= 4 ? lead : "";
+        const after = lines[i].slice(start.index + (hasUnit ? withUnit[0].length : number.length)).trim();
+        let code = ROW_CODE.exec(after) ?? ROW_CODE.exec(before);
+        if (!code && i + 1 < lines.length && !ROW_START.test(lines[i + 1])) code = ROW_CODE.exec(lines[i + 1]);
+        const name = [before, after].map(part => part.replace(ROW_CODE, "").replace(/^[ \t,;:]+|[ \t,;:]+$/g, "").trim())
+          .filter(Boolean).join(" ");
+        if (!code && !/\p{L}{3,}/u.test(name)) continue;
+        rows.push({
+          amount: number, unit, name,
+          code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
+          line: lines[i],
+        });
+      }
+    }
+    return rows;
+  }
+
+  function additivesEvidence(rawText) {
+    const sections = additiveSections(rawText);
     return sections.length ? sections.join("\n") : null;
   }
 
