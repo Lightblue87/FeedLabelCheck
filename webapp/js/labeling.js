@@ -638,6 +638,7 @@ const Labeling = (() => {
   // Zeilenanfang einer Zusatzstoffangabe: Menge mit Einheit oder, wenn die OCR die Einheit verloren hat, eine Zahl
   // vor Stoffname und Kennnummer in derselben Zeile.
   const ROW_START = new RegExp(`${ROW_AMOUNT.source}|(?<![\\p{L}\\p{N},.])\\d[\\d.]*(?:,\\d+)?(?=[ \\t]+\\p{L}[^\\n]*${ROW_CODE.source})`, "iu");
+  const ROW_CODE_ONLY = new RegExp(`^${ROW_CODE.source}$`, "i");
   const ROW_HEADING_WORDS = /\b(?:Zusatzstoffe|je[ \t]*kg|pro[ \t]*kg)\b/i;
 
   // Fließtext einer Nachbarspalte statt Stoffname („Vitamin E:“): Wortfragment mit Bindestrich am Ende, Beginn mit
@@ -654,7 +655,10 @@ const Labeling = (() => {
       const prefix = line.slice(0, start.index).trim();
       // Ein Vorlauf wird nur abgeschnitten, wenn die Zeile als Zusatzstoffzeile belegt ist (Kennnummer in dieser
       // oder der Folgezeile). Eine Mengenangabe allein genügt nicht: „Fütterungsempfehlung: 100 g“ ist eine Überschrift.
-      const isRow = ROW_CODE.test(line.slice(start.index)) || (ROW_CODE.test(next) && !ROW_START.test(next));
+      // Die Kennnummer der Folgezeile zählt nur bei einer Fortsetzung: Die Folgezeile besteht nach der Bereinigung nur
+      // noch aus der Kennnummer („(3b502)“, „minen und Spurenelementen an (3b502)“), nicht aus einem eigenen Stoff.
+      const continuation = next && ROW_CODE_ONLY.test(cleanAdditiveLine(next).trim());
+      const isRow = ROW_CODE.test(line.slice(start.index)) || continuation;
       return isRow && prefix && /[-:.]$/.test(prefix) && proseFragment(prefix) && !ROW_HEADING_WORDS.test(prefix)
         ? line.slice(start.index) : line;
     }

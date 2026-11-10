@@ -951,6 +951,9 @@ test("Zusatzstoffe: Überschrift mit Menge ohne Kennnummer bleibt Überschrift, 
   const sameLine = check("Zusatzstoffe: Kupfer als Kupfersulfat (3b405)\n10 mg Vitamin E");
   assert.equal(sameLine.status, "found");
   assert.match(sameLine.matchedText, /^Zusatzstoffe: Kupfer als Kupfersulfat \(3b405\)/);
+  const foreignCode = check("Zusatzstoffe:\nFütterungsempfehlung pro Tag: 100 g pro Tier und Tag\nKupfer als Kupfersulfat (3b405)");
+  assert.notEqual(foreignCode.status, "found");
+  assert.doesNotMatch(foreignCode.matchedText ?? "", /^100 g/m);
   const named = check("Zusatzstoffe:\n10 mg Vitamin E\nKupfer als Kupfersulfat (3b405)");
   assert.equal(named.status, "found");
   assert.ok(named.matchedText.split("\n").includes("Kupfer als Kupfersulfat (3b405)"));
