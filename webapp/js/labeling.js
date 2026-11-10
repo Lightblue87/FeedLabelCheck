@@ -870,9 +870,12 @@ const Labeling = (() => {
       return `${tag}: ${formatCalculated(perDm)} ${row.unit}/kg TM = ${formatCalculated(perDm * DM_TO_12_PERCENT)} ${row.unit}/kg bei 12 % Feuchte`;
     });
     const skipped = rows.length - coded.length;
-    const note = `Berechnet aus den Etikettangaben je kg Futter und der Verdünnung „${dilution.evidence}“ `
-      + "(Menge × Verdünnung; 12 % Feuchte = Trockenmasse × 0,88). Kein Grenzwertvergleich: Einheit, Tierart und Bezug der "
-      + "Katalogwerte sind nicht belegt. Ausgangswerte und Verdünnung am Original prüfen."
+    const note = `Rechenwert für den Beitrag dieses Futters, aus den Etikettangaben je kg Futter und der Verdünnung „${dilution.evidence}“ `
+      + "(Menge × Verdünnung; 12 % Feuchte = Trockenmasse × 0,88). Angenommen: Verdünnung in Gramm Originalfutter je kg "
+      + "Ration-TM; die Mengen werden wie gedruckt verwendet, die Feuchte des Futters wird nicht umgerechnet. Keine Bestätigung "
+      + "der Einhaltung und kein Grenzwertvergleich: Einheit, Tierart und Bezug der Katalogwerte sind nicht belegt; "
+      + "Zulassungsbedingungen, weitere Zusatzstoffquellen der Ration und die Konzentrationsgrenze für das Ergänzungsfutter "
+      + "selbst (Art. 8 VO (EG) Nr. 767/2009) sind nicht geprüft. Ausgangswerte und Verdünnung am Original prüfen."
       + (skipped ? ` ${skipped} Zeile${skipped === 1 ? "" : "n"} ohne lesbare Kennnummer ${skipped === 1 ? "wurde" : "wurden"} nicht berechnet.` : "");
     return { rule, status: "notCheckable", matchedText: lines.join("\n"), matchedLanguage: null, confidence: 0, note };
   }

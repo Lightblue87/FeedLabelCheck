@@ -1041,7 +1041,10 @@ test("Zusatzstoffe bei aufgedruckter Verdünnung: Rechenwert ohne Grenzwertvergl
     "1,2 mg Propylgallat (e310): 0,0096 mg/kg TM = 0,008448 mg/kg bei 12 % Feuchte",
   ]);
   assert.match(result.note, /bis max\. 8 g\/kg TM/);
-  assert.match(result.note, /Kein Grenzwertvergleich/);
+  assert.match(result.note, /Keine Bestätigung der Einhaltung und kein Grenzwertvergleich/);
+  assert.match(result.note, /Gramm Originalfutter je kg Ration-TM/);
+  assert.match(result.note, /weitere Zusatzstoffquellen der Ration/);
+  assert.match(result.note, /Art\. 8 VO \(EG\) Nr\. 767\/2009/);
   assert.match(result.note, /1 Zeile ohne lesbare Kennnummer wurde nicht berechnet/);
 });
 
