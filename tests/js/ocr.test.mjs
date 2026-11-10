@@ -1208,6 +1208,19 @@ test("Zusatzstoffbeitrag eines Ergänzungsfuttermittels: validierte Rechenlogik 
   }
 });
 
+test("Rechenkarte (Lesart A) stimmt mit der validierten Funktion überein, die Feuchte des Futters kürzt sich heraus", () => {
+  // Lesart A: Verdünnung in Gramm Originalfutter je kg Ration-TM. Der TM-Anteil des Futters an der Ration-TM ist dann
+  // Gramm × (1 − Feuchte); die Funktion liefert für jede Feuchte denselben Wert wie die Karte.
+  const label = "Mineralfutter für Rinder\nZusatzstoffe (je kg):\n7.500 mg Zink (3b603)\nbis max. 8 g/kg TM Aufnahme";
+  const line = Labeling.check(label, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung").matchedText;
+  const at12 = Number(line.match(/= ([\d,]+) mg\/kg bei 12 % Feuchte/)[1].replace(",", "."));
+  assert.equal(at12, 52.8);
+  for (const moisture of [0, 8, 10, 12, 15, 40]) {
+    const rationShare = 8 / 10 * (1 - moisture / 100); // Prozent der Rations-TM
+    assert.ok(Math.abs(Labeling.additiveContribution(7500, moisture, rationShare) - at12) < 1e-9, `Feuchte ${moisture} %`);
+  }
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
