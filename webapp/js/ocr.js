@@ -284,7 +284,7 @@ const Ocr = (() => {
     if (hasMixedLanguageColumns(text)) return true;
     const words = String(text || "").match(/\p{L}{3,}/gu) || [];
     if (words.length < 30) return true;
-    const hasComposition = /(?:^|\n)\s*DE\s+[^\n]{12,},\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]{20,},\s*\p{L}/imu.test(text);
+    const hasComposition = /(?:^|\n)\s*DE\s+[^\n]*,[^\n]*,\s*\p{L}|(?:Zusammensetzung|Komposition|Composition)\s*:[^\n]*,[^\n]*,\s*\p{L}/imu.test(text);
     const hasAnalysis = /(?:Analytische\s+Bestandteile|Analytical\s+constituents|Hrub[yý]\s+protein|Rohprotein)\b/iu.test(text);
     const hasFeeding = /(?:Feeding\s+(?:advice|instructions)|F[üu]tterung(?:sempfehlung|shinweise)|Körpergewicht)\b/iu.test(text);
     return !hasComposition && (hasAnalysis || hasFeeding || words.length < 75);
