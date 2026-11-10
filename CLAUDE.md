@@ -204,3 +204,17 @@ Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütte
 
 - Lege fest, welche Etikettsprachen, Produkttypen und realen Beispiele für die erste Abnahme bereitstehen. Die aktuelle PWA lädt nur das deutsche OCR-Sprachmodell.
 - Ergänze zu dem Beispiel für die 12-%-Umrechnung verbindliche Testfälle aus realen Laborberichten, auch für bereits normierte Ergebnisse, fehlende Bezugsangaben, Verdünnung und Toleranz.
+
+
+## Konformitätsstatus: sichere Teilprüfung statt pauschaler Rechtsfreigabe (10.11.2026)
+
+**Umsetzung in Branch `fix/conformity-status-evidence-gate` (noch nicht gemergt):**
+
+- **OCR-/Etiketten-Gesamtstatus**: `keineAuffaelligkeit` ist nur erlaubt, wenn **mindestens eine Pflichtregel geprüft** und **alle ausgewerteten Pflichtregeln `found`** sind. Jede ungeprüfte (`notCheckable`), zweifelhafte (`probablyFound` / `unclear`) oder nicht erkannte Pflichtangabe verhindert einen positiven Textprüfstatus. Ein eindeutig nicht erkannter kritischer Pflichtpunkt führt zu `auffaellig` als *OCR-Befund*, **nicht** als behördlich bestätigter Rechtsverstoß. `severity: info` ist nur informativ und darf einen ansonsten erfolgreich geprüften Satz von Pflichtregeln nicht abwerten.
+- **Nutzertext**: Auch bei `keineAuffaelligkeit` heißt es ausdrücklich **„In den erkannten Pflichtangaben keine Auffälligkeit. Keine Bestätigung der Rechtskonformität.“** Verlauf und Batchausgabe dürfen diese Einschränkung nicht durch pauschale Labels wie „konform“ aufheben.
+- **Labor-/Daten-Grenzwerte**: Zahlen innerhalb/außerhalb **hinterlegter** Limits sind keine umfassende Rechtskonformität. Das Ergebnis muss ausdrücklich den Umfang der Datenprüfung bezeichnen. Fehlende oder nur geschätzte Einheiten (`unitAssumed`) bleiben immer **nicht prüfbar**, selbst bei gleicher Einheit in der Eingabe. Das ist eine fachliche Sperre, die sich mit Draft-PR #51 überschneidet; **vor einem Merge die Branches zusammenführen oder die Überschneidung auflösen**, nicht blind nacheinander mergen.
+- **Tests**: `tests/js/conformity-status.test.mjs` und `tests/js/eval-units.test.mjs` sichern die Statuslogik und die Einheitensperre ab. Vor Freigabe lokal/CI ausführen; ein GitHub-Pages-Deploy allein ersetzt keine Tests.
+
+**Wesentliche verbleibende Grenzen:** Diese Änderung bestätigt weder aktuelle Zusatzstoffzulassungen und deren Sonderbedingungen noch eine vollständig erfasste Verpackung, korrekte Gehaltseinheiten, die Einhaltung der Art.-8-Produktobergrenze oder einen tatsächlichen Rationshöchstgehalt. Die App ist weiter ein Nachprüfungswerkzeug. Ein **echter positiver juristischer Konformitätsstatus** darf erst nach einer *vollständigen, gültigen und belegten* Regeln-/Datenmatrix je Produkt- und Tierartkategorie sowie überprüften Etikettenbelegen eingeführt werden; bis dahin positive Ergebnisse ausschließlich als **unauffällige Teilprüfung** ausweisen.
+
+**Abnahmereihenfolge:** (1) Status- und Regressionstests ausführen, (2) Auswirkungen auf vorhandene Etiketten prüfen, (3) neue Regelbasis und Zulassungsdaten pro Tierkategorie validieren, (4) fachliche Abnahme. **Kein Merge ohne ausdrückliche Freigabe.**
