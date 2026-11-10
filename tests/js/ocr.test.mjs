@@ -1100,6 +1100,29 @@ test("Zusatzstoffe bei Verdünnung: führende Null mit Punkt und Trockenmasse-Be
   assert.match(card("Zusatzstoffe (je kg):\n750 mg Zink (3b603)").matchedText, /6 mg\/kg TM/);
 });
 
+test("Zusatzstoffe bei Verdünnung: Tausenderpunkt in der Verdünnung und wissenschaftliche Angabe neben anderen Angaben", () => {
+  const card = (body, dilution = "bis max. 8 g/kg TM Aufnahme") => Labeling.check(`Mineralfutter für Rinder\n${body}\n${dilution}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");
+  const rows = "Zusatzstoffe (je kg):\n750 mg Zink (3b603)";
+  assert.match(card(rows, "bis max. 1.000 g/kg TM").matchedText, /750 mg\/kg TM/);
+  assert.match(card(rows, "bis max. 0,5 kg/kg TM").matchedText, /375 mg\/kg TM/);
+  for (const unclear of ["bis max. 0.008 g/kg TM", "bis max. 1.5 g/kg TM"]) {
+    const result = card(rows, unclear);
+    assert.match(result.note, /nicht eindeutig lesbar/, unclear);
+    assert.doesNotMatch(result.matchedText, /mg\/kg TM =/, unclear);
+  }
+  // Nachbarangaben einer wissenschaftlichen Schreibweise behalten Namen, Kennnummern und Rechnung.
+  const mixed = card("Zusatzstoffe (je kg):\n50 mg Vitamin E (3a700), 1 x 10^9 KBE Enterococcus faecium (4b1708)");
+  assert.deepEqual(mixed.matchedText.split("\n"), [
+    "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+    "1 x 10^9 KBE Enterococcus faecium (4b1708): wissenschaftliche Schreibweise, nicht berechnet",
+  ]);
+  const reversed = card("Zusatzstoffe (je kg):\n1 x 10^9 KBE Enterococcus faecium (4b1708), 50 mg Vitamin E (3a700)");
+  assert.deepEqual(reversed.matchedText.split("\n"), [
+    "1 x 10^9 KBE Enterococcus faecium (4b1708): wissenschaftliche Schreibweise, nicht berechnet",
+    "50 mg Vitamin E (3a700): 0,4 mg/kg TM = 0,352 mg/kg bei 12 % Feuchte",
+  ]);
+});
+
 test("Zusatzstoffe bei Verdünnung: ohne Trockenmasse-Bezug, ohne Kennnummer oder bei Widerspruch", () => {
   const rows = "Zusatzstoffe je kg:\n7.500 mg Zink als Zinkoxid (3b603)\n";
   const card = body => Labeling.check(`Mineralfutter für Rinder\n${rows}${body}`, FEED_TYPES[2], []).ruleResults.find(r => r.rule.id === "zusatz_verduennung");

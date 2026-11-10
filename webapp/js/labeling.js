@@ -776,24 +776,13 @@ const Labeling = (() => {
       section.split("\n").forEach((line, lineIndex) => {
         const lineOffset = offset;
         offset += line.length + 1;
-        const scientific = SCIENTIFIC.exec(line);
-        if (scientific) {
-          if (seen.has(lineOffset + scientific.index)) return;
-          seen.add(lineOffset + scientific.index);
-          const code = ROW_CODE.exec(line);
-          const name = tidyRowName(line.slice(0, scientific.index) + " " + line.slice(scientific.index + scientific[0].length));
-          if (!code && !/\p{L}{3,}/u.test(name)) return;
-          const row = {
-            amount: scientific[0].trim(), value: null, scientific: true, basis: basisAt(lineOffset + scientific.index),
-            unit: scientific[2] ? rowUnit(scientific[2]) : null, name,
-            code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null, line,
-          };
-          rows.push(row);
-          previous = row;
-          previousLine = lineIndex;
-          return;
-        }
-        const amounts = [...line.matchAll(ROW_START_ALL)];
+        // Jede Angabe der Zeile wird einzeln erfasst; eine wissenschaftliche Schreibweise ersetzt die Mengen in ihrem
+        // Bereich (der Exponent ist keine Menge), die übrigen Angaben der Zeile behalten ihre Namen und Kennnummern.
+        const sciGlobal = new RegExp(SCIENTIFIC.source, "giu");
+        const sciTokens = [...line.matchAll(sciGlobal)].map(m => ({ ...m, index: m.index, 0: m[0], kind: "scientific", match: m }));
+        const inScience = index => sciTokens.some(t => index >= t.index && index < t.index + t[0].length);
+        const amountTokens = [...line.matchAll(ROW_START_ALL)].filter(m => !inScience(m.index)).map(m => ({ index: m.index, 0: m[0], kind: "amount", match: m }));
+        const amounts = [...sciTokens, ...amountTokens].sort((x, y) => x.index - y.index);
         if (!amounts.length) {
           if (previous && !previous.code && previousLine === lineIndex - 1 && ROW_CODE_ONLY.test(line.trim())) {
             previous.code = ROW_CODE.exec(line)[1].replace(/\s+/g, "").toLowerCase();
@@ -819,12 +808,14 @@ const Labeling = (() => {
           if (seen.has(lineOffset + amount.index)) return;
           seen.add(lineOffset + amount.index);
           const code = ROW_CODE.exec(after) ?? (named ? ROW_CODE.exec(named) : null);
-          const printed = amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
+          const scientific = amount.kind === "scientific";
+          const printed = scientific ? amount[0].trim() : amount[0].match(/^\d[\d.]*(?:,\d+)?/)[0];
           // „7 500 mg“: Leerzeichen als Tausendertrennung. Die Menge ist nicht eindeutig (7 500 oder 500), nicht berechnen.
-          const grouped = /\d[ \t]+$/.test(line.slice(0, amount.index));
-          const unitText = amount[0].slice(printed.length).trim();
+          const grouped = !scientific && /\d[ \t]+$/.test(line.slice(0, amount.index));
+          const unitText = scientific ? (amount.match[2] || "") : amount[0].slice(printed.length).trim();
           const row = {
-            amount: printed, value: grouped ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            amount: printed, value: scientific || grouped ? null : parseLabelNumber(printed), unit: unitText ? rowUnit(unitText) : null,
+            ...(scientific ? { scientific: true } : {}),
             basis: basisAt(lineOffset + amount.index),
             name: [named, after].map(tidyRowName).filter(Boolean).join(" "),
             code: code ? code[1].replace(/\s+/g, "").toLowerCase() : null,
@@ -846,16 +837,21 @@ const Labeling = (() => {
 
   function declaredDilution(text) {
     const found = new Map();
+    const unclear = [];
     for (const match of text.matchAll(DILUTION)) {
-      const number = Number(match[1].replace(",", "."));
+      // Dieselbe Zahlenregel wie bei den Mengen: „1.000“ ist tausend, „0.008“ und „1.5“ sind nicht eindeutig.
+      const number = parseLabelNumber(match[1]);
+      const evidence = match[0].replace(/\s+/g, " ");
+      if (number === null) { unclear.push(evidence); continue; }
       const gramsPerKg = match[2].toLowerCase() === "kg" ? number * 1000 : number;
       if (!(gramsPerKg > 0 && gramsPerKg <= 1000)) continue;
-      if (!found.has(gramsPerKg)) found.set(gramsPerKg, match[0].replace(/\s+/g, " "));
+      if (!found.has(gramsPerKg)) found.set(gramsPerKg, evidence);
     }
+    if (unclear.length) return { conflict: unclear, reason: "unclear" };
     if (!found.size) return null;
     return found.size === 1
       ? { gramsPerKg: [...found.keys()][0], evidence: [...found.values()][0] }
-      : { conflict: [...found.values()] };
+      : { conflict: [...found.values()], reason: "conflict" };
   }
 
   const DILUTION_BASIS = "Rechenhinweis aus den Etikettangaben";
@@ -874,7 +870,9 @@ const Labeling = (() => {
     const rule = { id: "zusatz_verduennung", titleDe: "Zusatzstoffe bei aufgedruckter Verdünnung (Rechenwert)", legalBasis: DILUTION_BASIS, severity: "info" };
     if (dilution.conflict) {
       return { rule, status: "notCheckable", matchedText: dilution.conflict.join("\n"), matchedLanguage: null, confidence: 0,
-        note: "Widersprüchliche Verdünnungsangaben auf dem Etikett. Es wird nicht gerechnet; bitte am Original prüfen." };
+        note: dilution.reason === "unclear"
+          ? "Die Verdünnungsangabe auf dem Etikett ist nicht eindeutig lesbar (Tausenderpunkt oder Dezimalpunkt?). Es wird nicht gerechnet; bitte am Original prüfen."
+          : "Widersprüchliche Verdünnungsangaben auf dem Etikett. Es wird nicht gerechnet; bitte am Original prüfen." };
     }
     const fraction = dilution.gramsPerKg / 1000;
     const lines = coded.map(row => {
