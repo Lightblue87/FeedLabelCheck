@@ -16,6 +16,7 @@ const PwaUpdate = (() => {
   const MIN_GAP_MS = 60 * 1000;         // Mindestabstand zwischen zwei Prüfungen
   const INTERVAL_MS = 30 * 60 * 1000;   // regelmäßige Prüfung bei sichtbarer App
   const STUCK_MS = 45 * 1000;           // so lange wartet die Seite auf die Übernahme einer neuen Version
+  const FETCH_TIMEOUT_MS = 10 * 1000;   // Obergrenze für den Abruf von version.json
   const IDLE_POLL_MS = 2000;
   const MAX_IDLE_WAIT_MS = 5 * 60 * 1000;
   const CACHE_PREFIX = "flc-";
@@ -69,13 +70,19 @@ const PwaUpdate = (() => {
   }
 
   // undefined: nicht erreichbar; null: erreichbar, aber ohne gültige Version (lokal, nicht ausgeliefert).
+  // Die Laufzeit ist einschließlich des Einlesens der Antwort begrenzt: eine hängende Verbindung darf weder die
+  // Prüfung (checking) noch die späteren Prüfungen blockieren.
   async function fetchRemoteBuild() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      const response = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store" });
+      const response = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store", signal: controller.signal });
       if (!response.ok) return null;
       return parseVersion(await response.json());
     } catch {
       return undefined;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -105,8 +112,9 @@ const PwaUpdate = (() => {
     checking = (async () => {
       try {
         const since = controllerChanges;
-        const [remote, build] = await Promise.all([fetchRemoteBuild(), askBuild()]);
+        // Das Worker-Update läuft unabhängig vom Abruf der Versionsdatei.
         registration.update().catch(() => { /* offline: der laufende Stand bleibt */ });
+        const [remote, build] = await Promise.all([fetchRemoteBuild(), askBuild()]);
         if (build) running = build;
         state.running = running;
         if (remote === undefined) {
@@ -165,7 +173,7 @@ const PwaUpdate = (() => {
   const onChange = fn => { listeners.add(fn); return () => listeners.delete(fn); };
 
   return {
-    dueForCheck, parseVersion, versionState, reloadDelay, MIN_GAP_MS, STUCK_MS, MAX_IDLE_WAIT_MS,
+    dueForCheck, parseVersion, versionState, reloadDelay, MIN_GAP_MS, STUCK_MS, MAX_IDLE_WAIT_MS, FETCH_TIMEOUT_MS,
     start, check, reset, onChange, info: () => ({ ...state }),
   };
 })();

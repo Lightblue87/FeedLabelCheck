@@ -22,6 +22,9 @@ const VENDOR_VERSION = "v1";
 const CACHE_PREFIX = "flc-";
 const SHELL_CACHE = `${CACHE_PREFIX}shell-${BUILD_ID}`;
 const VENDOR_CACHE = `${CACHE_PREFIX}vendor-${VENDOR_VERSION}`;
+// Cache der früheren Aufteilung (alles in einem Cache, z. B. „flc-v20-shell“). Nur daraus wird beim Wechsel kopiert,
+// nie aus einem Vendor-Cache: Bei einer neuen VENDOR_VERSION müssen die Bibliotheken neu geladen werden.
+const LEGACY_SHELL_CACHE = /^flc-v\d+-shell$/;
 
 const SHELL_ASSETS = [
   "./",
@@ -70,10 +73,15 @@ self.addEventListener("install", (event) => {
     // Vendor-Dateien nur laden, wenn sie im Vendor-Cache fehlen: ein App-Update lädt so nur die kleine App-Shell.
     // Scheitert der Erstdownload, scheitert die Installation (kein halber Offline-Stand).
     const vendor = await caches.open(VENDOR_CACHE);
+    const legacy = (await caches.keys()).filter(k => LEGACY_SHELL_CACHE.test(k));
     for (const asset of VENDOR_ASSETS) {
       if (await vendor.match(asset)) continue;
       // Beim Wechsel von der alten Cache-Aufteilung liegt die Datei noch im bisherigen Cache: kopieren statt laden.
-      const existing = await caches.match(asset);
+      let existing;
+      for (const name of legacy) {
+        existing = await (await caches.open(name)).match(asset);
+        if (existing) break;
+      }
       if (existing) await vendor.put(asset, existing.clone());
       else await vendor.add(new Request(asset, { cache: "no-cache" }));
     }
