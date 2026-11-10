@@ -1134,7 +1134,7 @@
           const image = await createImageBitmap(input);
           let regions;
           try {
-            regions = Ocr.recoveryRegions(image.width, image.height);
+            regions = Ocr.recoveryRegions(image.width, image.height, primary);
           } finally {
             image.close();
           }
