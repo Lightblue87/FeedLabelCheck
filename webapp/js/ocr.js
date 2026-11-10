@@ -385,6 +385,11 @@ const Ocr = (() => {
   // Wörter, die in den Etiketten häufig vorkommen und in den anderen Sprachen nicht gleich lauten.
   const GERMAN_WORDS = /\b(?:der|die|das|den|dem|und|oder|nicht|mit|für|von|zur|zum|nach|bei|bis|auf|wird|werden|ist|sind|nur|auch|wieder|Pferd(?:e|en)?|Hund(?:e|en)?|Katze[n]?|Futter\p{L}*|Fütterung\p{L}*|Zusammensetzung|Komposition|Gewicht|Körpergewicht|Untergewicht|Übergewicht|Mageres|Starkes|Tag|kühl|trocken|dunkel|lagern|Verpackung|Gebrauch|verschließen|Lagerungshinweis|Hinweis\p{L}*|Analytische|Bestandteile|Zusatzstoffe|Gebrauchsanweisung|Inhalt|Nettomenge|Haltbarkeit)\b/giu;
 
+  // Wörter anderer Sprachen, wie sie auf mehrsprachigen Futtermitteletiketten vorkommen (Niederländisch, Englisch,
+  // Französisch, Spanisch, Italienisch, Skandinavisch, Polnisch, Portugiesisch, Tschechisch). Ohne einen solchen
+  // Hinweis in einem anderen Segment ist „A / B / C“ eine einsprachige Aufzählung und bleibt unverändert.
+  const OTHER_LANGUAGE_WORDS = /\b(?:samenstelling|composition|composici[oó]n|composizione|sammens[æa]tning|sammans[äa]ttning|kompozycja|composi[çc][ãa]o|slo[zž]en[ií]|koostumus|lichaamsgewicht|ondergewicht|paard|body\s+weight|underweight|lean|severe|horse|storage|advi[cs]e|advice|feeding|analytical|constituents?|ingredients|conseils?|conservation|koel|droog|donker|bewaren|verpakking|hersluiten|bewaaradvies|opbevarings|f[öo]rvarings|przechowanie|skladov[aá]n[ií]|constituintes|analiticos|analytick[eé])\b/iu;
+
   function germanScore(segment) {
     const words = (String(segment).match(GERMAN_WORDS) || []).length;
     // Umlaute allein entscheiden nicht (Schwedisch, Dänisch, Tschechisch haben sie auch), sie brechen nur Gleichstände.
@@ -400,7 +405,11 @@ const Ocr = (() => {
     if (best < 1 || scores.filter(x => x === best).length !== 1) return null;
     // Nur zwei Segmente („Tag / Nacht“ ist einsprachig): nur bei deutlichem Vorsprung und sonst ohne deutsche Treffer.
     if (parts.length === 2 && (best < 3 || Math.min(...scores) > 0)) return null;
-    return parts[scores.indexOf(best)];
+    const chosen = scores.indexOf(best);
+    // Ein deutsches Segment allein genügt nicht (z. B. „Zusammensetzung: Getreide / Mais / Erbsen“): Ein anderes
+    // Segment muss erkennbar einer anderen Sprache angehören.
+    if (!parts.some((part, index) => index !== chosen && OTHER_LANGUAGE_WORDS.test(part))) return null;
+    return parts[chosen];
   }
 
   function germanView(text) {

@@ -67,3 +67,13 @@ test("Unklare Zeilen bleiben unverändert, einsprachiger Text wird nicht angefas
   const nl = "NL Luzerne, Lijnzaad, Biergist";
   assert.equal(Ocr.germanView(nl), nl);
 });
+
+test("Einsprachige Aufzählungen mit Schrägstrichen bleiben vollständig", () => {
+  for (const line of ["Zusammensetzung: Getreide / Mais / Erbsen", "Mais / Erbsen / Futterkalk", "Fütterung: Heu / Stroh / Gras",
+                      "Rohprotein / Rohfett / Futterbestandteile"]) {
+    assert.equal(Ocr.germanView(line), line, line);
+  }
+  // Die Zusammensetzungskarte behält alle Zutaten und meldet keinen Mehrsprachen-Filter.
+  const text = "Ergänzungsfuttermittel für Pferde.\nZusammensetzung: Getreide / Mais / Erbsen";
+  assert.equal(Ocr.germanView(text), text);
+});
