@@ -288,3 +288,21 @@ python3 Data/audit_limit_units.py Data/zusatzstoffe.json --strict
 5. **Erst danach:** Einen juristisch belastbaren Grenzwertvergleich pro Zulassung/Tierart als **getrennte** Funktion entwickeln und fachlich abnehmen.
 
 **Änderungsdisziplin:** `main`, PR #49 und PR #50 durch diese Dokumentationsentscheidung nicht rückwirkend verändern. Weitere Änderungen über überprüfbare Branches/PRs; **Merge nur nach ausdrücklich erteilter Freigabe**.
+
+
+## Konkreter Regressionfall: Pavo WeightLift – OCR-Nichttreffer (10.11.2026)
+
+**Eingang:** Zwei mehrsprachige Etikettenfotos und ein iPhone-Screenshot der Prüfung. Der Nutzer hat zusätzlich den tatsächlich erkannten OCR-Text geliefert. Darin stehen viele unvollständige/fehlerhafte Fragmente (z. B. `NN NdAdN`, `FEEDING AD rgewicht`, `onstituintes analiticos`, `Hruby protein 16,5%`), aber keine zuverlässig vollständige deutsche Zusammensetzung. Die Bilder zeigen u. a. eine **deutsche Zutatenzeile** (Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid), eine tschechische Analysentabelle und eine Fütterungstabelle für Pferde mit 300/600 kg Körpergewicht. Die Textqualität kann daher nicht als Nachweis eines fehlenden Etiketteninhalts dienen.
+
+**Befund:** Die Live-PWA zeigte **11 rote „Nicht erkannt“**-Treffer, darunter Futtermittelart, Tierart, Unternehmer, MHD, Nettomenge, Zusammensetzung und Charge. Das ist als optisch nahegelegter Rechtsverstoß irreführend: Der Status `missing` bezeichnet bislang nur einen **ausgebliebenen Suchtreffer im unvollständigen OCR-Text**, keinen nachgewiesenen Verstoß.
+
+**Im Branch `fix/ocr-missing-is-unverified` umgesetzt (noch NICHT gemergt):**
+
+1. Die aus `checkRule` kommenden `missing`-Fälle bleiben für die interne Diagnose erhalten, erhalten aber explizit den Hinweis, dass kein Etikettenfehler nachgewiesen ist.
+2. `overallStatus`: Wenn alle ausgewerteten Pflichtregeln nur `missing` oder `notCheckable` sind, wird **`nichtPruefbar`** statt `auffaellig` ausgegeben. Ein Mix aus sicher erkannten und nicht erkannten Pflichtangaben ergibt **`unklar`**. Nur klar anwendbare und belegte materielle Rechtsverletzungen dürfen später einen roten Rechtsverstoß-Status erzeugen; der gegenwärtige OCR-Nichttreffer kann dies nicht.
+3. In `app.js` heißen diese Einzelfälle **„Kein OCR-Treffer“** statt „Nicht erkannt“; die Gesamtmeldung erklärt die unzureichende Textbasis. CSS: kein Rot für `missing` (neutral/grau).
+4. Regressionstests mit dem echten Pavo-OCR-Ausschnitt und 11 fehlenden Treffern in `tests/js/conformity-status.test.mjs` aufgenommen.
+
+**Noch nicht behoben / P1: Erkennungsqualität.** Die App lädt zurzeit nur das Tesseract-Modell `deu`. Mehrsprachige Etiketten (z. B. DE/EN/CZ/NL) und sehr kleine/verwischte Tabellen liefern dadurch schlechte Textergebnisse. Die erste Abnahme verlangt einen **gesonderten nahen Bildausschnitt** der deutschen Zutatenliste, der Analyse und der Pflichtangaben je Verpackungsseite, nicht nur ein weites Foto. Technische nächste Schritte: mehrsprachige Offline-OCR-Modelle unter Berücksichtigung des Vendor-Caches und Paketumfangs prüfen, gezielte Segment-/Ausschnittslesung, Tabellenwerte und Überschriften korrekt einander zuordnen, pro Foto OCR-Qualität und erkannte Sprache als Diagnose ausgeben. Kein erfundener Text und keine automatische Rückübersetzung als sicherer Originalbeleg. Für weitere Sprachen muss die gesetzlich geforderte Kennzeichnungssprache des **Vermarktungslands** getrennt geprüft werden (ein fremdsprachiger Etikettenausschnitt allein ist kein Verstoß).
+
+**Abnahmekriterien:** Der reproduzierte OCR-Text darf weder 11 rote Verstöße noch einen unauffälligen Gesamtrechtsstatus erzeugen. Ein verbessertes OCR muss anhand derselben Originalfotos getestet werden; alte und neue OCR-Daten vergleichen, welche Pflichtangaben wirklich aus dem Bild gelesen wurden. **Kein Merge ohne ausdrückliche Freigabe.**
