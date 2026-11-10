@@ -902,6 +902,20 @@ test("Zeilenweise vermischte Spalten: Zutaten und Analytik werden getrennt beleg
   assert.equal(analysis.matchedText.split("\n").slice(1).join("|"), "4% Phosphor|10% Calcium|4% Natrium|2% Magnesium");
 });
 
+test("Vermischte Spalten: Trennstriche der Zutatenliste werden zusammengeführt", () => {
+  const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie, Natriumchlorid, Magnesi- 0,70% Phosphor\numoxid, Bierhefe, Rübenmelasse, Calci- 1,90% Calcium\numcarbonat, Monocalciumphosphat, Pflan- 11,00% Natrium\nzenöl aus Raps, raffiniert 5,00% Magnesium\nErnährungsphysiologische Zusatzstoffe (je kg):\n10.000 mg Zink (3b603)";
+  const result = Labeling.check(label, FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.deepEqual(result.matchedText.split("\n").slice(1), [
+    "Weizengrießkleie, Natriumchlorid, Magnesiumoxid,", "Bierhefe, Rübenmelasse, Calciumcarbonat,",
+    "Monocalciumphosphat, Pflanzenöl", "aus Raps, raffiniert",
+  ]);
+  // Bindestrich ohne Kleinbuchstaben dahinter (zusammengesetztes Wort, Eigenname) bleibt stehen.
+  const kept = Labeling.check(label.replace("umoxid, Bierhefe", "Umoxid, Bierhefe"), FEED_TYPES[2], [rule]).ruleResults[0];
+  assert.match(kept.matchedText, /Magnesi-\nUmoxid/);
+});
+
 test("Vermischte Spalten: Abschnittsüberschrift beendet die Zutaten, Messwert nach Zutatenzeile ist nicht eindeutig", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const check = body => Labeling.check(`Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\n${body}`, FEED_TYPES[2], [rule]).ruleResults[0];
