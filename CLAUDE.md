@@ -203,3 +203,72 @@ Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütte
 
 - Lege fest, welche Etikettsprachen, Produkttypen und realen Beispiele für die erste Abnahme bereitstehen. Die aktuelle PWA lädt nur das deutsche OCR-Sprachmodell.
 - Ergänze zu dem Beispiel für die 12-%-Umrechnung verbindliche Testfälle aus realen Laborberichten, auch für bereits normierte Ergebnisse, fehlende Bezugsangaben, Verdünnung und Toleranz.
+
+
+## Verbindlicher Zielumfang und rechtliche Prüfarchitektur (Entscheidung 10.11.2026)
+
+**Produktentscheidungen:** FeedLabelCheck prüft **Nutztiere und Heimtiere**. Ziel ist eine **vollständige, nachvollziehbare Etikettenprüfung** einschließlich Futtermittel- und Tierartzuordnung, Pflichtkennzeichnung, Zusatzstoffzulassung, Deklaration, Konzentrationen, Einheiten und einschlägigen Höchstgehalten. Die vertiefte Verdünnungs- und Art.-8-Prüfung betrifft insbesondere **einzelne Ergänzungsfuttermittel**. Die bestehenden Prüfpfade für Einzelfuttermittel, Alleinfuttermittel, Mineralfuttermittel, Milchaustauscher und besondere Ernährungszwecke bleiben erhalten und werden nicht entfernt. Zusatzstoff- und Vormischungsetiketten sind ein eigener, rechtlich anders gelagerter Prüfpfad. **Keine vollständige Rationsplanung**, keine Eingabe mehrerer Futterkomponenten zur Berechnung einer individuellen Tagesration.
+
+### Prüfbereiche und Rechtsgrundlagen
+
+1. **Einstufung/Anwendungsbereich:** Art. 3, 7 und 8 VO (EG) 767/2009; Abgrenzung zu Zusatzstoffen/Vormischungen und Tierarzneimitteln; Futtermitteltyp, Tierart, Tierkategorie, Alters- und Nutzungsbeschränkungen. Unbekannte Einstufung niemals stillschweigend durch Standardtyp ersetzen.
+2. **Allgemeine Etikettenpflichten:** Art. 11–15, 17–22 und Anhänge I, II, VI/VII VO (EG) 767/2009 nach tatsächlichem Produkt- und Tierarttyp. Insbesondere Bezeichnung, verantwortlicher Unternehmer/Anschrift, ggf. Betriebskennung, Charge, Nettomenge, Feuchte soweit vorgeschrieben, Zusammensetzung, analytische Bestandteile, Zusatzstoffangaben, Zweck und Gebrauchsanweisung, Haltbarkeit sowie relevante Kontakt-/Informationspflichten und Ausnahmen. Eine Pflicht nur anzeigen, wenn ihre Tatbestandsvoraussetzungen erfüllt sind.
+3. **Zusatzstoffrecht:** VO (EG) 1831/2003, EU-Zusatzstoffregister und jeweiliger **geltender Zulassungsakt** samt Änderungen, Übergangsfristen, Zieltierspezies, zulässigen Verwendungsbedingungen, stoffbezogenen Messgrößen und erforderlichen Warn-/Kennzeichnungshinweisen. Das Register ist Such- und Referenzquelle; **der Rechtsakt** ist für die verbindliche Bedingung maßgeblich. Eine fehlende oder nicht bestätigte Zulassung bedeutet „nicht abschließend prüfbar“, nicht automatisch „nicht zugelassen“. Ein belegter Ausschluss kann hingegen einen Verstoß begründen.
+4. **Konzentrationsgrenze im Ergänzungsfuttermittel:** Art. 8 Abs. 1 VO (EG) 767/2009: grundsätzlich höchstens 100 × **festgelegter** Höchstgehalt im Alleinfuttermittel; bei Kokzidiostatika/Histomonostatika 5 ×, jeweils vorbehaltlich spezieller Bedingungen des Zulassungsakts. Diese Faktoren gelten nicht als ersatzweiser Höchstgehalt, wenn kein solcher festgesetzt ist. Art. 8 Abs. 2 und der zulässige besondere Ernährungszweck können eine eng begrenzte Ausnahme begründen; nicht automatisch anwenden. VO (EU) 2020/354 mit jeweils gültiger Fassung/Eintrag prüfen. Ein bestandener Art.-8-Vergleich allein bestätigt keine Gesamtkennzeichnungskonformität.
+5. **Fütterungshinweis und Höchstmenge:** Art. 17 Abs. 1 Buchst. b und Anhang II Nr. 4 VO (EG) 767/2009; bei entsprechend erhöhten Zusatzstoffgehalten erforderliche Höchstmengenangabe und Zweck der Einhaltung der Höchstgehalte in der Tagesration. „Fütterungsempfehlung“ und **verbindliche Höchstmengenangabe** sind unterschiedliche Datenfelder. Fehlender oder unklarer Hinweis ist zunächst ein kennzeichnungsrechtlicher Prüfpunkt, kein bewiesener Konzentrationsverstoß.
+6. **Tierartspezifische Pflichtdeklaration:** Anhang VI (lebensmittelliefernde Tiere) und VII (nicht lebensmittelliefernde Tiere), jeweils Kapitel I/II und Änderungen (u. a. VO (EU) 2017/2279 und Berichtigung VO (EU) 2018/1903); Zusatzstoffe nach Kategorie/Funktionsgruppe, kennzeichnungspflichtige Gehalte sowie analytische Bestandteile je Tierart und Futtertyp. Unterscheide zugesetzte Menge, garantierten Gesamtgehalt und analytisch gemessenen Wert.
+7. **Ernährungszweck, Claims und Sonderfälle:** Art. 11/13 VO (EG) 767/2009 (irreführende Angaben/Belegbarkeit), VO (EU) 2020/354 (besondere Ernährungszwecke und zusätzliche Deklaration/Gebrauchsanweisung), gegebenenfalls spezifische Zusatzstoffauflagen. Wissenschaftliche Belegbarkeit oder materielle Sicherheit sind anhand eines Etikettenfotos regelmäßig **nicht abschließend prüfbar**. „Vollständige Etikettenprüfung“ bedeutet Abdeckung aller erkennbar anwendbaren Etikettenanforderungen, **keine behördliche Freigabe** und keine unbedingte Bestätigung von Sicherheit/Verkehrsfähigkeit.
+
+**Rechtsquellen (primär, jeweils Geltung zum Stichtag separat prüfen):**
+- https://eur-lex.europa.eu/eli/reg/2009/767/2018-12-26/deu
+- https://eur-lex.europa.eu/eli/reg/2003/1831/oj/deu
+- https://eur-lex.europa.eu/eli/reg_impl/2020/354/oj/deu
+- https://food.ec.europa.eu/food-safety/animal-feed/feed-additives_en
+- https://food.ec.europa.eu/food-safety/animal-feed/feed-marketing_en
+
+**Rechtsquellen-Status, 10.11.2026:** Art. 8 und Art. 15/17 sowie die Systematik der Anhänge sind anhand öffentlich indexierter EUR-Lex-/Kommissionsinformationen nachvollzogen. Ein automatisierter Volltextabruf der aktuellen konsolidierten Rechtsfassung war nicht durchgehend möglich. Deshalb **keine Behauptung**, alle aktuellen Einzeländerungen, nationalen Durchführungsregeln, Verwendungsbedingungen oder ausnahmslos alle Fälle seien vollständig validiert. Rechtsstand und offene Quellenprüfung pro Regel dokumentieren; nicht bloß den globalen Datenstand anzeigen.
+
+### Fachlich korrekte Berechnung bei Verdünnungsangaben – zwei NICHT austauschbare Eingaben
+
+Der in PR #49 dokumentierte Wortlaut **„bis max. N g/kg TM“** ist laut bisheriger Implementierungsannahme **Gramm Original-Ergänzungsfutter je Kilogramm Trockenmasse der Gesamtration**. Er beschreibt **nicht** automatisch einen prozentualen Anteil des Ergänzungsfuttermittels an der Rations-Trockenmasse. Die vorher diskutierte Prozentformel darf daher nicht ungeprüft auf diese Rechenkarte übertragen werden.
+
+**Fall A: N g Originalfutter / kg Gesamtrations-TM**
+- \`C_f\` = mg/kg Ergänzungsfutter **wie verfüttert**, \`N\` = g Originalfutter / kg **Gesamtrations-TM**, \`r\` = Referenz-TM als Bruch (z. B. 0,88 bei 12 % Feuchte).
+- **Beitrag auf Referenzfeuchtebasis:** \`C_beitrag = C_f × (N / 1000) × r\` [mg/kg Gesamtration, normiert auf Referenzfeuchte].
+- Beispiel \`C_f=100 mg/kg\`, \`N=200 g/kg Rations-TM\`, \`r=0,88\`: **17,6 mg/kg**. Die **Feuchte des Ergänzungsfutters wird hierbei nicht nochmals dividiert**, da N bereits die Masse Originalfutter erfasst.
+- Voraussetzung: Das Etikett meint tatsächlich **Originalfutter** bei N und **gesamte Rations-TM** im Nenner. Ist „TM“ abweichend definiert oder unklar, keine definitive Rechnung.
+
+**Fall B: p Anteil an der Trockenmasse der Gesamtration**
+- \`p\` = kg **Ergänzungsfutter-TM** / kg **Gesamtrations-TM**, \`t_f\` = TM-Gehalt Ergänzungsfutter als Bruch, \`C_f\` = mg/kg Originalfutter.
+- **Beitrag auf Referenzfeuchtebasis:** \`C_beitrag = C_f × (r / t_f) × p\`.
+- Beispiel \`C_f=100 mg/kg\`, \`t_f=0,90\`, \`p=0,20\`, \`r=0,88\`: **19,5556 mg/kg**.
+- Ohne nachgewiesene Futterfeuchte oder ohne eindeutige Anteil-Basis **nicht berechnen**.
+
+**Weitere Eingabearten:** Für Anteile an Originalmasse, g/Tier/Tag und nicht erklärte Prozentangaben getrennte Typen/Regeln; erforderliche zusätzliche Futteraufnahme-/Feuchteparameter dürfen nicht stillschweigend angenommen werden. Der Referenzfeuchtewert von 12 % ist **nur bei entsprechend belegtem Grenzwertbezug** einzusetzen. Einheiten, Zusatzstoff-/Wirkstoffidentität und Umrechnungen vor jedem Vergleich prüfen. Für Konformität erforderliche natürliche und andere additive Stoffquellen können nicht einfach als 0 angesetzt werden.
+
+**Rechenlogik und rechtlicher Schluss sind strikt getrennt:** Ein rechnerischer Beitrag oberhalb eines nachweislich anwendbaren maximalen Gesamtgehalts wäre bei nichtnegativen sonstigen Beiträgen ein starker Beleg für eine Unvereinbarkeit **unter den ausgewiesenen Annahmen**. Ein Beitrag unterhalb des Grenzwerts beweist **nicht**, dass die reale Gesamtration konform ist; übrige Futterbestandteile bleiben unbekannt. Die App darf bei fehlenden Daten einen plausiblen Teilbeitrag anzeigen, aber **keine Gesamtfreigabe** aussprechen.
+
+### Statusmodell und Belegpflicht
+
+Einzelregelstatus: \`BESTANDEN\`, \`VERSTOSS\`, \`AUFFAELLIG\`, \`NICHT_PRUEFBAR\`, \`NICHT_ANWENDBAR\`. **Kein globaler „rechtskonform“-Status**, solange auch nur ein erforderlicher Rechts- oder Tatsachenbaustein ungeprüft ist.
+
+Jede Einzelregel speichert nachvollziehbar:
+- \`ruleId\`, Futtermittel-/Tierart-/Unterkategorie, Regelversion, Anwendbarkeitsbedingung;
+- \`sourceUri\`, Rechtsakt/Artikel/Anhang, Fassung/Geltungszeitraum, Verifikationsdatum, ggf. Übergangsrecht;
+- Etikettenbeleg (OCR-Ausschnitt und Bildregion), extrahierter Wert, Herkunft/Vertrauensgrad und manuelle Korrekturen;
+- Grenzwerttyp (\`binding_max\`, \`binding_min\`, \`recommended\`, \`none\`), Vergleichsgröße, Einheit, Stoffform, Feuchte- und Massebezug, Tierkategorie;
+- eingesetzte Formel, Parameter, Rundungsregel und Ergebnis einschließlich nicht geprüfter Voraussetzungen.
+
+**Automatische Verstöße nur mit eindeutig anwendbarer, gültiger Rechtsnorm UND hinreichend sicherem, eindeutig zugeordnetem Beleg.** Unsichere OCR, ungelesene Verpackungsseiten, fehlende Zulassungsdetails, unklare Einheiten oder Anwendungsfälle -> \`NICHT_PRUEFBAR\`/Nachprüfung, nicht automatische Entlastung oder Sanktion. Zwischen Produktgehaltsgrenze, Kennzeichnungspflicht, analytischer Toleranz und rechnerischem Rationsbeitrag nie vermischen.
+
+### Entwicklungs-Prioritäten / Abnahmekriterien
+
+- **P0:** Relevante Prüflogik und Datenmodell für Produktklasse, Tierart, Tierkategorie, Zulassungsakte, Höchstgehaltstypen und Rechtsquellen aufbauen; Art.-8-Prüfung und Fütterungshinweisprüfung separat implementieren. Keine falsche Einheit, kein fehlender Feuchtebezug, kein erfundener Grenzwert. Sämtliche geltenden Sonderbedingungen eines verwendeten Zulassungsakts müssen einem konkreten Regelpfad zugeordnet sein oder als offen markiert werden.
+- **P0:** Rechenkarte #49 explizit nach Fall A vs. B differenzieren, vorhandenen Originalmassentyp nicht stillschweigend umdeuten. Kein Merge/keine Änderung an PR #49 durch diese Dokumentation.
+- **P0:** Keine aus „nicht gefunden“ abgeleitete Zulassungsverweigerung. Aktualität des Registers und des Änderungs-/Übergangsrechts dokumentieren. Versionsgebundene, zusammengehörige Datensätze vor Übernahme validieren.
+- **P1:** Kennzeichnungs-Matrix Art. 15/17 und Anhänge VI/VII für Nutz-/Heimtiere, Mineral-, Milch- und Diätfutter erstellen. Mehrsprachigkeit, Herstellerangaben, Zusammensetzung, Analyten, Zusatzstoffe, Fütterung und Haltbarkeit samt Ausnahmen testen.
+- **P1:** Claims/diätetische Zweckangaben mit Hinweis „Beleg erforderlich“ erfassen, keine medizinischen oder sicherheitsbezogenen Behauptungen allein durch OCR bestätigen.
+- **P1:** Für jede positive und negative Regel mindestens ein echtes dokumentiertes Etikett und isolierte Unit-Tests; insbesondere Grenzfälle (unter/gleich/über Limit), falsche Tierart, falscher Stoff-/Aktivitätsbezug, verschiedene Feuchten, Ausnahmen, Unklarheit, unlesbare OCR.
+- **P2:** Prüfprotokoll mit exportierbaren Fundstellen, Rechtstand, Datenversion und offenen Punkten.
+
+**Produktabnahme:** Keine pauschale „vollständig rechtssicher“ Aussage. Abnahme je Regelpaket und Tier-/Produktgruppe; die **technisch vollständige Etikettenerfassung** ist nicht mit einer **rechtlich vollumfänglichen Verkehrsfähigkeitsbeurteilung** gleichzusetzen. Das Redesign läuft parallel: keine Kopplung der Fachregeln an aktuelle CSS-Klassen, Tabs oder Kartendarstellung.
