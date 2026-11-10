@@ -47,7 +47,7 @@ test("damaged original OCR triggers a focused retry, complete sections do not", 
 
 test("Pavo: recovered DE ingredient line is available to the existing composition parser", () => {
   const extra = Ocr.recoveredEvidence(pavoBroken, pavoComposition);
-  assert.match(extra, /^Samenstellung.+\nDE Luzerne, Reiskleie, Leinsaat, Bierhefe/m);
+  assert.match(extra, /^Samenstelling.+\nDE Luzerne, Reiskleie, Leinsaat, Bierhefe/m);
   assert.match(Labeling.compositionCropHint(extra), /Luzerne, Reiskleie, Leinsaat, Bierhefe, Monocalciumphosphat, Magnesiumoxid/);
   assert.equal(Ocr.recoveredEvidence(pavoBroken + "\n" + extra, pavoComposition), "");
 });
