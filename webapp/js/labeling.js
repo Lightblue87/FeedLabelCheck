@@ -549,9 +549,23 @@ const Labeling = (() => {
     return pairs >= 2 && items.length >= 3 ? { items, values } : null;
   }
 
+  // Trennstriche am Zeilenende der linken Spalte („Magnesi-⏎umoxid“): Das Wort wird zusammengeführt, der Rest der
+  // Folgezeile bleibt eine eigene Zeile. Nur bei Bindestrich nach einem Buchstaben und Kleinbuchstaben dahinter.
+  function joinHyphenation(items) {
+    const lines = [...items];
+    for (let i = 0; i < lines.length - 1; i += 1) {
+      // Bindewörter („Weizen- und Gerstenkleie“) sind kein Wortrest: der Strich ist ein Ergänzungsstrich.
+      const next = /^(?!(?:und|oder|bzw|sowie|u)(?![\p{L}\p{N}]))(\p{Ll}\p{L}*[,;.]?)(?:[ \t]+(.*))?$/u.exec(lines[i + 1]);
+      if (!/\p{L}-$/u.test(lines[i]) || !next) continue;
+      lines[i] = lines[i].slice(0, -1) + next[1];
+      if (next[2]) lines[i + 1] = next[2]; else lines.splice(i + 1, 1);
+    }
+    return lines;
+  }
+
   function mixedColumnComposition(text) {
     const columns = mixedColumns(text);
-    return columns ? `Zusammensetzung (aus vermischten Spalten getrennt):\n${columns.items.join("\n")}` : null;
+    return columns ? `Zusammensetzung (aus vermischten Spalten getrennt):\n${joinHyphenation(columns.items).join("\n")}` : null;
   }
 
   function compositionEvidence(text) {
