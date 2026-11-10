@@ -85,6 +85,7 @@ test("angenommene Datensatz-Einheit blockiert Grenzwerturteil", () => {
     { kennnummer: "3b603", name: "Test", max_mg_kg: "10", einheit: "mg/kg" },
   ]);
   assert.equal(b.unitAssumed, false);
+  assert.equal(LavesEval.evaluateSingleValue(5, b, "mg/kg").ok, true);
 });
 
 test("Datensatz ohne Einheit und ohne Grenzwert bleibt nicht bewertbar", () => {
@@ -108,6 +109,7 @@ test("Umrechnung bei nur angenommener Datensatz-Einheit ist nicht bewertbar", ()
   assert.ok(res.msgs[0].includes("nicht belegt"));
   // Eine gleich benannte Eingabeeinheit macht die Datenquelle nicht verlässlich.
   assert.equal(LavesEval.evaluateSingleValue(2, a, "mg/kg").ok, null);
+  assert.equal(LavesEval.evaluateSingleValue(2, a).ok, null);
 });
 
 test("Werte exakt auf dem Grenzwert sind nach Umrechnung nicht durch Rundung nicht konform", () => {

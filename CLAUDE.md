@@ -218,3 +218,73 @@ Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütte
 **Wesentliche verbleibende Grenzen:** Diese Änderung bestätigt weder aktuelle Zusatzstoffzulassungen und deren Sonderbedingungen noch eine vollständig erfasste Verpackung, korrekte Gehaltseinheiten, die Einhaltung der Art.-8-Produktobergrenze oder einen tatsächlichen Rationshöchstgehalt. Die App ist weiter ein Nachprüfungswerkzeug. Ein **echter positiver juristischer Konformitätsstatus** darf erst nach einer *vollständigen, gültigen und belegten* Regeln-/Datenmatrix je Produkt- und Tierartkategorie sowie überprüften Etikettenbelegen eingeführt werden; bis dahin positive Ergebnisse ausschließlich als **unauffällige Teilprüfung** ausweisen.
 
 **Abnahmereihenfolge:** (1) Status- und Regressionstests ausführen, (2) Auswirkungen auf vorhandene Etiketten prüfen, (3) neue Regelbasis und Zulassungsdaten pro Tierkategorie validieren, (4) fachliche Abnahme. **Kein Merge ohne ausdrückliche Freigabe.**
+
+## Grenzwertdaten: Umsetzung und nächste Arbeitsschritte (10.11.2026, PR #51)
+
+**Verbindlicher Stand:** [Draft-PR #51](https://github.com/Lightblue87/FeedLabelCheck/pull/51) implementiert eine erste Fail-closed-Absicherung. Dieser PR ist **nicht gemergt**. `main`, PR #49 und das laufende Redesign bleiben unberührt. Die JS-/Python-Tests wurden bei Erstellung noch nicht ausgeführt; vor Merge explizit testen und bestehende UI-Prüfpfade auf Nebenwirkungen prüfen.
+
+### Bereits implementiert auf `fix/fail-closed-unverified-limit-units`
+
+1. **`webapp/js/eval.js`**: Grenzwertdatensätze mit fehlender oder **nur angenommener** Einheit (`unitAssumed`) liefern unabhängig von der Eingabeeinheit `ok: null` / „nicht bewertbar“ – auch wenn `mg/kg` auf beiden Seiten steht. Eine passende Zeichenfolge ist kein Beleg für eine rechtlich korrekte Messgröße. Diese Änderung blockiert sowohl positive als auch negative unbegründete Grenzwerturteile.
+2. **`tests/js/eval-units.test.mjs`**: Regressionsfälle für identische angenommene Einheiten, unterschiedliche Einheiten sowie explizite Einheiten ergänzt bzw. angepasst.
+3. **`Data/audit_limit_units.py`**: Nicht veränderndes Audit für Grenzwertdatensätze; meldet fehlende explizite Einheit, fehlenden Quellenbeleg, nicht dokumentierte Referenzbasis und bekannte manuell zu prüfende Fälle. Optionaler JSON-Bericht und `--strict`-Exitcode bei offenen Befunden. Nicht als Beleg rechtlicher Validierung missverstehen.
+4. **`tests/python/test_audit_limit_units.py`**: Tests für fehlende Einheiten, vollständig annotierte Testdatensätze, offene Referenzfälle und Datensätze ohne Grenzwerte.
+5. **[Detailprotokoll](docs/limit-unit-provenance-audit.md)**: Vorgehen, Grenzen und einzelne Quellen.
+
+**Besonders kritische Referenzfälle:**
+- **`4a48` (6-Phytase)**: Zulassungsakt [VO (EU) 2024/2177](https://eur-lex.europa.eu/eli/reg_impl/2024/2177/oj/deu) verwendet **FYT/kg** als Enzymaktivitätseinheit, nicht `mg/kg` und nicht ohne Nachweis `FTU/kg`. Tierartabhängige Zeilen und spätere Änderungen beachten; nicht mit einer pauschalen Zahl pro Kennnummer überschreiben.
+- **`4b1823i` (Bacillus velezensis)**: [VO (EU) 2026/92](https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX:32026R0092) weist für die dort geregelten Tiergruppen **1 × 10⁸ KBE/kg als Mindestgehalt** aus. Speicherung als Höchstgehalt `1 mg/kg` wäre fehlerhaft. Einheit, wissenschaftliche Schreibweise und Mindest-/Höchst-Spalte gesondert prüfen.
+
+### Nächster verpflichtender Entwicklungsschritt: BVL-PDF-Parser absichern
+
+**Priorität P0, noch NICHT erledigt:**
+
+- In `Data/laves_updater_v6.py` die tatsächliche Einheit pro Tabelle/Tabellenkopf und betroffener Wertspalte extrahieren und **ohne Schätzung** zu jeder Grenzwertzeile speichern; bei unleserlicher Einheit Ergebnis sperren und Quelle zur manuellen Prüfung markieren.
+- Größenordnung und wissenschaftliche Notation (`1 × 10⁸`, hochgestellte Ziffern, Tausendertrennung, Zeilenumbruch) als exakt nachvollziehbaren Zahlenwert importieren; keine stillschweigende Verkürzung auf `1`.
+- Verbindlichen **Mindestwert** und **Höchstwert** korrekt zuordnen; `empfohlen` getrennt von rechtsverbindlich dokumentieren. Tabellenköpfe, Fortsetzungsseiten, Fußnoten und Mehrfachzeilen abdecken.
+- Je Datensatz Herkunft/Seite, Zulassungsakt inkl. Änderungen, Zieltierspezies/Tierkategorie, Messgröße (Zusatzstoff/Wirkstoff), Bezugsfutter und Feuchtebasis sowie Verwendungsbedingungen versioniert und überprüfbar speichern. Die derzeitigen `min_mg_kg`/`max_mg_kg`-Feldnamen dürfen keine allgemeine Massen-Einheit suggerieren.
+- **Vor** Veröffentlichung der neuen BVL-Daten Audit und Regressionsfälle ausführen, mehrdeutige Zeilen in Quarantäne halten und geltende Zulassungsakte fachlich bestätigen. Erst dann Daten zusammenhängend veröffentlichen; keine automatische Korrektur allein aus einer Kennnummer.
+- PWA, Python und Swift dürfen bei gleichen Quelldaten nicht widersprüchlich „konform“ ausgeben. Im Browser ist das aktuelle „nicht bewertbar“ eine **Sicherheitsmaßnahme**, kein Ersatz für die Wiederherstellung verifizierter Grenzwerte.
+
+**Prüfbefehle (auf einem Checkout ausführen):**
+
+```bash
+node --test tests/js/eval-units.test.mjs
+python3 -m unittest discover -s tests/python -p 'test_audit_limit_units.py'
+python3 Data/audit_limit_units.py Data/zusatzstoffe.json --output /tmp/feedlabelcheck-unit-audit.json
+# Optional als späteres CI-Gate, derzeit erwartete offene Bestandsdaten:
+python3 Data/audit_limit_units.py Data/zusatzstoffe.json --strict
+```
+
+**Abnahmebedingungen:** Keine positive oder negative rechtliche Bewertung aus unbelegter Einheit; korrekte Zehnerpotenzen, Einheiten und Minimum/Maximum für `4a48` und `4b1823i`; dokumentierte Rechtsquelle und nachweisbare Grenzwertbasis; Tests laufen; bestehende Einzel-/Batchprüfungen und Foto-/Etikettenpfade bleiben funktional. **Kein Merge ohne ausdrückliche Freigabe.**
+
+
+## Produktentscheidung: PR #49 und #50 beibehalten (10.11.2026)
+
+**Verbindliche Entscheidung des Auftraggebers:** Die bereits nach `main` gemergten PRs [#49](https://github.com/Lightblue87/FeedLabelCheck/pull/49) (Zusatzstoffe bei aufgedruckter Verdünnung) und [#50](https://github.com/Lightblue87/FeedLabelCheck/pull/50) (automatische PWA-/Fachdatenupdates) **bleiben bestehen**. **Kein Revert** allein wegen des zeitlich überschneidenden Merge-/Freigabeablaufs. Der historische Vorgang ändert nichts daran, dass künftig **kein Merge ohne ausdrückliche Freigabe** stattfinden darf. Diese Dokumentation ist selbst keine Merge-Freigabe.
+
+### Sicherheitsgrenzen der Rechenkarte aus PR #49
+
+- Die Karte dient **ausschließlich der informativen Berechnung** des Beitrags eines einzelnen Ergänzungsfuttermittels, **nicht** als Prüfung rechtlicher Konformität. Status `Nicht prüfbar` und `info` beibehalten; **keinen positiven oder negativen Konformitätsstempel** aus dem Rechenwert ableiten.
+- Die Überschrift soll künftig unmissverständlich lauten: **„Rechnerischer Zusatzstoffbeitrag – keine Konformitätsprüfung“** (separate UI-Änderung mit Tests; nicht als bereits umgesetzt ausgeben).
+- **Bestätigte Lesart A:** `bis max. N g/kg TM` wird, sofern der Etikettkontext dies trägt, als **N g Original-Ergänzungsfutter je kg Trockenmasse der Gesamtration** verstanden, nicht als N g Ergänzungsfutter-TM. Für deklarierte Konzentration `C_f` je kg Originalfutter und einen **belegten** 12-%-Referenzbezug gilt `C_beitrag = C_f × (N/1000) × 0,88` (Einheit des Stoffes pro kg Gesamtration auf 12 % Feuchtebasis). Beispiel: `7.500 mg/kg × (8/1000) × 0,88 = 52,8 mg/kg`.
+- **Vor jeder Berechnung** muss die Deklaration eine klar erkannte Menge **mit Einheit**, einen eindeutigen Bezug **je kg Originalfutter**, eine plausible und widerspruchsfreie Verdünnungsangabe und die sichere Zuordnung zur richtigen Zusatzstoffzeile bieten. Bei unklarer Mengen-/Feuchtegrundlage, wissenschaftlicher Schreibweise ohne sichere Interpretation oder mehrdeutigen OCR-Treffern **keinen Zahlenwert ausgeben**; Grund und erforderliche Nachprüfung anzeigen.
+- Wert und Einheiten müssen sich auf denselben Stoffbezug beziehen. Element (z. B. Zink) und Verbindung (z. B. Zinkoxid) nicht gleichsetzen; mehrere Verbindungen ohne verifizierte Umrechnungs- und Aggregationsregel nicht summieren.
+- Selbst ein korrekt berechneter Beitrag zeigt **nicht** die tatsächliche Gesamtration und belegt weder die Tierartzulassung noch die Gehaltsgrenzen nach Art. 8 VO (EG) 767/2009. Weitere Stoffquellen und individuelle Zulassungsbedingungen bleiben offen. Auf Etikettenebene keine pauschale rechtliche Freigabe erzeugen.
+- Ein Grenzwertvergleich darf erst nach nachgewiesener Einheit, zutreffendem Stoff- und Feuchtebezug, Tierartkategorie, verbindlichem Grenzwert und gültigem Zulassungsakt mit seinen Sonderbedingungen ergänzt werden. Die Datenabsicherung aus [PR #51](https://github.com/Lightblue87/FeedLabelCheck/pull/51) ist dafür eine Vorarbeit, keine abschließende rechtliche Freigabe.
+
+### Betrieb und Abnahme von PR #50
+
+- Der erste GitHub-Pages-Deploy nach Merge #50 ([Actions-Lauf 42793858699](https://github.com/Lightblue87/FeedLabelCheck/actions/runs/42793858699)) **war erfolgreich**. Der Job `deploy`, insbesondere `Stamp build id`, `Upload PWA artifact` und `Deploy to GitHub Pages`, meldete jeweils `success`.
+- Das belegt die erfolgreiche GitHub-Auslieferung, **nicht** automatisch die Update-Funktion auf jedem Endgerät. Als separaten Smoke-Test die Live-Datei `https://lightblue87.github.io/FeedLabelCheck/version.json` abrufen und `build` mit dem zu diesem Deploy gehörenden SHA-Präfix `ab06f53e3e3b` vergleichen, **sofern nicht inzwischen ein neuer Deploy erfolgt ist**; außerdem Zeitstempel und HTTP-Status prüfen.
+- App-Aktualisierung und Offlineverhalten auf realem iPhone-PWA-Homescreen und Android weiter prüfen, einschließlich Rückkehr aus dem Hintergrund, OCR während Updates und Erhalt lokaler Prüfverläufe. Keine zusätzliche Freigabe allein aus einer erfolgreichen Actions-Anzeige ableiten.
+
+### Nächste Entwicklungsschritte nach dieser Entscheidung
+
+1. **P0:** Die bestehenden Quellen-/Einheitenprobleme im BVL-PDF-Parser und Grenzwertdatenmodell lösen (siehe vorheriger Abschnitt); Einheiten, Zehnerpotenzen, Min/Max, Tierarten, Zulassungsakte, Feuchte- und Stoffbezug validieren.
+2. **P0:** Regressionstests für „kein Zahlenwert bei unklarer Deklaration“ und „kein Konformitätsstempel aus Teilbeitrag“ beibehalten bzw. ergänzen.
+3. **P1:** Bezeichnung und Erklärung der Rechenkarte im UI eindeutiger machen, ohne das parallele Redesign festzuschreiben.
+4. **P1:** Den produktiven Update-Pfad anhand der Live-Build-ID und auf echten Geräten verifizieren.
+5. **Erst danach:** Einen juristisch belastbaren Grenzwertvergleich pro Zulassung/Tierart als **getrennte** Funktion entwickeln und fachlich abnehmen.
+
+**Änderungsdisziplin:** `main`, PR #49 und PR #50 durch diese Dokumentationsentscheidung nicht rückwirkend verändern. Weitere Änderungen über überprüfbare Branches/PRs; **Merge nur nach ausdrücklich erteilter Freigabe**.
