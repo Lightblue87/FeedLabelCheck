@@ -1128,7 +1128,7 @@ const Ocr = (() => {
   // deutsche Zeile mit denselben Werten („Analytische Bestandteile: Protein 11 %, Fettgehalt 5 %, …“).
   const ANALYSIS_BLOCK_HEAD = /^[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?Analytische\s+Bestandteile\s*\//u;
   const OCR_LINE_NOISE = /^(?:[=~\-–—_*|<>]+|[A-Z]{1,2})\s+/;
-  const ANALYSIS_BLOCK_END = /^(?:[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?)?(?:Ern[äa]hrungsphysiologische|Emn[äa]hrungsphysiologische|Technologische|Zootechnische|Sensorische|Zusatzstoffe|Additifs|Fütterungsempfehlung|Inverkehrbringer|Hersteller)/iu;
+  const ANALYSIS_BLOCK_END = /^(?:[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?)?(?:Ern[äa]hrungsphysiologische|Emn[äa]hrungsphysiologische|Technologische|Zootechnische|Sensorische|Zusatzstoffe|Additifs|Fütterung\w*|Inverkehrbringer|Hersteller|Vertrieb|Importeur|Zusammensetzung|Netto\w*|Inhalt(?![\p{L}])|Füllmenge|Mindestens|MHD|Charge\w*|Los(?:nummer|-Nr)|Kennnummer|Bezugsnummer|Lagerung\w*|Art\.)/iu;
   const GERMAN_ANALYTIC_NAME = /^(?:Roh(?:protein|fett|faser|asche)|Protein|Eiwei[ßs]|Fett(?:gehalt)?|Feuchtigkeit|Feuchte|Asche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Taurin|Stärke|Zucker|Kohlenhydrate)$/iu;
   const OTHER_ANALYSIS_WORDS = /\b(?:constituants|componenti|bestanddelen|teneur|mati[eè]res|vetgehalte|tenore|materia|cellulose|cellulosa|celstof|ruwe|cendres|ceneri|humidit[eé&]|vocht|umidit[aà]|taurine|taurina|prot[eé&]ine|eiwit|proteine)\b/giu;
   const ANALYSIS_ENTRY = /(.+?)\s+(\d[\d.,]*)\s*(%|mg\/kg|g\/kg)(?![\p{L}\p{N}])/gu;
@@ -1144,6 +1144,9 @@ const Ocr = (() => {
       body.push(line.replace(OCR_LINE_NOISE, ""));
       end = k;
     }
+    // Der Block reicht nur bis zur letzten Zeile mit einem Analysewert. Was danach kommt (ein Hinweissatz, eine Angabe
+    // ohne bekannte Überschrift), gehört nicht dazu und bleibt im Text stehen.
+    while (body.length > 1 && !/\d\s*(?:%|mg\/kg|g\/kg)/.test(body[body.length - 1])) { body.pop(); end--; }
     // Zeilen zusammenführen; ein Trennstrich am Zeilenende („Fett-“ + „gehalt/…“) verbindet das Wort.
     let joined = "";
     for (const line of body) {

@@ -209,3 +209,23 @@ test("germanView: Analysewert ohne gelesene Einheit wird nicht dem nächsten Nam
   assert.doesNotMatch(view, /Protein 5 %/, "der Wert des Fettgehalts gehört nicht zum Protein");
   assert.doesNotMatch(view, /Protein 11/, "ohne Einheit kein Eintrag");
 });
+
+test("germanView: Angaben direkt nach dem mehrsprachigen Analyseblock bleiben erhalten", () => {
+  const text = [
+    "Analytische Bestandteile/Constituants analytiques/Analytische bestanddelen:",
+    "Protein/Protéine/Eiwit 11 % Fettgehalt/Teneur en matières grasses/Vetgehalte 5 %",
+    "Nettomasse: 400 g",
+    "Mindestens haltbar bis: 03/2028",
+    "Charge: ABC123",
+  ].join("\n");
+  const view = Ocr.germanView(text).split("\n");
+  assert.equal(view[0], "Analytische Bestandteile: Protein 11 %, Fettgehalt 5 %.");
+  assert.deepEqual(view.slice(1), ["Nettomasse: 400 g", "Mindestens haltbar bis: 03/2028", "Charge: ABC123"]);
+  // Auch eine Folgezeile ohne bekannte Überschrift und ohne Analysewert bleibt stehen.
+  const other = Ocr.germanView(text.replace("Nettomasse: 400 g", "Bitte stets frisches Wasser bereitstellen.")).split("\n");
+  assert.ok(other.includes("Bitte stets frisches Wasser bereitstellen."), other.join(" | "));
+  // Eine Zusammensetzung mit Prozentwert direkt danach gehört nicht zum Block.
+  const composition = Ocr.germanView(text.replace("Nettomasse: 400 g", "Zusammensetzung: 65 % Fleisch, 4 % Reis")).split("\n");
+  assert.ok(composition.includes("Zusammensetzung: 65 % Fleisch, 4 % Reis"), composition.join(" | "));
+  assert.doesNotMatch(composition[0], /Fleisch|Reis/);
+});

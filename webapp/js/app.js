@@ -1297,14 +1297,16 @@
         const bitmap = await createImageBitmap(input);
         const size = { width: bitmap.width, height: bitmap.height };
         bitmap.close();
-        const whole = (source, lines, scale = 1) => ({ x: 0, y: 0, right: size.width, bottom: size.height, scale,
+        const whole = (source, lines) => ({ x: 0, y: 0, right: size.width, bottom: size.height, scale: 1,
                                                        col: 0, row: 0, cols: 1, rows: 1, source, lines });
         step("Zweite Lesung");
         await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
         const page = await worker.recognize(input, {}, output);
         // Hochkant gelesene Zeilen der Seitenaufteilung (Schrift quer zum übrigen Etikett) bleiben außen vor.
         const auto = whole("auto", Ocr.uprightLines(Ocr.flattenLines(page.data.blocks)));
-        const single = whole("block", Ocr.flattenLines(data.blocks), rotated?.dataScale ?? 1);
+        // Beide Lesungen liegen im Koordinatensystem von `input`: Nach einer Drehung ist `input` die gedrehte Fläche in
+        // der Größe, in der `data` gelesen wurde (rotated.dataScale beschreibt nur das Verhältnis zur Originaldatei).
+        const single = whole("block", Ocr.flattenLines(data.blocks));
         // Die Lesung mit mehr sicher gelesenem Text gibt Zeilen und Reihenfolge vor, die andere ergänzt. Die
         // Seitenaufteilung führt nur bei klarem Vorsprung: Sie zerschneidet gelegentlich Fließtext in Teilzeilen.
         const autoLeads = Ocr.linesQuality(auto.lines) > Ocr.linesQuality(single.lines) * 1.05;
@@ -1323,7 +1325,6 @@
         }
         if (lines.length) {
           data = { ...data, blocks: [{ paragraphs: [{ lines: lines.map(words => ({ words })) }] }] };
-          if (rotated) rotated.dataScale = 1;
         }
       } catch (e) {
         warnings.push(`Zweite Lesung fehlgeschlagen (${e?.message || e})`);

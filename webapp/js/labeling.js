@@ -372,9 +372,13 @@ const Labeling = (() => {
   const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Nettoinhalt|Nettovolumen|Packungsinhalt|Füllmenge|Inhalt|Netto|net weight|net contents|net volume|net quantity|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
   const NET_PREFIX = String.raw`\b(?:${NET_LABEL})\b[ \t:)]*(?:/[ \t]*)?\n?[ \t]*`;
   // Eine Menge mit Bezug dahinter ist keine Packungsmenge: „400 g pro Portion“, „100 g je kg Körpergewicht“,
-  // „400 g täglich“, „2 g Calcium“. Der Bezug darf auch am Anfang der nächsten Zeile stehen.
+  // „400 g täglich“, „2 g Calcium“.
   const AMOUNT_RELATION = String.raw`(?:pro|je|per|täglich|tägl\.?|tgl\.?|am[ \t]+Tag|Portion(?:en)?|Calcium|Kalzium|Phosphor|Natrium|Magnesium|Kalium|Taurin|Vitamin|Zink|Kupfer|Mangan|Selen|Jod|Eisen|Rohprotein|Rohfett|Rohfaser|Rohasche|Protein|Fettgehalt|Feuchte\w*)(?![\p{L}\p{N}])`;
-  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*(?:[/=×]|x[ \t]*\d))(?![ \t]*\n?[ \t]*${AMOUNT_RELATION})`, "iu");
+  // Über den Zeilenumbruch hinweg zählt nur ein Bezugswort („400 g⏎pro Portion“). Ein Stoffname am Anfang der nächsten
+  // Zeile ist eine eigene Angabe („Nettomasse: 400 g⏎Rohprotein 11 %“) und entwertet die Packungsmenge nicht.
+  const AMOUNT_RELATION_NEXT_LINE = String.raw`(?:pro|je|per|täglich|tägl\.?|tgl\.?|am[ \t]+Tag)(?![\p{L}\p{N}])`;
+  const AMOUNT_HAS_RELATION = String.raw`(?:[ \t]*${AMOUNT_RELATION}|[ \t]*\n[ \t]*${AMOUNT_RELATION_NEXT_LINE})`;
+  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*(?:[/=×]|x[ \t]*\d))(?!${AMOUNT_HAS_RELATION})`, "iu");
   const PACK_TOTAL = new RegExp(String.raw`${NET_PREFIX}(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e©]?[ \t]*=[ \t]*${PACKAGE_AMOUNT}`, "i");
   const amountNumber = value => Number(value.replace(",", "."));
   const METRIC_EQUIVALENT = new RegExp(String.raw`${NET_PREFIX}(${DECIMAL})[ \t]*(lbs?|Ib|oz)[ \t]*\((${DECIMAL})[ \t]*(kg|g)\)`, "gi");
@@ -1287,7 +1291,7 @@ const Labeling = (() => {
 
   // Zeile mit Mengenüberschrift und einer Menge mit Fremdbezug („Inhalt: 400 g pro Portion“): Sie ist weder
   // Packungsmenge noch ein Hinweis darauf und zählt für die Nettomenge nicht als Überschrift.
-  const RELATED_AMOUNT_LINE = new RegExp(String.raw`^[^\n]*${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*\n?[ \t]*${AMOUNT_RELATION}[^\n]*$`, "gimu");
+  const RELATED_AMOUNT_LINE = new RegExp(String.raw`^[^\n]*${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}${AMOUNT_HAS_RELATION}[^\n]*$`, "gimu");
 
   function checkRule(rule, rawText, rawNormText, feedType = null) {
     const stripRelated = rule.id === "art15_003" && RELATED_AMOUNT_LINE.test(rawText);

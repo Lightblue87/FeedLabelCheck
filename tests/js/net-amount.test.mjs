@@ -43,6 +43,18 @@ test("Nettomenge: Menge mit Bezug auf Portion, Körpergewicht, Tag oder Stoff is
   assert.match(card("Inhalt: 400 g pro Portion\nNettomasse: 2 kg").matchedText, /2 kg/);
 });
 
+test("Nettomenge: eine eigene Angabe in der Folgezeile entwertet die Packungsmenge nicht", () => {
+  for (const text of ["Nettomasse: 400 g\nRohprotein 11 %", "Nettomasse: 400 g\nCalcium: 1 %", "Inhalt: 3 kg\nVitamin A 10.000 IE",
+                      "Nettomasse: 400 g\nPortionen pro Tag: 2", "Nettomasse: 400 g\nTaurin 600 mg/kg"]) {
+    assert.match(Labeling.declaredNetAmount(HEAD + text) || "", /400 g|3 kg/, text);
+    assert.equal(card(text).status, "found", text);
+  }
+  // Der Bezug selbst in der Folgezeile bleibt ein Bezug.
+  for (const text of ["Inhalt: 400 g\npro Portion", "Inhalt: 100 g\nje kg Körpergewicht", "Nettomasse: 400 g\ntäglich"]) {
+    assert.equal(Labeling.declaredNetAmount(HEAD + text), null, text);
+  }
+});
+
 test("Nettomenge: widersprüchliche Angaben bleiben „Unklar“", () => {
   const result = card("Nettomasse: 400 g\nPoids net: 800 g");
   assert.equal(result.status, "unclear");

@@ -245,3 +245,9 @@ Verschlechterungen und Grenzen:
 - Nicht geändert (nicht freigegeben): Zahlenformate („1.000 g“ neben „1000 g“ ergibt weiter „Unklar“, „1,000 g“ wird als 1 g geführt), Belegstufe „Gefunden“ für Mengen aus der Zusatzprüfung, Verkleinern großer Fotos vor der Texterkennung.
 - Auf dem iPhone nicht gemessen.
 - Tests: `tests/js/net-amount.test.mjs` (15 Fälle; von den ersten 12 schlugen 9 auf dem Stand `550802e` fehl, 3 sind Gegenproben) und `tests/js/large-amount.test.mjs`.
+
+### Nachbesserung nach Codex-Review (11.11.2026)
+
+- **Angaben nach dem mehrsprachigen Analyseblock.** `germanAnalysisBlock` nahm bis zu 14 Folgezeilen in den Block und verwarf sie. Standen Nettomasse, Haltbarkeit oder Charge ohne Leerzeile direkt dahinter, fehlten sie in der deutschen Sicht. Der Block endet jetzt an weiteren Überschriften (Zusammensetzung, Netto…, Inhalt, Mindestens, MHD, Charge, Kennnummer, Lagerung …) und reicht höchstens bis zur letzten Zeile mit einem Analysewert.
+- **Eigene Angabe in der Folgezeile.** Seit der Bezugsregel galt „Nettomasse: 400 g“ nicht mehr als Nettomenge, wenn die nächste Zeile mit einem Stoffnamen begann („Rohprotein 11 %“). Über den Zeilenumbruch hinweg zählt jetzt nur noch ein Bezugswort („pro“, „je“, „täglich“); ein Stoffname zählt nur in derselben Zeile.
+- **Gedrehte, verkleinert gelesene Fotos.** Wählt die Ausrichtungsprüfung die verkleinerte Lesung, ist auch die Arbeitsfläche verkleinert. Die Blocklesung wurde beim Vereinigen trotzdem noch einmal umgerechnet, und das Verhältnis zur Originaldatei wurde danach auf 1 gesetzt, was den späteren Feuchte-Ausschnitt an die falsche Stelle gelegt hätte. Beide Lesungen bleiben jetzt im Koordinatensystem der Arbeitsfläche. Geprüft im Browser mit einem auf 2.419 × 3.226 Bildpunkte vergrößerten hochkant fotografierten Etikett (4.201 Zeichen gegenüber 4.167 in Originalgröße); ob dabei der verkleinerte Zweig gewählt wurde, ist nicht protokolliert, ein eigener Test für diesen Zweig fehlt.
