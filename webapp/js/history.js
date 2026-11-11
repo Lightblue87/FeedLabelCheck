@@ -83,6 +83,28 @@ const LabelHistory = (() => {
   }
 
   // ── Speicher in IndexedDB ─────────────────────────────────────
+  /**
+   * Safari (iOS) beendet die IndexedDB-Verbindung, wenn die App in den Hintergrund geht oder bei
+   * Speicherdruck (z. B. während der OCR). Folgen: InvalidStateError ("connection is closing"),
+   * UnknownError oder ein Fehler ganz ohne Objekt (null). Dann einmal neu verbinden und wiederholen.
+   * Kontingent- und Datenfehler (QuotaExceededError, DataCloneError) werden nicht wiederholt.
+   */
+  function isConnectionLoss(e) {
+    if (e == null) return true;
+    return ["InvalidStateError", "UnknownError", "AbortError", "TransactionInactiveError"].includes(e.name)
+      || e.code === "idb-unknown";
+  }
+
+  async function retryOnConnectionLoss(fn, reset) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!isConnectionLoss(e)) throw e;
+      reset();
+      return fn();
+    }
+  }
+
   function createIdbStore(idb, dbName = "feedlabelcheck-history") {
     let dbPromise = null;
     const open = () => dbPromise ||= new Promise((resolve, reject) => {
@@ -92,19 +114,26 @@ const LabelHistory = (() => {
         db.createObjectStore("entries", { keyPath: "id" });
         db.createObjectStore("photos", { keyPath: "id" }).createIndex("entryId", "entryId");
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onclose = () => { dbPromise = null; };                    // Verbindung vom Browser beendet
+        db.onversionchange = () => { db.close(); dbPromise = null; };
+        resolve(db);
+      };
+      req.onerror = () => reject(req.error || idbError());
     });
+    const idbError = () => Object.assign(new Error("IndexedDB-Fehler ohne Meldung"), { code: "idb-unknown" });
     const done = (tx) => new Promise((resolve, reject) => {
+      let lastError = null;
       tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error("Transaktion abgebrochen"));
+      tx.onerror = (ev) => { lastError = ev?.target?.error || null; };   // tx.error ist hier oft noch null
+      tx.onabort = () => reject(tx.error || lastError || idbError());
     });
     const request = (req) => new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onerror = () => reject(req.error || idbError());
     });
-    return {
+    const store = {
       persistent: true,
       async save({ entry, photos = [] }) {
         const db = await open();
@@ -214,6 +243,15 @@ const LabelHistory = (() => {
         return count;
       },
     };
+    // Jede Operation bei Verbindungsverlust einmal nach erneutem Öffnen wiederholen. Alle sind idempotent:
+    // update() liest den Eintrag frisch, save()/delete* setzen denselben Zustand.
+    const reset = () => { dbPromise = null; };
+    const wrapped = { persistent: true };
+    for (const name of Object.keys(store)) {
+      if (typeof store[name] !== "function") continue;
+      wrapped[name] = (...args) => retryOnConnectionLoss(() => store[name](...args), reset);
+    }
+    return wrapped;
   }
 
   // ── Dienst ────────────────────────────────────────────────────
@@ -351,7 +389,7 @@ const LabelHistory = (() => {
 
   return {
     RETENTION_DAYS, DAY_MS, expiresAt, isExpired, daysLeft,
-    createMemoryStore, createIdbStore, create,
+    createMemoryStore, createIdbStore, create, isConnectionLoss, retryOnConnectionLoss,
   };
 })();
 
