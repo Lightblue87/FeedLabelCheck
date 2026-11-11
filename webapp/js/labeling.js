@@ -1289,14 +1289,15 @@ const Labeling = (() => {
       ? candidate : null;
   }
 
-  // Zeile mit Mengenüberschrift und einer Menge mit Fremdbezug („Inhalt: 400 g pro Portion“): Sie ist weder
-  // Packungsmenge noch ein Hinweis darauf und zählt für die Nettomenge nicht als Überschrift.
-  const RELATED_AMOUNT_LINE = new RegExp(String.raw`^[^\n]*${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}${AMOUNT_HAS_RELATION}[^\n]*$`, "gimu");
+  // Mengenüberschrift mit einer Menge mit Fremdbezug („Inhalt: 400 g pro Portion“): Die Angabe ist weder Packungsmenge
+  // noch ein Hinweis darauf und zählt für die Nettomenge nicht als Überschrift. Entfernt wird nur diese Angabe bis zum
+  // nächsten Strichpunkt oder Zeilenende; eine echte Packungsmenge in derselben Zeile bleibt.
+  const RELATED_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}${AMOUNT_HAS_RELATION}[^;\n]*`, "giu");
 
   function checkRule(rule, rawText, rawNormText, feedType = null) {
-    const stripRelated = rule.id === "art15_003" && RELATED_AMOUNT_LINE.test(rawText);
-    RELATED_AMOUNT_LINE.lastIndex = 0;
-    const text = stripRelated ? rawText.replace(RELATED_AMOUNT_LINE, "") : rawText;
+    const stripped = rule.id === "art15_003" ? rawText.replace(RELATED_AMOUNT, "") : rawText;
+    const stripRelated = stripped !== rawText;
+    const text = stripped;
     const normText = stripRelated ? normalizeText(text) : rawNormText;
     const positive = rule.patterns.filter(p => !p.isNegativePattern);
     const negative = rule.patterns.filter(p => p.isNegativePattern);

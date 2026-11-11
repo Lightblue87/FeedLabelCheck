@@ -554,7 +554,10 @@ const Ocr = (() => {
             // Neues Wort: nur wenn es sicher gelesen ist (Rauschzeichen am Zeilenrand fallen weg). Es kommt in die Zeile
             // des nächsten Nachbarn mit Gegenstück (so bleibt eine in dieser Lesung vermischte Zeile nach Spalten getrennt).
             const alnum = countAlnum(word.text);
-            if (!(alnum >= 2 && word.confidence >= 60) && !(alnum >= WORD_MIN_ALNUM && word.confidence >= WORD_MIN_CONFIDENCE)) return;
+            // Ausnahme: eine sehr sicher gelesene Zahl oder ein Prozentzeichen („5“ in „Nettomasse: 5 kg“, „%“ hinter
+            // einem Analysewert). Die Stelle ist über die Nachbarwörter der Zeile verankert.
+            const sureValue = word.confidence >= 80 && /^(?:\d[\d.,]*|[%‰])$/.test(word.text);
+            if (!sureValue && !(alnum >= 2 && word.confidence >= 60) && !(alnum >= WORD_MIN_ALNUM && word.confidence >= WORD_MIN_CONFIDENCE)) return;
             let nearest = null;
             let anchor = null;
             let distance = Infinity;

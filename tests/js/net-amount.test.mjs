@@ -61,6 +61,30 @@ test("Nettomenge: eine eigene Angabe in der Folgezeile entwertet die Packungsmen
   }
 });
 
+test("Nettomenge: Portionsangabe und echte Packungsmenge in derselben Zeile", () => {
+  for (const text of ["Inhalt: 400 g pro Portion; Nettomasse: 2 kg", "Nettomasse: 2 kg; Inhalt: 400 g pro Portion",
+                      "Nettomasse: 2 kg, Inhalt: 400 g je Portion"]) {
+    const result = card(text);
+    assert.equal(result.status, "found", text);
+    assert.match(result.matchedText, /2 kg/, text);
+    assert.doesNotMatch(result.matchedText, /400 g/, text);
+  }
+});
+
+test("mergeTiles: sicher gelesene einzelne Ziffer oder Prozentzeichen aus der ergänzenden Lesung bleibt", () => {
+  const w = (text, x0, x1, confidence = 95) => word(text, x0, 100, x1, 120, confidence);
+  const merge = (lead, other) => texts(Ocr.mergeTiles([whole("auto", [lead]), whole("block", [other])]));
+  assert.deepEqual(merge([w("Nettomasse:", 100, 220), w("kg", 260, 290)], [w("Nettomasse:", 100, 220), w("5", 232, 245), w("kg", 260, 290)]),
+    ["Nettomasse: 5 kg"]);
+  assert.deepEqual(merge([w("Rohprotein", 100, 220), w("9", 232, 245)], [w("Rohprotein", 100, 220), w("9", 232, 245), w("%", 260, 275)]),
+    ["Rohprotein 9 %"]);
+  // Unsicher gelesen oder ein einzelner Buchstabe: wie bisher kein neues Wort.
+  assert.deepEqual(merge([w("Nettomasse:", 100, 220), w("kg", 260, 290)], [w("Nettomasse:", 100, 220), w("5", 232, 245, 60), w("kg", 260, 290)]),
+    ["Nettomasse: kg"]);
+  assert.deepEqual(merge([w("Nettomasse:", 100, 220), w("kg", 260, 290)], [w("Nettomasse:", 100, 220), w("S", 232, 245), w("kg", 260, 290)]),
+    ["Nettomasse: kg"]);
+});
+
 test("Nettomenge: widersprüchliche Angaben bleiben „Unklar“", () => {
   const result = card("Nettomasse: 400 g\nPoids net: 800 g");
   assert.equal(result.status, "unclear");
