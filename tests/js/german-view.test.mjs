@@ -301,3 +301,26 @@ test("Eine Zeile „DE …“ ohne Zusammensetzungs-Überschrift davor ist kein 
   const result = Labeling.check("Ergänzungsfuttermittel.\nDE Musterstraße 1, 12345 Musterstadt, Deutschland", feedType, [rule]).ruleResults[0];
   assert.notEqual(result.status, "found");
 });
+
+function compositionResult(text) {
+  const feedType = { id: "complementary_feed", nameDe: "Ergänzungsfuttermittel", keywordsDe: ["Ergänzungsfuttermittel"] };
+  const rule = { id: "art17_003_complementary", severity: "critical", patterns: [{
+    patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  return Labeling.check(`Ergänzungsfuttermittel für Pferde.\n${text}`, feedType, [rule]).ruleResults[0];
+}
+
+test("Adresse hinter einer Zwischenüberschrift ist kein Zutatenbeleg", () => {
+  const r = compositionResult("Zusammensetzung:\nHersteller:\nDE Musterstraße 1, 12345 Musterstadt, Deutschland");
+  assert.ok(!/Musterstraße/.test(r.matchedText ?? ""));
+  assert.notEqual(r.status, "found");
+});
+
+test("Umbrochene deutsche Zutatenliste behält die Folgezeile", () => {
+  const r = compositionResult("Zusammensetzung:\nDE Hafer, Gerste, Mais,\nWeizen, Leinsaat, Mineralstoffe\nAnalytische Bestandteile: Rohprotein 12 %");
+  assert.match(r.matchedText, /Hafer, Gerste, Mais, Weizen, Leinsaat, Mineralstoffe/);
+});
+
+test("Gestörte Überschrift: Fortsetzungszeile endet an der nächsten Sprachzeile", () => {
+  const r = compositionResult("Composition Composiciön Kompozycla/\nDE Luzerne, Reiskleie,\nLeinsaat, Bierhefe\nEN Alfalfa, Rice bran, Linseed");
+  assert.equal(r.matchedText, "Komposition: Luzerne, Reiskleie, Leinsaat, Bierhefe");
+});
