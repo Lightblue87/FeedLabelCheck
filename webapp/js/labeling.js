@@ -371,7 +371,10 @@ const Labeling = (() => {
   const PACKAGE_AMOUNT = String.raw`(${DECIMAL})[ \t]*(kg|g|t|ml|l|Liter|Kilogramm|Gramm)\b`;
   const NET_LABEL = "Nettomasse|Nettogewicht|Nettomenge|Nettofüllmenge|Nettoinhalt|Nettovolumen|Packungsinhalt|Füllmenge|Inhalt|Netto|net weight|net contents|net volume|net quantity|poids net|contenu net|peso netto|nettogewicht|netto inhoud|masa netto";
   const NET_PREFIX = String.raw`\b(?:${NET_LABEL})\b[ \t:)]*(?:/[ \t]*)?\n?[ \t]*`;
-  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*(?:[/=×]|x[ \t]*\d))`, "i");
+  // Eine Menge mit Bezug dahinter ist keine Packungsmenge: „400 g pro Portion“, „100 g je kg Körpergewicht“,
+  // „400 g täglich“, „2 g Calcium“. Der Bezug darf auch am Anfang der nächsten Zeile stehen.
+  const AMOUNT_RELATION = String.raw`(?:pro|je|per|täglich|tägl\.?|tgl\.?|am[ \t]+Tag|Portion(?:en)?|Calcium|Kalzium|Phosphor|Natrium|Magnesium|Kalium|Taurin|Vitamin|Zink|Kupfer|Mangan|Selen|Jod|Eisen|Rohprotein|Rohfett|Rohfaser|Rohasche|Protein|Fettgehalt|Feuchte\w*)(?![\p{L}\p{N}])`;
+  const NET_AMOUNT = new RegExp(String.raw`${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}(?![ \t]*(?:[/=×]|x[ \t]*\d))(?![ \t]*\n?[ \t]*${AMOUNT_RELATION})`, "iu");
   const PACK_TOTAL = new RegExp(String.raw`${NET_PREFIX}(\d+)[ \t]*[×x][ \t]*${PACKAGE_AMOUNT}[ \t]*[℮e©]?[ \t]*=[ \t]*${PACKAGE_AMOUNT}`, "i");
   const amountNumber = value => Number(value.replace(",", "."));
   const METRIC_EQUIVALENT = new RegExp(String.raw`${NET_PREFIX}(${DECIMAL})[ \t]*(lbs?|Ib|oz)[ \t]*\((${DECIMAL})[ \t]*(kg|g)\)`, "gi");
@@ -435,20 +438,68 @@ const Labeling = (() => {
     return netAmountConflict(amounts) ? null : amounts.map(amount => amount.evidence).join(" / ") || null;
   }
 
+  // ── Allein stehende Menge ──
+  // Eine Zeile nur aus einer Menge („5 kg“) kann die Packungsmenge sein, aber auch eine Zeile einer Fütterungstabelle
+  // oder ein Bruchstück. Sie bleibt ein Hinweis, der am Etikett zu bestätigen ist, und nur, wenn die Menge größer als
+  // null ist, die Zeilen davor und danach keinen Fütterungs- oder Dosierbezug zeigen und keine zweite Mengenzeile
+  // danebensteht (Tabellenspalte). Stehen mehrere verschiedene solche Mengen im Text, wird keine bevorzugt.
+  const FEEDING_CONTEXT = /\b(?:Körpergewicht|Gewicht[ \t]+de[rs]|Tagesration|Tagesmenge|Fütterung\w*|Futtermenge|Dosierung|Dosis|pro[ \t]+(?:Tag|Tier|Portion|Mahlzeit)|je[ \t]+(?:Tag|Tier|kg|100)|täglich|Portion(?:en)?|Ration|Stück|Beutel|Mahlzeit\w*|body[ \t]+weight|feeding|daily)\b|\d[ \t]*(?:kg|g)[ \t]*[|:–-]|[|][ \t]*\d/i;
+  function standaloneAmounts(text) {
+    const lines = text.split("\n");
+    const amounts = new Map();
+    lines.forEach((line, index) => {
+      const match = AMOUNT_LINE.exec(line);
+      if (!match || !(amountNumber(match[1]) > 0)) return;
+      const around = [lines[index - 2], lines[index - 1], lines[index + 1], lines[index + 2]].filter(other => other !== undefined);
+      if (around.some(other => FEEDING_CONTEXT.test(other))) return;
+      if ([lines[index - 1], lines[index + 1]].some(other => other !== undefined && AMOUNT_LINE.test(other))) return;
+      amounts.set(`${amountNumber(match[1])} ${match[2].toLowerCase()}`, line.trim());
+    });
+    return [...amounts.values()];
+  }
+  const standaloneAmountHint = text => { const found = standaloneAmounts(text); return found.length === 1 ? found[0] : null; };
+
+  // Die Nachlesung an der Überschrift läuft auch, wenn irgendwo eine Menge allein steht: Erst die Stelle an der
+  // Überschrift zeigt, ob die Menge zur Packung gehört.
   function needsPackageAmount(text) {
-    return !declaredNetAmounts(text).length && !AMOUNT_LINE.test(text) && (NET_HEADING.test(text) || PACK_COUNT.test(text));
+    return !declaredNetAmounts(text).length && (NET_HEADING.test(text) || PACK_COUNT.test(text));
   }
 
-  function packageAmountHint(primaryText, sparseText) {
+  /**
+   * Räumlicher Bezug einer Menge zur Mengenüberschrift („Nettomasse:“), beide als Rahmen in Bildpunkten des Fotos:
+   * rechts daneben in derselben Zeile (auch deutlich größer gedruckt) oder direkt darunter.
+   */
+  function nearNetHeading(heading, amount) {
+    if (!heading || !amount) return false;
+    const h = Math.max(1, heading.y1 - heading.y0);
+    const sameRow = amount.y0 < heading.y1 && amount.y1 > heading.y0
+      && amount.x0 >= heading.x0 - h && amount.x0 - heading.x1 <= h * 14;
+    const below = amount.y0 >= heading.y0 && amount.y0 - heading.y1 <= h * 3
+      && amount.x0 < heading.x1 + h * 4 && amount.x1 > heading.x0 - h * 2;
+    return sameRow || below;
+  }
+
+  /**
+   * Kandidat für die Packungsmenge aus einem zweiten Lesedurchgang.
+   * - Mehrfachpackung im Prüftext („(10 x 1,5 kg)“): die rechnerisch passende Gesamtmenge, auch ohne Position.
+   * - Sonst nur eine Mengenzeile mit räumlichem Bezug zur Mengenüberschrift (`heading`, Rahmen im Foto). Ohne Position
+   *   gibt es keinen Kandidaten: Eine Menge irgendwo im Foto kann eine Fütterungsmenge sein.
+   * @param {string|Array<{text: string, bbox?: object}>} sparse Text des Durchgangs oder dessen Zeilen mit Rahmen
+   */
+  function packageAmountHint(primaryText, sparse, heading = null) {
     const amounts = new Map();
     const pack = primaryText.match(PACK_COUNT);
-    for (const line of sparseText.split("\n")) {
-      const match = line.match(AMOUNT_LINE);
+    const lines = typeof sparse === "string" ? sparse.split("\n").map(text => ({ text })) : sparse;
+    for (const line of lines) {
+      const match = line.text.match(AMOUNT_LINE);
       if (!match) continue;
       const [, amount, unit] = match;
       const value = amountNumber(amount);
-      if (pack && (unit.toLowerCase() !== pack[3].toLowerCase()
-          || Math.abs(value - Number(pack[1]) * amountNumber(pack[2])) > 1e-8)) continue;
+      if (!(value > 0)) continue;
+      if (pack) {
+        if (unit.toLowerCase() !== pack[3].toLowerCase()
+            || Math.abs(value - Number(pack[1]) * amountNumber(pack[2])) > 1e-8) continue;
+      } else if (!line.bbox || !nearNetHeading(heading, line.bbox)) continue;
       amounts.set(`${value} ${unit.toLowerCase()}`, `${amount} ${unit}`);
     }
     return amounts.size === 1 ? OCR_AMOUNT_HINT + amounts.values().next().value : "";
@@ -456,18 +507,20 @@ const Labeling = (() => {
 
   // ── Groß gedruckte Packungsmenge ──
   // Die Nettomenge steht oft in sehr großer Schrift für sich („5kg“, „℮ 100 g“), die die Texterkennung in voller
-  // Auflösung übergeht. Das Foto wird dafür verkleinert und als verstreuter Text gelesen (mehrere Durchgänge), dazu
-  // kommen Ausschnitte um Folgen großer Schriftzeichen (Ocr.largeGlyphRuns). Als
+  // Auflösung übergeht. Quellen sind die vorhandenen Lesungen (Wortrahmen mit Höhe) und ein verkleinerter Ausschnitt um
+  // die Mengenüberschrift. Als
   // Kandidat zählt nur eine Zeile, die allein aus einer Menge besteht, deutlich größer gedruckt ist als der Fließtext
   // und deren Menge nicht schon im Prüftext steht (Fütterungstabelle, Rationsangaben). Stehen mehrere Mengen in großer
   // Schrift da, muss eine klar die größte sein. Das Ergebnis bleibt ein Hinweis, der am Original zu bestätigen ist.
   // Das ℮-Zeichen vor oder hinter der Menge liest die Texterkennung als „e“, „€“, „C“, „@“ oder „©“, teils mit einem
   // Anführungszeichen davor.
-  const LARGE_AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[„"'‚(]?[℮e€@©C][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e€@©]{0,2}[ \t]*$`, "i");
+  const LARGE_AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[„"'‚()][ \t]*)?(?:[℮e€@©C][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e€@©]{0,2}[ \t]*$`, "i");
+  // Nur die Einheit, ohne Ziffer: Bruchstück einer Mengenangabe, das eine anderswo gelesene Menge an derselben Stelle stützt.
+  const UNIT_ONLY_LINE = /^[^\p{L}\p{N}]{0,2}(kg|g|ml|l)[^\p{L}\p{N}]{0,2}$/iu;
   const amountKey = (amount, unit) => `${amountNumber(amount)} ${unit.toLowerCase()}`;
 
   function lacksNetAmount(text) {
-    return !declaredNetAmounts(text).length && !AMOUNT_LINE.test(text) && !text.includes(OCR_AMOUNT_HINT);
+    return !declaredNetAmounts(text).length && !text.includes(OCR_AMOUNT_HINT);
   }
 
   /**
@@ -475,20 +528,29 @@ const Labeling = (() => {
    * @param {Array<Array<{text: string, height: number, confidence: number, bbox: object}>>} passes Zeilen je Durchgang,
    *        Höhe und Rahmen in Bildpunkten des Fotos
    * @param {number} bodyHeight mittlere Worthöhe des Fließtexts im Foto
+   * @param {object|null} heading Rahmen der Mengenüberschrift im Foto; dann zählen nur Mengen an dieser Stelle
    * @returns {{amount: string, confirmed: boolean, bbox: object, height: number}|null}
    */
-  function largeAmountCandidate(primaryText, passes, bodyHeight) {
+  function largeAmountCandidate(primaryText, passes, bodyHeight, heading = null) {
     const found = new Map();
+    const units = [];
     passes.forEach((lines, pass) => {
       for (const line of lines) {
+        const unitOnly = UNIT_ONLY_LINE.exec(line.text);
+        if (unitOnly && line.confidence >= 80 && (!heading || nearNetHeading(heading, line.bbox))) {
+          units.push({ unit: unitOnly[1].toLowerCase(), bbox: line.bbox, pass });
+        }
         const match = LARGE_AMOUNT_LINE.exec(line.text);
-        if (!match || !(line.height >= bodyHeight * 1.5)) continue;
+        // Mit Mengenüberschrift zählt nur, was an ihr steht; dort genügt etwas größere Schrift als der Fließtext.
+        if (!match) continue;
+        if (heading ? !(nearNetHeading(heading, line.bbox) && line.height >= bodyHeight * 1.2)
+          : !(line.height >= bodyHeight * 1.5)) continue;
         const [, amount, unit] = match;
         if (!(amountNumber(amount) > 0)) continue;
         const inText = new RegExp(String.raw`(?<![\d.,])${amount.replace(/[.,]/g, "[.,]")}[ \t]*${unit}(?![\p{L}\p{N}])`, "iu");
         if (inText.test(primaryText)) continue;
         const key = amountKey(amount, unit);
-        const entry = found.get(key) ?? { amount: `${amount} ${unit}`, passes: new Set(), confidence: 0, height: 0, bbox: line.bbox };
+        const entry = found.get(key) ?? { amount: `${amount} ${unit}`, unit: unit.toLowerCase(), passes: new Set(), confidence: 0, height: 0, bbox: line.bbox };
         entry.passes.add(pass);
         entry.confidence = Math.max(entry.confidence, line.confidence);
         if (line.height > entry.height) { entry.height = line.height; entry.bbox = line.bbox; }
@@ -504,10 +566,33 @@ const Labeling = (() => {
     const ranked = kept.sort((a, b) => b.height - a.height);
     if (!ranked.length || (ranked[1] && ranked[0].height < ranked[1].height * 1.3)) return null;
     const [top] = ranked;
-    return { amount: top.amount, confirmed: top.passes.size >= 2 || top.confidence >= 80, bbox: top.bbox, height: top.height };
+    // Bestätigt: zwei Durchgänge lesen dieselbe Menge, einer liest sie sicher, oder ein anderer Durchgang liest an
+    // derselben Stelle sicher dieselbe Einheit (die Ziffer davor ging ihm verloren).
+    const unitSeen = units.some(u => u.unit === top.unit && !top.passes.has(u.pass) && overlaps(u.bbox, top.bbox));
+    return { amount: top.amount, confirmed: top.passes.size >= 2 || top.confidence >= 80 || unitSeen, bbox: top.bbox, height: top.height };
   }
 
   const largeAmountHint = amount => OCR_AMOUNT_HINT + amount;
+
+  /**
+   * Kandidat aus den bereits vorhandenen Lesungen, ohne weiteren Lesedurchgang: eine sicher gelesene Mengenzeile, die
+   * an der Mengenüberschrift steht (`heading`) oder deutlich größer gedruckt ist als der Fließtext und im Prüftext
+   * nicht in einem Fütterungs- oder Tabellenbezug steht. Liefert die Hinweiszeile oder "".
+   */
+  function readingAmountHint(text, summaries, bodyHeight, heading = null) {
+    // Die Mengenzeile selbst steht schon im Prüftext; für den Abgleich „Menge kommt anderswo vor“ zählt sie nicht mit.
+    const other = text.split("\n").filter(line => !AMOUNT_LINE.test(line)).join("\n");
+    const atHeading = heading ? largeAmountCandidate(other, [summaries], bodyHeight, heading) : null;
+    if (atHeading?.confirmed) return largeAmountHint(atHeading.amount);
+    const large = largeAmountCandidate(other, [summaries], bodyHeight);
+    if (!large?.confirmed) return "";
+    const wanted = LARGE_AMOUNT_LINE.exec(large.amount);
+    const free = standaloneAmounts(text).some(line => {
+      const match = AMOUNT_LINE.exec(line);
+      return match && amountKey(match[1], match[2]) === amountKey(wanted[1], wanted[2]);
+    });
+    return free ? largeAmountHint(large.amount) : "";
+  }
 
   function percentageEvidence(text, fieldNames) {
     const field = String.raw`\b(?:${fieldNames})\b`;
@@ -1200,7 +1285,15 @@ const Labeling = (() => {
       ? candidate : null;
   }
 
-  function checkRule(rule, text, normText, feedType = null) {
+  // Zeile mit Mengenüberschrift und einer Menge mit Fremdbezug („Inhalt: 400 g pro Portion“): Sie ist weder
+  // Packungsmenge noch ein Hinweis darauf und zählt für die Nettomenge nicht als Überschrift.
+  const RELATED_AMOUNT_LINE = new RegExp(String.raw`^[^\n]*${NET_PREFIX}(?:[℮e][ \t]*)?${PACKAGE_AMOUNT}[ \t]*\n?[ \t]*${AMOUNT_RELATION}[^\n]*$`, "gimu");
+
+  function checkRule(rule, rawText, rawNormText, feedType = null) {
+    const stripRelated = rule.id === "art15_003" && RELATED_AMOUNT_LINE.test(rawText);
+    RELATED_AMOUNT_LINE.lastIndex = 0;
+    const text = stripRelated ? rawText.replace(RELATED_AMOUNT_LINE, "") : rawText;
+    const normText = stripRelated ? normalizeText(text) : rawNormText;
     const positive = rule.patterns.filter(p => !p.isNegativePattern);
     const negative = rule.patterns.filter(p => p.isNegativePattern);
 
@@ -1255,7 +1348,7 @@ const Labeling = (() => {
     const hasNumericEvidence = netQuantity || rule.id.startsWith("art17_004_");
     const packageHint = netQuantity && !evidence
       ? text.split("\n").find(line => line.startsWith(OCR_AMOUNT_HINT))
-        || text.match(PACK_COUNT)?.[0] || text.match(AMOUNT_LINE)?.[0].trim()
+        || text.match(PACK_COUNT)?.[0] || standaloneAmountHint(text)
       : null;
     let best = evidence ? { text: evidence, language: "de", weight: 1, languagePriority: 0 } : null;
     const hint = po || packageHint || (!evidence ? reference?.evidence : null);
@@ -1717,7 +1810,7 @@ const Labeling = (() => {
   return {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
     searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, declaredNetAmount,
-    lacksNetAmount, largeAmountCandidate, largeAmountHint,
+    lacksNetAmount, largeAmountCandidate, largeAmountHint, readingAmountHint, nearNetHeading,
     matchNetHeading: text => text.match(NET_HEADING),
     matchFeedingTableHeading: text => text.match(FEEDING_TABLE_HEADING),
     needsCompositionCrop, compositionCropHint,

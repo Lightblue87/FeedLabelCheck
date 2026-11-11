@@ -1,5 +1,4 @@
-// Groß gedruckte Packungsmenge: Auswahl des Kandidaten aus mehreren Lesedurchgängen und Suche nach Folgen großer
-// Schriftzeichen im Graustufenbild. Alle Eingaben sind konstruiert.
+// Groß gedruckte Packungsmenge: Auswahl des Kandidaten aus mehreren Lesedurchgängen. Alle Eingaben sind konstruiert.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -62,7 +61,8 @@ test("largeAmountCandidate: zwei Lesarten an derselben Stelle – die häufigere
 test("lacksNetAmount: nur ohne Mengenangabe und ohne vorhandenen Hinweis", () => {
   assert.equal(Labeling.lacksNetAmount("Alleinfuttermittel für Katzen\nZusammensetzung: Fleisch"), true);
   assert.equal(Labeling.lacksNetAmount("Alleinfuttermittel\nNettomasse: 400 g"), false);
-  assert.equal(Labeling.lacksNetAmount("Alleinfuttermittel\n5 kg"), false);
+  // Eine allein stehende Menge ist nur ein Hinweis und ersetzt die Prüfung an der Überschrift nicht.
+  assert.equal(Labeling.lacksNetAmount("Alleinfuttermittel\n5 kg"), true);
   assert.equal(Labeling.lacksNetAmount("Alleinfuttermittel\nOCR-Kandidat Packungsmenge: 5 kg"), false);
 });
 
@@ -83,54 +83,4 @@ test("lineSummaries und bodyHeight", () => {
   assert.equal(summaries[1].confidence, 70);
   assert.equal(Ocr.bodyHeight(lines), 11);
   assert.equal(Ocr.bodyHeight([]), 0);
-});
-
-// Graustufenbild mit „Zeichen“: Rahmenformen (Füllgrad um 0,5) als Stellvertreter für Ziffern und Buchstaben.
-function canvas(width, height, value = 225) {
-  return { width, height, gray: new Uint8ClampedArray(width * height).fill(value) };
-}
-function glyph(image, x, y, w, h, value = 30) {
-  const stroke = Math.max(2, Math.round(Math.min(w, h) * 0.22));
-  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) {
-    const edge = xx - x < stroke || x + w - 1 - xx < stroke || yy - y < stroke || y + h - 1 - yy < stroke;
-    if (edge) image.gray[yy * image.width + xx] = value;
-  }
-}
-function bar(image, x, y, w, h, value = 30) {
-  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) image.gray[yy * image.width + xx] = value;
-}
-
-test("largeGlyphRuns: kurze Folge großer Zeichen wird gefunden, Fließtext, Balken und lange Zeilen nicht", () => {
-  const image = canvas(600, 400);
-  // Fließtext (8 hoch)
-  for (let row = 0; row < 6; row++) for (let i = 0; i < 30; i++) glyph(image, 20 + i * 12, 20 + row * 14, 8, 8);
-  // „5kg“: drei Zeichen, 40 hoch
-  [0, 1, 2].forEach(i => glyph(image, 400 + i * 34, 250, 26, 40));
-  // Strichcode: schmale volle Balken
-  for (let i = 0; i < 20; i++) bar(image, 60 + i * 6, 300, 3, 60);
-  // Produktname: zwölf große Zeichen in einer Zeile
-  for (let i = 0; i < 12; i++) glyph(image, 20 + i * 30, 150, 22, 36);
-  const runs = Ocr.largeGlyphRuns(image.gray, image.width, image.height, 8);
-  const run = runs.find(r => r.x0 >= 396 && r.x0 <= 402 && r.x1 >= 492 && r.x1 <= 498);
-  assert.ok(run, JSON.stringify(runs));
-  assert.equal(run.count, 3);
-  assert.ok(Math.abs(run.height - 40) <= 2, `Höhe ${run.height}`);
-  // Weder der Strichcode (y ab 300) noch der Produktname (zwölf Zeichen, y 150–186) ergibt eine Folge.
-  assert.ok(!runs.some(r => r.y0 >= 295), JSON.stringify(runs));
-  assert.ok(!runs.some(r => r.y0 >= 140 && r.y1 <= 195), JSON.stringify(runs));
-});
-
-test("largeGlyphRuns: helle Schrift auf dunklem Grund, Ränder und leere Eingaben", () => {
-  const image = canvas(400, 300, 40);
-  [0, 1, 2, 3].forEach(i => glyph(image, 100 + i * 40, 100, 30, 48, 230));
-  const runs = Ocr.largeGlyphRuns(image.gray, image.width, image.height, 10);
-  const run = runs.find(r => r.y0 >= 98 && r.y1 <= 150);
-  assert.ok(run, JSON.stringify(runs));
-  assert.equal(run.count, 4);
-  assert.deepEqual(Ocr.largeGlyphRuns(canvas(400, 300).gray, 400, 300, 10), []);
-  assert.deepEqual(Ocr.largeGlyphRuns(image.gray, image.width, image.height, 0), []);
-  // Ein einzelnes großes Zeichen (Logo) ist keine Folge.
-  const single = canvas(400, 300);
-  glyph(single, 150, 100, 40, 50);
-  assert.deepEqual(Ocr.largeGlyphRuns(single.gray, 400, 300, 10), []);
 });

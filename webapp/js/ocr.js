@@ -460,92 +460,17 @@ const Ocr = (() => {
     }));
   }
 
-  /**
-   * Findet kurze Folgen groß gedruckter Zeichen („5kg“, „500g ℮“) in einem Graustufenbild, ohne Texterkennung:
-   * zusammenhängende Flächen dunkler (oder heller) Bildpunkte nach Beleuchtungsausgleich, deren Höhe ein Mehrfaches der
-   * Fließtexthöhe beträgt, nebeneinander auf einer Linie. Lange Folgen (Produktname, Werbezeile) und einzelne Flächen
-   * (Logo, Strichcode-Balken) fallen weg.
-   * @param {Uint8ClampedArray|Uint8Array} gray Graustufen, zeilenweise
-   * @param {number} bodyHeight Höhe des Fließtexts in Bildpunkten dieses Bildes
-   * @returns {Array<{x0: number, y0: number, x1: number, y1: number, height: number, count: number}>} größte zuerst
-   */
-  function largeGlyphRuns(gray, width, height, bodyHeight, limit = 4) {
-    if (!(bodyHeight > 0) || width < 20 || height < 20) return [];
-    const { flat } = flattenIllumination(gray, width, height);
-    const minH = bodyHeight * 1.8;
-    const maxH = Math.min(height * 0.5, bodyHeight * 15);
-    const boxes = [];
-    const label = new Int32Array(width * height);
-    const stack = new Int32Array(width * height);
-    for (const dark of [true, false]) {
-      const ink = i => (dark ? flat[i] < 83 : flat[i] > 173);
-      label.fill(0);
-      for (let start = 0; start < flat.length; start++) {
-        if (label[start] || !ink(start)) continue;
-        let top = 0;
-        stack[top++] = start;
-        label[start] = 1;
-        let x0 = width, x1 = 0, y0 = height, y1 = 0, area = 0;
-        while (top) {
-          const i = stack[--top];
-          const x = i % width;
-          const y = (i - x) / width;
-          area++;
-          if (x < x0) x0 = x;
-          if (x > x1) x1 = x;
-          if (y < y0) y0 = y;
-          if (y > y1) y1 = y;
-          for (let dy = -1; dy <= 1; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= height) continue;
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx;
-              if (nx < 0 || nx >= width) continue;
-              const n = ny * width + nx;
-              if (!label[n] && ink(n)) { label[n] = 1; stack[top++] = n; }
-            }
-          }
-        }
-        const w = x1 - x0 + 1;
-        const h = y1 - y0 + 1;
-        const fill = area / (w * h);
-        // Zeichenform: nicht zu breit (Balken, Rahmen), nicht zu schmal (Linien), weder fast leer noch fast voll.
-        if (h < minH || h > maxH || w > h * 2.2 || w < h * 0.12 || fill < 0.15 || fill > 0.85) continue;
-        boxes.push({ x0, y0, x1: x1 + 1, y1: y1 + 1, h, dark });
-      }
-    }
-    boxes.sort((a, b) => a.x0 - b.x0);
-    const runs = [];
-    const used = new Set();
-    for (let i = 0; i < boxes.length; i++) {
-      if (used.has(i)) continue;
-      const run = [boxes[i]];
-      used.add(i);
-      for (let j = i + 1; j < boxes.length; j++) {
-        if (used.has(j) || boxes[j].dark !== boxes[i].dark) continue;
-        const last = run[run.length - 1];
-        const next = boxes[j];
-        const overlap = Math.min(last.y1, next.y1) - Math.max(last.y0, next.y0);
-        const tall = Math.max(last.h, next.h);
-        if (overlap < Math.min(last.h, next.h) * 0.6 || tall > Math.min(last.h, next.h) * 1.7) continue;
-        if (next.x0 - last.x1 > tall * 1.2 || next.x0 < last.x0) continue;
-        run.push(next);
-        used.add(j);
-      }
-      if (run.length < 2 || run.length > 8) continue;
-      const box = { x0: Math.min(...run.map(b => b.x0)), y0: Math.min(...run.map(b => b.y0)),
-                    x1: Math.max(...run.map(b => b.x1)), y1: Math.max(...run.map(b => b.y1)), count: run.length };
-      const heights = run.map(b => b.h).sort((a, b) => a - b);
-      box.height = heights[Math.floor(heights.length / 2)];
-      runs.push(box);
-    }
-    return runs.sort((a, b) => b.height - a.height).slice(0, limit);
-  }
-
   /** Mittlere Worthöhe einer Lesung (Wörter ab drei Zeichen), 0 ohne solche Wörter. */
   function bodyHeight(lines) {
     const heights = lines.flat().filter(w => w.bbox && w.text.length >= 3).map(w => w.bbox.y1 - w.bbox.y0).sort((a, b) => a - b);
     return heights.length ? heights[Math.floor(heights.length / 2)] : 0;
+  }
+
+  // Zeile nur aus einer Menge größer null mit Einheit, jedes Wort mit Sicherheit ab 80 („5kg“, „℮ 500 g“).
+  const AMOUNT_ONLY = /^[℮e]?\s*(\d+(?:[.,]\d+)?)\s*(?:kg|g|ml|l)\s*[℮e]?$/i;
+  function isSureAmountLine(words) {
+    const match = AMOUNT_ONLY.exec(words.map(w => w.text).join(" ").trim());
+    return !!match && Number(match[1].replace(",", ".")) > 0 && words.every(w => w.confidence >= 80);
   }
 
   // Mittlere Neigung langer Zeilen (ab vier Wörtern und 200 Bildpunkten Länge), 0 ohne solche Zeilen.
@@ -681,8 +606,11 @@ const Ocr = (() => {
           }
         }
         // Eine Zeile, die nur eine spätere Lesung kennt, braucht mindestens zwei sicher gelesene Wörter.
+        // Ausnahme: eine sicher gelesene Mengenangabe („5kg“). Die Packungsmenge steht oft groß und allein, und nur
+        // eine der Lesungen erfasst sie.
         if (tile !== tiles[0] && tile.source !== tiles[0].source
-            && words.filter(w => w.confidence >= 60 && countAlnum(w.text) >= 2).length < 2) continue;
+            && words.filter(w => w.confidence >= 60 && countAlnum(w.text) >= 2).length < 2
+            && !isSureAmountLine(words)) continue;
         kept.push({ words, tile, row: tile.row, col: tile.col, source: tile.source, first: tile === tiles[0] });
       }
     }
@@ -1293,7 +1221,7 @@ const Ocr = (() => {
     return out.join("\n");
   }
 
-  return { textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, largeGlyphRuns, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
+  return { textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).

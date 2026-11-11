@@ -1023,78 +1023,100 @@
       return Labeling.declaredNetAmount(exact) ? exact : "";
     }
 
+    // Rahmen der Mengenüberschrift („Nettomasse:“) im Foto oder null.
+    function netHeadingBox(data) {
+      const region = Ocr.findTextRegion(data, Labeling.matchNetHeading);
+      if (!region) return null;
+      const { first, last } = region;
+      return { x0: Math.min(first.x0, last.x0), y0: Math.min(first.y0, last.y0),
+               x1: Math.max(first.x1, last.x1), y1: Math.max(first.y1, last.y1) };
+    }
+
     /**
-     * Sucht eine groß gedruckte Packungsmenge („5kg“, „℮ 100 g“), die die Lesung in voller Auflösung übergeht:
-     * 1. das verkleinerte Foto als verstreuter Text, in zwei Größen, je unverändert und mit Beleuchtungsausgleich;
-     * 2. Ausschnitte um Folgen großer Schriftzeichen, auf eine gut lesbare Schrifthöhe gebracht.
-     * Eine Menge zählt nur, wenn zwei Durchgänge sie gleich lesen oder einer sie sicher liest
+     * Liest den Bereich um die Mengenüberschrift verkleinert als verstreuten Text: Eine groß gedruckte Menge neben oder
+     * unter der Überschrift („Inhalt: 3 kg“ in fetter Schrift) übergeht die Lesung in voller Auflösung. Gelesen wird
+     * nur dieser Ausschnitt, in zwei Größen, je unverändert und mit Beleuchtungsausgleich. Eine Menge zählt nur an
+     * der Überschrift und wenn zwei Durchgänge sie gleich lesen oder einer sie sicher liest
      * (Labeling.largeAmountCandidate). Liefert die Hinweiszeile für den Prüftext oder "".
      */
-    async function readLargeAmount(worker, input, data, output, primary) {
+    async function readAmountAroundHeading(worker, input, data, output, primary) {
+      const heading = netHeadingBox(data);
       const bodyHeight = Ocr.bodyHeight(Ocr.flattenLines(data.blocks));
-      if (!bodyHeight) return "";
+      if (!heading || !bodyHeight) return "";
       const image = await createImageBitmap(input);
       try {
-        const longest = Math.max(image.width, image.height);
+        const h = Math.max(1, heading.y1 - heading.y0);
+        const x = Math.max(0, Math.floor(heading.x0 - h * 2));
+        const y = Math.max(0, Math.floor(heading.y0 - h * 3));
+        const width = Math.min(image.width, Math.ceil(heading.x1 + h * 14)) - x;
+        const height = Math.min(image.height, Math.ceil(heading.y1 + h * 6)) - y;
+        if (width < 8 || height < 8) return "";
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        // Zeichnet einen Bildausschnitt skaliert auf die Arbeitsfläche; liefert die Graustufen.
+        // Zeichnet einen Fotoausschnitt skaliert auf die Arbeitsfläche, auf Wunsch mit Beleuchtungsausgleich.
         const draw = (sx, sy, sw, sh, scale, flat) => {
           canvas.width = Math.max(3, Math.round(sw * scale));
           canvas.height = Math.max(3, Math.round(sh * scale));
           ctx.imageSmoothingQuality = "high";
           ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+          if (!flat) return;
           const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const gray = new Uint8ClampedArray(canvas.width * canvas.height);
           for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
             gray[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
           }
-          if (flat) {
-            const flattened = Ocr.flattenIllumination(gray, canvas.width, canvas.height).flat;
-            for (let i = 0, p = 0; i < flattened.length; i++, p += 4) {
-              pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flattened[i];
-              pixels.data[p + 3] = 255;
-            }
-            ctx.putImageData(pixels, 0, 0);
+          const flattened = Ocr.flattenIllumination(gray, canvas.width, canvas.height).flat;
+          for (let i = 0, p = 0; i < flattened.length; i++, p += 4) {
+            pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flattened[i];
+            pixels.data[p + 3] = 255;
           }
-          return gray;
+          ctx.putImageData(pixels, 0, 0);
         };
         const passes = [];
         await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
-        const targets = longest <= 800 ? [longest] : longest <= 1100 ? [800, longest] : [800, 1100];
-        for (const target of targets) {
+        // Verkleinerung wie bei einem Foto mit 800 bzw. 1.100 Bildpunkten Kantenlänge: In dieser Größe werden groß
+        // gedruckte Mengen lesbar, die in voller Auflösung übergangen werden.
+        const longest = Math.max(image.width, image.height);
+        for (const target of [800, 1100]) {
+          const scale = Math.min(1, target / longest);
           for (const flat of [false, true]) {
-            const scale = target / longest;
-            draw(0, 0, image.width, image.height, scale, flat);
+            draw(x, y, width, height, scale, flat);
             const result = await worker.recognize(canvas, {}, output);
-            passes.push(Ocr.lineSummaries(Ocr.flattenLines(result.data.blocks), scale));
+            passes.push(Ocr.lineSummaries(Ocr.flattenLines(result.data.blocks), scale).map(line => ({
+              ...line, bbox: { x0: line.bbox.x0 + x, y0: line.bbox.y0 + y, x1: line.bbox.x1 + x, y1: line.bbox.y1 + y },
+            })));
           }
         }
-        // Haben die Ganzbild-Durchgänge schon eine bestätigte Menge, entfallen die Ausschnitte.
-        const early = Labeling.largeAmountCandidate(primary, passes, bodyHeight);
-        if (early?.confirmed) return Labeling.largeAmountHint(early.amount);
-        // Folgen großer Zeichen: im verkleinerten Bild suchen (Fließtext etwa acht Bildpunkte hoch), im Foto ausschneiden.
-        const scale = Math.min(1, Math.max(0.25, 8 / bodyHeight));
-        const gray = draw(0, 0, image.width, image.height, scale, false);
-        const runs = Ocr.largeGlyphRuns(gray, canvas.width, canvas.height, bodyHeight * scale, 10);
-        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE });
-        for (const flat of [false, true]) {
-          const lines = [];
-          for (const run of runs) {
-            const height = run.height / scale;
-            const pad = height * 0.5;
-            const x = Math.max(0, Math.floor(run.x0 / scale - pad));
-            const y = Math.max(0, Math.floor(run.y0 / scale - pad));
-            const right = Math.min(image.width, Math.ceil(run.x1 / scale + pad));
-            const bottom = Math.min(image.height, Math.ceil(run.y1 / scale + pad));
-            draw(x, y, right - x, bottom - y, 48 / height, flat);
-            const result = await worker.recognize(canvas, {}, { text: true });
-            lines.push({ text: (result.data.text || "").trim(), height, confidence: result.data.confidence,
-                         bbox: { x0: x, y0: y, x1: right, y1: bottom } });
+        let candidate = Labeling.largeAmountCandidate(primary, passes, bodyHeight, heading);
+        if (!candidate?.confirmed) {
+          // Die verstreute Lesung trifft die Stelle oft, liest aber nur ein Bruchstück („kg“ ohne Ziffer). Die größten
+          // Bruchstücke an der Überschrift mit Ziffer oder Einheit werden als einzelne Zeile nachgelesen, auf eine gut
+          // lesbare Schrifthöhe gebracht.
+          const anchors = passes.flat()
+            .filter(line => line.height >= bodyHeight * 1.2 && Labeling.nearNetHeading(heading, line.bbox)
+              && /\d|(?:^|[^\p{L}])(?:kg|g|ml|l)(?![\p{L}])/iu.test(line.text))
+            .sort((a, b) => b.height - a.height)
+            .filter((line, index, all) => all.findIndex(other => Math.abs(other.bbox.y0 - line.bbox.y0) < line.height * 0.5) === index)
+            .slice(0, 2);
+          await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE });
+          for (const flat of [false, true]) {
+            const lines = [];
+            for (const anchor of anchors) {
+              const pad = anchor.height * 0.3;
+              const ax = Math.max(0, Math.floor(anchor.bbox.x0 - anchor.height * 2));
+              const ay = Math.max(0, Math.floor(anchor.bbox.y0 - pad));
+              const right = Math.min(image.width, Math.ceil(anchor.bbox.x1 + anchor.height * 2));
+              const bottom = Math.min(image.height, Math.ceil(anchor.bbox.y1 + pad));
+              draw(ax, ay, right - ax, bottom - ay, 48 / anchor.height, flat);
+              const result = await worker.recognize(canvas, {}, { text: true });
+              // Ein Rahmenstrich am Rand des Ausschnitts wird als „|“ gelesen; es zählt der Teil dahinter.
+              lines.push({ text: (result.data.text || "").split("|").pop().trim(), height: anchor.height, confidence: result.data.confidence,
+                           bbox: anchor.bbox });
+            }
+            passes.push(lines);
           }
-          passes.push(lines);
+          candidate = Labeling.largeAmountCandidate(primary, passes, bodyHeight, heading);
         }
-        const candidate = Labeling.largeAmountCandidate(primary, passes, bodyHeight);
         return candidate?.confirmed ? Labeling.largeAmountHint(candidate.amount) : "";
       } finally {
         image.close();
@@ -1338,37 +1360,43 @@
           warnings.push("Nachlesen kleiner Schrift fehlgeschlagen (" + (e?.message || e) + ")");
         }
       }
+      // Vorhandene Lesungen nutzen, ohne weiteren Durchgang: eine sicher gelesene Mengenzeile an der Mengenüberschrift
+      // oder in deutlich größerer Schrift als der Fließtext wird als zu bestätigender Kandidat vermerkt.
+      if (Labeling.lacksNetAmount(text)) {
+        const known = Ocr.flattenLines(data.blocks);
+        const hint = Labeling.readingAmountHint(text, Ocr.lineSummaries(known), Ocr.bodyHeight(known), netHeadingBox(data));
+        if (hint) text += `\n${hint}`;
+      }
       const checkWeight = Labeling.needsPackageAmount(text);
       const checkImprint = Labeling.needsImprintLot(text);
       const checkDiet = Labeling.needsDietDeclaration(text);
       const checkCalcium = Labeling.needsSplitCalcium(text);
       const checkMoisture = rotated && Labeling.needsMoistureCrop(text);
       const checkComposition = Labeling.needsCompositionCrop(text);
-      const checkLargeAmount = Labeling.lacksNetAmount(text);
-      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition
-          && !checkLargeAmount) {
+      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition) {
         return { text, warnings };
       }
 
       try {
-        if (checkWeight) {
+        if (checkWeight && Labeling.lacksNetAmount(text)) {
           step("Zusatzprüfung Packungsmenge");
+          // Gezielt an der Mengenüberschrift lesen: erst in voller Auflösung (Menge in Schriftgröße der Überschrift),
+          // dann verkleinert (groß gedruckte Menge). Ohne Überschrift bleibt nur die Mehrfachpackung „(10 x 1,5 kg)“,
+          // deren Gesamtmenge sich rechnerisch prüfen lässt.
           const nearby = await readAmountNearHeading(worker, input, data, output, primary);
           if (nearby) {
             text += `\n\n${nearby}`;
+          } else if (netHeadingBox(data)) {
+            const hint = await readAmountAroundHeading(worker, input, data, output, text);
+            if (hint) {
+              text += `\n${hint}`;
+              warnings.push("Menge an der Überschrift nachgelesen: Angabe am Originalfoto bestätigen");
+            }
           } else {
             await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
             const retry = await worker.recognize(input, {}, output);
-            const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
+            const hint = Labeling.packageAmountHint(primary, Ocr.lineSummaries(Ocr.flattenLines(retry.data.blocks)));
             if (hint) text += `\n${hint}`;
-          }
-        }
-        if (checkLargeAmount && Labeling.lacksNetAmount(text)) {
-          step("Zusatzprüfung groß gedruckte Menge");
-          const amount = await readLargeAmount(worker, input, data, output, text);
-          if (amount) {
-            text += `\n${amount}`;
-            warnings.push("Groß gedruckte Menge nachgelesen: Angabe am Originalfoto bestätigen");
           }
         }
         if (checkImprint) {

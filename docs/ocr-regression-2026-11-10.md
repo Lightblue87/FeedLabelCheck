@@ -186,32 +186,62 @@ Offen aus dieser Runde:
 - Katzenmilch-Snack: „Zusatzstoffe/kg: Taurin 570 mg/kg.“ steht doppelt im Beleg.
 - Laufzeit in Chromium: 4 bis 91 s je Etikett (vorher 3 bis 90 s). Die hochkant fotografierten Etiketten brauchen wegen der Drehversuche 52 bis 91 s. Auf dem iPhone nicht gemessen.
 
-## Groß gedruckte Nettomenge (11.11.2026)
+## Nettomenge: False Positives schließen, gezielt statt pauschal lesen (11.11.2026)
 
-Ausgangsbefund: Bei keinem der elf Produkte aus der vorigen Runde wurde die Nettomenge belegt. Die Menge steht meist in sehr großer, fetter Schrift für sich („5kg“, „Inhalt: 3 kg“, „500g ℮“). In voller Auflösung übergeht die Texterkennung solche Zeichen oder liest Bruchstücke („3 k“). Verkleinert und als verstreuter Text gelesen werden sie lesbar, aber nicht bei jeder Größe.
+Ein technisches Review der Nettomengenerkennung (Stand `550802e`) hat reproduzierbare False Positives gezeigt. Die Zusatzprüfung aus dem Commit davor (vier verkleinerte Ganzbild-Durchgänge und Ausschnitte um große Schriftzeichen) fand drei von acht sichtbaren Mengen, kostete 5 bis 20 s je Etikett und hatte ungetestete Fehlwege. Sie ist durch das Folgende ersetzt; `Ocr.largeGlyphRuns` ist entfernt.
 
-Zusatzprüfung `readLargeAmount` in `webapp/js/app.js`, nur wenn der Prüftext keine Mengenangabe und keinen Mengenhinweis enthält (`Labeling.lacksNetAmount`):
+Grundsätze (Vorgabe des Auftraggebers): Eindeutig erkannte Nettomengen bleiben. Isolierte Mengen sind höchstens ein zu prüfender Kandidat („Wahrscheinlich“). Mengen aus Fütterungstabellen, Dosierungen, Analysen und Portionsangaben werden nicht übernommen. Gezielte Lesung statt weiterer Ganzbild-Durchgänge.
 
-1. Das Foto wird auf 800 und 1.100 Bildpunkte Kantenlänge verkleinert und als verstreuter Text gelesen, je unverändert und mit Beleuchtungsausgleich (vier Durchgänge, bei kleinen Fotos weniger).
-2. Steht danach keine bestätigte Menge fest: `Ocr.largeGlyphRuns` sucht ohne Texterkennung Folgen von zwei bis acht großen Schriftzeichen (zusammenhängende Flächen, mindestens 1,8-fache Fließtexthöhe). Bis zu zehn solcher Stellen werden ausgeschnitten, auf 48 Bildpunkte Schrifthöhe gebracht und als einzelne Zeile gelesen (zwei Durchgänge).
-3. `Labeling.largeAmountCandidate` wählt aus allen Durchgängen: Die Zeile besteht allein aus einer Menge (ein verlesenes ℮ davor oder dahinter ist erlaubt), ist mindestens 1,5-mal so hoch wie der Fließtext, und die Menge steht nicht schon im Prüftext (Fütterungstabelle, Rationsangabe). Bei mehreren großen Mengen muss eine klar die größte sein (Faktor 1,3). Zwei Lesarten an derselben Stelle („500 g“ und „5009 g“): Die häufigere zählt, bei Gleichstand keine.
-4. Übernommen wird nur, was zwei Durchgänge gleich lesen oder einer sicher liest (ab 80). Das Ergebnis ist die Zeile „OCR-Kandidat Packungsmenge: …“. Die Karte bleibt „Wahrscheinlich“ mit dem Vermerk, die Angabe am Etikett zu bestätigen.
+Regeln in `webapp/js/labeling.js`:
 
-Ergebnis im Browser (Chromium, normaler Foto-Upload):
+- **Bezug hinter der Menge.** „Inhalt: 400 g pro Portion“, „100 g je kg Körpergewicht“, „400 g täglich“, „2 g Calcium“ sind keine Packungsmenge (`AMOUNT_RELATION`, auch am Anfang der Folgezeile). Eine solche Zeile zählt für die Nettomenge auch nicht als Überschrift. Vorher: „Gefunden“.
+- **Allein stehende Mengenzeile** (`standaloneAmounts`): nur noch ein Hinweis, wenn die Menge größer als null ist, die zwei Zeilen davor und danach keinen Fütterungs- oder Dosierbezug zeigen und keine zweite Mengenzeile danebensteht. Bei mehreren verschiedenen solchen Mengen wird keine bevorzugt. Vorher: jede Mengenzeile, auch „0g“.
+- **Räumlicher Bezug** (`nearNetHeading`): rechts neben der Mengenüberschrift in derselben Zeile (bis 14 Überschrifthöhen) oder direkt darunter (bis 3 Höhen). `packageAmountHint` liefert ohne diese Position keinen Kandidaten mehr; die rechnerisch geprüfte Mehrfachpackung „(10 x 1,5 kg)“ bleibt.
+- **Kandidat aus Lesungen** (`largeAmountCandidate`): Zeile nur aus einer Menge, an der Überschrift (mindestens 1,2-fache Fließtexthöhe) oder ohne Überschrift deutlich größer als der Fließtext (1,5-fach), nicht schon im Prüftext. Bestätigt, wenn zwei Durchgänge dieselbe Menge lesen, einer sie sicher liest (ab 80) oder ein anderer Durchgang an derselben Stelle sicher dieselbe Einheit liest. Das Ergebnis ist immer die Zeile „OCR-Kandidat Packungsmenge: …“ und damit „Wahrscheinlich“, nie „Gefunden“.
 
-| Etikett | Vorher | Nachher |
-| --- | --- | --- |
-| AlpenGrün Mash | Kein OCR-Treffer | Wahrscheinlich: „5 kg“ |
-| AGROBS Seniormineral | Kein OCR-Treffer | Wahrscheinlich: „3 kg“ |
-| proCani (3 Fotos) | Kein OCR-Treffer | Wahrscheinlich: „500 g“ |
-| animonda Schale | Wahrscheinlich (nur Überschrift „Nettomasse“) | unverändert; „100 g“ wird nur in einem Durchgang unsicher gelesen und deshalb nicht übernommen |
-| Kaufland-Dose, Lucky-Kitty, Purina, Vitakraft | Kein OCR-Treffer bzw. nur Überschrift | unverändert |
-| IAMS, Katzenmilch-Snack, animonda Hundesnack, Pavo, Carolina | Kein OCR-Treffer (auf den Fotos steht keine Nettomenge) | unverändert, kein Fehltreffer |
+Lesung (`webapp/js/ocr.js`, `webapp/js/app.js`):
 
-Grenzen:
+- **Vorhandene Lesungen nutzen.** `mergeTiles` verwarf eine Zeile, die nur die zweite Lesung kennt, wenn sie aus einem Wort besteht. Eine sicher gelesene Mengenzeile („5kg“, Sicherheit ab 80) bleibt jetzt. `Labeling.readingAmountHint` vermerkt sie als Kandidaten, wenn sie an der Überschrift steht oder groß gedruckt ist und im Text nicht neben einer Fütterungsangabe steht. Kein zusätzlicher Lesedurchgang.
+- **Gezielte Lesung an der Überschrift** (`readAmountAroundHeading`), nur wenn eine Mengenüberschrift gelesen wurde und die Lesung in voller Auflösung dort keine Menge fand: Ausschnitt um die Überschrift, verkleinert, als verstreuter Text (vier kleine Lesungen). Liefert das nur ein Bruchstück, werden bis zu zwei Stellen als einzelne Zeile nachgelesen.
+- Ohne Mengenüberschrift gibt es keine Zusatzlesung mehr, außer bei einer Mehrfachpackung im Text (wie vor dem PR).
 
-- Für das Seniormineral verlangt die Abnahme in `CLAUDE.md` „3 kg“ als getrenntes Feld. Die Menge erscheint jetzt als Hinweis („Wahrscheinlich“), nicht als belegte Angabe: Die Überschrift „Inhalt:“ und die Menge werden in getrennten Durchgängen gelesen.
-- Lucky-Kitty: „200g“ steht bereits im Prüftext hinter der Internetadresse („www.lucky-kitty.de EC 200g“, das ℮ als „EC“ gelesen) und gilt dort nicht als Mengenangabe. Die Zusatzprüfung schließt Mengen aus, die schon im Prüftext stehen.
-- Purina („2 x 57 g ℮ = 114 g“ im gedrehten Foto), Vitakraft („e 40g“) und Kaufland („400 g“ im Schatten) werden in keinem Durchgang gelesen.
-- Laufzeit: Die Zusatzprüfung kostet in Chromium je Foto ohne Mengenangabe etwa 5 bis 10 s, bei Produkten mit mehreren Fotos entsprechend mehr (proCani 40 → 57 s, Purina 91 → 112 s). Auf dem iPhone nicht gemessen.
-- Tests: `tests/js/large-amount.test.mjs`.
+Messung im Browser (Chromium, normaler Foto-Upload). „Alt“ ist `14504c5` (vor dem PR), „Zwischenstand“ `550802e`, „Neu“ der Stand dieser Änderung.
+
+| Etikett | Tatsächliche Menge | Alt | Zwischenstand | Neu | False Positive (neu) | Laufzeit alt / Zwischenstand / neu |
+| --- | --- | --- | --- | --- | --- | --- |
+| AGROBS Seniormineral | 3 kg | kein Treffer | Kandidat 3 kg | Kandidat 3 kg | nein | 35 / 34 / 19 s |
+| AlpenGrün Mash | 5 kg | kein Treffer | Kandidat 5 kg | Kandidat 5 kg | nein | 18 / 20 / 14 s |
+| proCani | 500 g | kein Treffer | Kandidat 500 g | kein Treffer | nein | 43 / 59 / 37 s |
+| animonda Schale | 100 g | kein Treffer | nur Überschrift | nur Überschrift | nein | 10 / 33 / 15 s |
+| Purina Gourmet | 114 g (2 × 57 g) | nur Überschrift | nur Überschrift | nur Überschrift | nein | 90 / 113 / 78 s |
+| Vitakraft | 40 g | keine Karten | keine Karten | keine Karten | nein | 42 / 64 / 47 s |
+| Kaufland-Dose | 400 g | kein Treffer | kein Treffer | kein Treffer | nein | 3 / 6 / 3 s |
+| Lucky-Kitty | 200 g | kein Treffer | kein Treffer | kein Treffer | nein | 5 / 11 / 5 s |
+| IAMS | auf dem Foto nicht sichtbar | kein Treffer | kein Treffer | kein Treffer | nein | 60 / 82 / 56 s |
+| Katzenmilch-Snack | auf den Fotos nicht sichtbar | kein Treffer | kein Treffer | kein Treffer | nein | 32 / 32 / 22 s |
+| animonda Hundesnack | auf dem Foto nicht sichtbar | kein Treffer | kein Treffer | kein Treffer | nein | 7 / 39 / 19 s |
+| Pavo WeightLift | auf den Fotos nicht sichtbar | Wahrscheinlich „600 kg“ (Körpergewicht, False Positive) | kein Treffer | kein Treffer | nein | 27 / 35 / 20 s |
+| Carolina Mineralfutter | auf dem Foto nicht sichtbar | kein Treffer | kein Treffer | kein Treffer | nein | 13 / 25 / 14 s |
+| Wildvogel (Testbild) | 1 kg | – | Gefunden „Nettomasse: 1 kg“ | Gefunden „Nettomasse: 1 kg“ | nein | – / 6 / 5 s |
+
+Zusammenfassung:
+
+| | Alt | Zwischenstand | Neu |
+| --- | --- | --- | --- |
+| Sichtbare Mengen mit richtigem Kandidaten oder Beleg (9 Etiketten mit sichtbarer Menge) | 0 von 8 (Wildvogel-Testbild nicht gemessen) | 4 | 3 |
+| False Positives Nutzerfotos (14 Etiketten) | 1 (Pavo „600 kg“) | 0 | 0 |
+| False Positives öffentliche Stichprobe (3 mit erkanntem Futtermitteltyp) | 0 | 1 („0g“) | 0 |
+| Laufzeit Nutzerfotos, Summe | 385 s (ohne Wildvogel) | 559 s | 354 s |
+| Laufzeit öffentliche Stichprobe, Summe | 233 s | 342 s | 214 s |
+
+Außer der Karte Nettomenge hat sich gegenüber dem Zwischenstand kein Kartenstatus verändert (alle 26 Etiketten).
+
+Verschlechterungen und Grenzen:
+
+- **proCani** verliert den Kandidaten „500 g“ gegenüber dem Zwischenstand. Auf dem Etikett steht keine gelesene Mengenüberschrift, und die Menge ist in den vorhandenen Lesungen nur als Bruchstück enthalten. Sie kam nur über die pauschalen Ganzbild-Durchgänge, die es nicht mehr gibt. Gegenüber dem Stand vor dem PR ist das keine Verschlechterung.
+- **Testerwartung geändert:** In `tests/js/ocr.test.mjs` galt eine allein stehende „800 g“ direkt unter einer Zeile mit Körpergewichten bisher als Hinweis. Sie gilt jetzt als Tabellenzeile; abseits davon bleibt sie ein Hinweis.
+- Die Abnahme „3 kg“ für das Seniormineral ist als Kandidat erfüllt, nicht als belegte Angabe.
+- animonda („e100g“), Purina, Vitakraft, Kaufland und Lucky-Kitty bleiben ohne Menge; an der Überschrift liest die Texterkennung dort nur Bruchstücke.
+- Nicht geändert (nicht freigegeben): Zahlenformate („1.000 g“ neben „1000 g“ ergibt weiter „Unklar“, „1,000 g“ wird als 1 g geführt), Belegstufe „Gefunden“ für Mengen aus der Zusatzprüfung, Verkleinern großer Fotos vor der Texterkennung.
+- Auf dem iPhone nicht gemessen.
+- Tests: `tests/js/net-amount.test.mjs` (15 Fälle; von den ersten 12 schlugen 9 auf dem Stand `550802e` fehl, 3 sind Gegenproben) und `tests/js/large-amount.test.mjs`.

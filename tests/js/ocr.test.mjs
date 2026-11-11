@@ -252,7 +252,10 @@ const legacyWeightPattern = String.raw`\b\d+[,.]?\d*\s*(kg|g|t|ml|l)\b`;
 test("Nettomenge nutzt die deklarierte Menge statt Bezugs- und Fütterungswerten", () => {
   const ration = "Alleinfuttermittel für Hunde. Energie pro 100 g.\nKörpergewicht 8 kg 20 kg 52 kg";
   assert.equal(checkNumericLabelRule("art15_003", ration, legacyWeightPattern).status, "missing");
-  assert.equal(checkNumericLabelRule("art15_003", `${ration}\n800 g`, legacyWeightPattern).status, "probablyFound");
+  // Direkt unter der Zeile mit den Körpergewichten ist eine allein stehende Menge eine Tabellenzeile, kein Hinweis.
+  assert.equal(checkNumericLabelRule("art15_003", `${ration}\n800 g`, legacyWeightPattern).status, "missing");
+  // Abseits davon bleibt sie ein zu prüfender Kandidat.
+  assert.equal(checkNumericLabelRule("art15_003", `${ration}\nKühl und trocken lagern.\nMindestens haltbar bis: siehe Boden\n800 g`, legacyWeightPattern).status, "probablyFound");
   for (const net of ["Nettomasse: 800 g", "℮800g", "Net weight: 800 g"]) {
     const result = checkNumericLabelRule("art15_003", `${ration}\n${net}`, legacyWeightPattern);
     assert.equal(result.status, "found");
