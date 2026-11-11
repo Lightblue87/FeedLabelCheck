@@ -618,6 +618,7 @@
       box.hidden = currentPhotos.length === 0;
       box.innerHTML = currentPhotos.length
         ? `<span class="photos-label">Originalfotos (${currentPhotos.length}) – antippen zum Vergleichen</span>`
+          + `<button type="button" class="btn quiet rescan" data-act="rescan">Fotos neu einlesen</button>`
           + currentPhotos.map((p, i) => {
             const url = URL.createObjectURL(p.thumb || p.blob);
             photoUrls.push(url);
@@ -626,6 +627,10 @@
         : "";
     }
     $("#l-photos").addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-act='rescan']")) {
+        if (current) rescanEntry(current.id).catch(e => reportError("Neu einlesen", e));
+        return;
+      }
       const btn = ev.target.closest(".photo");
       if (btn) openViewer(Number(btn.dataset.i), btn);
     });
@@ -754,6 +759,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z"/></svg>
               <span>Behalten</span>
             </button>
+            ${n > 0 ? `<button type="button" class="rescan" data-act="rescan">Neu einlesen</button>` : ""}
             <button type="button" class="del" data-act="delete">Löschen</button>
           </div>
         </article>`;
@@ -768,6 +774,8 @@
       try {
         if (act === "open") {
           await openEntry(id);
+        } else if (act === "rescan") {
+          await rescanEntry(id);
         } else if (act === "keep") {
           const keep = btn.getAttribute("aria-pressed") !== "true";
           const e = await enqueue(() => history.setKeep(id, keep));
@@ -868,7 +876,8 @@
 
     // ── OCR ───────────────────────────────────────────────────────
     /** @returns {boolean} false, wenn der Text keinem Eintrag zugeordnet werden konnte und verworfen wurde */
-    async function appendOcrText(targetId, ocrText, epoch) {
+    async function appendOcrText(targetId, ocrText, epoch, replaceFrom) {
+      if (replaceFrom !== undefined) return replaceOcrText(targetId, ocrText, replaceFrom);
       const join = (old) => (old.trim() ? old + "\n\n" : "") + ocrText;
       const syncViewer = () => { if (!viewer.hidden) $("#viewer-text").value = textEl.value; };
       // Ohne Eintrag (Speichern fehlgeschlagen) gehört der Text nur zur Ansicht, in der er gestartet wurde.
@@ -902,6 +911,47 @@
         }
       }
       return true;
+    }
+
+    /** Ersetzt den Text eines Eintrags durch ein neues OCR-Ergebnis (Neu einlesen aus dem Verlauf). */
+    async function replaceOcrText(targetId, ocrText, startVersion) {
+      // Ansicht inzwischen gewechselt: Text und Ergebnis des Eintrags unverändert lassen, statt einen
+      // Eintrag ohne Prüfergebnis zurückzulassen. Das Neu-Einlesen lässt sich erneut starten.
+      if (current?.id !== targetId) return false;
+      // Seit dem Start des Neu-Einlesens getippt? Dann nicht stillschweigend überschreiben.
+      if (current?.id === targetId && textVersion !== startVersion
+          && !confirm("Der Text wurde seit dem Start des Neu-Einlesens geändert. Mit dem neu eingelesenen Text überschreiben?")) {
+        return false;
+      }
+      const e = await enqueue(() => history.replaceText(targetId, ocrText));
+      if (!e) return false;                       // Eintrag inzwischen gelöscht
+      if (current?.id === targetId) {
+        current = e;
+        textEl.value = e.text;
+        if (!viewer.hidden) $("#viewer-text").value = e.text;
+        markTextLoaded();
+        $("#l-result").hidden = true;            // altes Ergebnis gehört nicht zum neuen Text
+      }
+      return true;
+    }
+
+    /**
+     * Liest die gespeicherten Originalfotos eines Verlaufseintrags erneut ein, ersetzt den Text
+     * und prüft ihn mit den aktuellen Regeln. Fotos bleiben unverändert.
+     */
+    async function rescanEntry(id) {
+      if (!history) return;
+      const nav = ++navSeq;
+      if (current?.id !== id) await openEntry(id);
+      else if (!(await flushPendingEdits(nav))) return;
+      if (current?.id !== id) return;
+      const stored = await history.photos(id);
+      if (!stored.length) { toast("Dieser Eintrag hat keine Originalfotos.", "warn", true); return; }
+      const hasText = textEl.value.trim() !== "";
+      if (hasText && !confirm("Den Text dieses Eintrags durch ein neu eingelesenes Ergebnis ersetzen? Manuelle Korrekturen gehen dabei verloren.")) return;
+      setHistoryOpen(false);
+      const applied = await runOcr(stored.map(p => p.blob), id, viewEpoch, textVersion);
+      if (applied && current?.id === id && textEl.value.trim()) runLabelCheck({ scroll: false });
     }
 
     // ── Zusatzläufe der OCR (Packungsmenge, Aufdruck) ─────────────
@@ -1433,7 +1483,7 @@
       return { text, warnings };
     }
 
-    async function doOcr(files, targetId, epoch) {
+    async function doOcr(files, targetId, epoch, replaceFrom) {
       const status = $("#l-ocr-status");
       status.className = "ocr-status busy";
       let worker = null;
@@ -1454,12 +1504,16 @@
           allText += (allText ? "\n\n" : "") + photo.text;
           for (const w of photo.warnings) warnings.push(`${label}: ${w}`);
         }
-        const applied = await appendOcrText(targetId, allText, epoch);
+        const applied = await appendOcrText(targetId, allText, epoch, replaceFrom);
         status.className = "ocr-status";
         status.textContent = applied
           ? `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}) – Text bitte kurz prüfen.`
+            + (replaceFrom !== undefined && !allText.trim() ? " Es wurde kein Text erkannt; bitte Text manuell ergänzen oder nachfotografieren." : "")
             + (warnings.length ? ` Hinweis: ${warnings.join("; ")}. Der übrige Text wurde übernommen.` : "")
-          : "OCR abgeschlossen, aber der Text wurde verworfen: Die Fotos konnten nicht gespeichert werden und es wurde inzwischen ein anderer Eintrag geöffnet.";
+          : replaceFrom !== undefined
+            ? "Neu einlesen abgeschlossen, der bisherige Text blieb unverändert (Eintrag gewechselt oder Überschreiben abgelehnt)."
+            : "OCR abgeschlossen, aber der Text wurde verworfen: Die Fotos konnten nicht gespeichert werden und es wurde inzwischen ein anderer Eintrag geöffnet.";
+        return applied;
       } catch (e) {
         status.className = "ocr-status error";
         status.textContent = "OCR-Fehler: " + e.message
@@ -1471,7 +1525,7 @@
 
     // Mehrere Auswahlen laufen nacheinander, nie parallel.
     let ocrQueue = Promise.resolve();
-    const runOcr = (files, targetId, epoch) => (ocrQueue = ocrQueue.then(() => doOcr(files, targetId, epoch)));
+    const runOcr = (files, targetId, epoch, replaceFrom) => (ocrQueue = ocrQueue.then(() => doOcr(files, targetId, epoch, replaceFrom)));
 
     for (const id of ["#l-files", "#l-camera"]) {
       $(id).addEventListener("change", async (ev) => {

@@ -547,7 +547,7 @@ body.kb .toast { bottom: 12px; }
 .hist-meta { color: var(--muted); font-size: 0.8125rem; }
 .hist-actions { display: flex; gap: 8px; padding: 0 14px 12px; }
 .hist-actions .keep, .hist-actions .del { flex: 1; justify-content: center; }
-.del {
+.del, .hist-actions .rescan {
   min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-s);
   background: var(--surface); color: var(--ink-2); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer;
 }
@@ -681,3 +681,6 @@ body.noscroll { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+.photos .rescan { flex: 0 0 auto; margin-left: auto; min-height: 36px; padding: 0 12px; font-size: 0.8125rem; }
+.hist-actions .rescan { flex: 1; justify-content: center; }
