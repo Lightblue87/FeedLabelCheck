@@ -49,6 +49,12 @@ test("Nettomenge: eine eigene Angabe in der Folgezeile entwertet die Packungsmen
     assert.match(Labeling.declaredNetAmount(HEAD + text) || "", /400 g|3 kg/, text);
     assert.equal(card(text).status, "found", text);
   }
+  // Wörter, die nur mit einem Bezugswort beginnen („Produkt“, „Jederzeit“, „Perlen“), sind kein Bezug.
+  for (const text of ["Nettomasse: 400 g\nProdukt kühl lagern", "Nettomasse: 400 g Produziert in Deutschland",
+                      "Nettomasse: 400 g\nJederzeit frisches Wasser bereitstellen", "Nettomasse: 400 g Perlen"]) {
+    assert.match(Labeling.declaredNetAmount(HEAD + text) || "", /400 g/, text);
+    assert.equal(card(text).status, "found", text);
+  }
   // Der Bezug selbst in der Folgezeile bleibt ein Bezug.
   for (const text of ["Inhalt: 400 g\npro Portion", "Inhalt: 100 g\nje kg Körpergewicht", "Nettomasse: 400 g\ntäglich"]) {
     assert.equal(Labeling.declaredNetAmount(HEAD + text), null, text);

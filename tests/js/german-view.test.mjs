@@ -229,3 +229,14 @@ test("germanView: Angaben direkt nach dem mehrsprachigen Analyseblock bleiben er
   assert.ok(composition.includes("Zusammensetzung: 65 % Fleisch, 4 % Reis"), composition.join(" | "));
   assert.doesNotMatch(composition[0], /Fleisch|Reis/);
 });
+
+test("germanView: Analyseblock mit abweichender Bezugsbasis bleibt unverändert", () => {
+  // Der Hinweis auf die Bezugsbasis darf nicht verloren gehen: Spätere Umrechnungen hängen daran.
+  for (const text of [
+    "Analytische Bestandteile/Constituants analytiques (bezogen auf Trockenmasse): Phosphor/Phosphore 0,4 % Rohprotein/Protéine/Eiwit 24 % Feuchtigkeit/Humidité/Vocht 8 %",
+    "Analytische Bestandteile/Constituants analytiques/Analytische bestanddelen:\nPhosphor/Phosphore/Fosfor 0,4 % TS Rohprotein/Protéine/Eiwit 24 % TS",
+    "Analytische Bestandteile/Constituants analytiques/Analytische bestanddelen in der Trockensubstanz:\nPhosphor/Phosphore/Fosfor 0,4 % Rohprotein/Protéine/Eiwit 24 %",
+  ]) {
+    assert.equal(Ocr.germanView(text), text);
+  }
+});

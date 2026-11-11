@@ -413,7 +413,7 @@ const Labeling = (() => {
         add(total, totalUnit, `${total} ${totalUnit}`);
       }
     }
-    for (const [evidence, amount, unit] of text.matchAll(new RegExp(NET_AMOUNT.source, "gi"))) {
+    for (const [evidence, amount, unit] of text.matchAll(new RegExp(NET_AMOUNT.source, "giu"))) {
       add(amount, unit, evidence.trim());
     }
     for (const [, customary, customaryUnit, amount, unit] of text.matchAll(METRIC_EQUIVALENT)) {

@@ -1152,6 +1152,9 @@ const Ocr = (() => {
     for (const line of body) {
       joined = /\p{L}-$/u.test(joined) && /^\p{Ll}/u.test(line) ? joined.slice(0, -1) + line : (joined ? `${joined} ${line}` : line);
     }
+    // Nennt der Block eine abweichende Bezugsbasis (Trockenmasse, „% TS“), bleibt er unverändert: Der Hinweis darf
+    // beim Umschreiben nicht verloren gehen, spätere Umrechnungen hängen daran.
+    if (ANALYSIS_BASIS_LINE.test(joined)) return null;
     const colon = joined.indexOf(":");
     if (colon < 0) return null;
     const content = joined.slice(colon + 1);
