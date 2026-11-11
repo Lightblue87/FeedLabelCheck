@@ -915,6 +915,9 @@
 
     /** Ersetzt den Text eines Eintrags durch ein neues OCR-Ergebnis (Neu einlesen aus dem Verlauf). */
     async function replaceOcrText(targetId, ocrText, startVersion) {
+      // Ansicht inzwischen gewechselt: Text und Ergebnis des Eintrags unverändert lassen, statt einen
+      // Eintrag ohne Prüfergebnis zurückzulassen. Das Neu-Einlesen lässt sich erneut starten.
+      if (current?.id !== targetId) return false;
       // Seit dem Start des Neu-Einlesens getippt? Dann nicht stillschweigend überschreiben.
       if (current?.id === targetId && textVersion !== startVersion
           && !confirm("Der Text wurde seit dem Start des Neu-Einlesens geändert. Mit dem neu eingelesenen Text überschreiben?")) {
@@ -1287,7 +1290,7 @@
             + (replaceFrom !== undefined && !allText.trim() ? " Es wurde kein Text erkannt; bitte Text manuell ergänzen oder nachfotografieren." : "")
             + (warnings.length ? ` Hinweis: ${warnings.join("; ")}. Der übrige Text wurde übernommen.` : "")
           : replaceFrom !== undefined
-            ? "Neu einlesen abgeschlossen, der bisherige Text blieb unverändert."
+            ? "Neu einlesen abgeschlossen, der bisherige Text blieb unverändert (Eintrag gewechselt oder Überschreiben abgelehnt)."
             : "OCR abgeschlossen, aber der Text wurde verworfen: Die Fotos konnten nicht gespeichert werden und es wurde inzwischen ein anderer Eintrag geöffnet.";
         return applied;
       } catch (e) {
