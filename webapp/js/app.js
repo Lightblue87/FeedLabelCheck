@@ -1023,6 +1023,106 @@
       return Labeling.declaredNetAmount(exact) ? exact : "";
     }
 
+    // Rahmen der Mengenüberschrift („Nettomasse:“) im Foto oder null.
+    function netHeadingBox(data) {
+      const region = Ocr.findTextRegion(data, Labeling.matchNetHeading);
+      if (!region) return null;
+      const { first, last } = region;
+      return { x0: Math.min(first.x0, last.x0), y0: Math.min(first.y0, last.y0),
+               x1: Math.max(first.x1, last.x1), y1: Math.max(first.y1, last.y1) };
+    }
+
+    /**
+     * Liest den Bereich um die Mengenüberschrift verkleinert als verstreuten Text: Eine groß gedruckte Menge neben oder
+     * unter der Überschrift („Inhalt: 3 kg“ in fetter Schrift) übergeht die Lesung in voller Auflösung. Gelesen wird
+     * nur dieser Ausschnitt, in zwei Größen, je unverändert und mit Beleuchtungsausgleich. Eine Menge zählt nur an
+     * der Überschrift und wenn zwei Durchgänge sie gleich lesen oder einer sie sicher liest
+     * (Labeling.largeAmountCandidate). Liefert die Hinweiszeile für den Prüftext oder "".
+     */
+    async function readAmountAroundHeading(worker, input, data, output, primary) {
+      const heading = netHeadingBox(data);
+      const bodyHeight = Ocr.bodyHeight(Ocr.flattenLines(data.blocks));
+      if (!heading || !bodyHeight) return "";
+      const image = await createImageBitmap(input);
+      try {
+        const h = Math.max(1, heading.y1 - heading.y0);
+        const x = Math.max(0, Math.floor(heading.x0 - h * 2));
+        const y = Math.max(0, Math.floor(heading.y0 - h * 3));
+        const width = Math.min(image.width, Math.ceil(heading.x1 + h * 14)) - x;
+        const height = Math.min(image.height, Math.ceil(heading.y1 + h * 6)) - y;
+        if (width < 8 || height < 8) return "";
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        // Zeichnet einen Fotoausschnitt skaliert auf die Arbeitsfläche, auf Wunsch mit Beleuchtungsausgleich.
+        const draw = (sx, sy, sw, sh, scale, flat) => {
+          canvas.width = Math.max(3, Math.round(sw * scale));
+          canvas.height = Math.max(3, Math.round(sh * scale));
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+          if (!flat) return;
+          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const gray = new Uint8ClampedArray(canvas.width * canvas.height);
+          for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+            gray[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
+          }
+          const flattened = Ocr.flattenIllumination(gray, canvas.width, canvas.height).flat;
+          for (let i = 0, p = 0; i < flattened.length; i++, p += 4) {
+            pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flattened[i];
+            pixels.data[p + 3] = 255;
+          }
+          ctx.putImageData(pixels, 0, 0);
+        };
+        const passes = [];
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+        // Verkleinerung wie bei einem Foto mit 800 bzw. 1.100 Bildpunkten Kantenlänge: In dieser Größe werden groß
+        // gedruckte Mengen lesbar, die in voller Auflösung übergangen werden.
+        const longest = Math.max(image.width, image.height);
+        for (const target of [800, 1100]) {
+          const scale = Math.min(1, target / longest);
+          for (const flat of [false, true]) {
+            draw(x, y, width, height, scale, flat);
+            const result = await worker.recognize(canvas, {}, output);
+            passes.push(Ocr.lineSummaries(Ocr.flattenLines(result.data.blocks), scale).map(line => ({
+              ...line, bbox: { x0: line.bbox.x0 + x, y0: line.bbox.y0 + y, x1: line.bbox.x1 + x, y1: line.bbox.y1 + y },
+            })));
+          }
+        }
+        let candidate = Labeling.largeAmountCandidate(primary, passes, bodyHeight, heading);
+        if (!candidate?.confirmed) {
+          // Die verstreute Lesung trifft die Stelle oft, liest aber nur ein Bruchstück („kg“ ohne Ziffer). Die größten
+          // Bruchstücke an der Überschrift mit Ziffer oder Einheit werden als einzelne Zeile nachgelesen, auf eine gut
+          // lesbare Schrifthöhe gebracht.
+          const anchors = passes.flat()
+            .filter(line => line.height >= bodyHeight * 1.2 && Labeling.nearNetHeading(heading, line.bbox)
+              && /\d|(?:^|[^\p{L}])(?:kg|g|ml|l)(?![\p{L}])/iu.test(line.text))
+            .sort((a, b) => b.height - a.height)
+            .filter((line, index, all) => all.findIndex(other => Math.abs(other.bbox.y0 - line.bbox.y0) < line.height * 0.5) === index)
+            .slice(0, 2);
+          await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE });
+          for (const flat of [false, true]) {
+            const lines = [];
+            for (const anchor of anchors) {
+              const pad = anchor.height * 0.3;
+              const ax = Math.max(0, Math.floor(anchor.bbox.x0 - anchor.height * 2));
+              const ay = Math.max(0, Math.floor(anchor.bbox.y0 - pad));
+              const right = Math.min(image.width, Math.ceil(anchor.bbox.x1 + anchor.height * 2));
+              const bottom = Math.min(image.height, Math.ceil(anchor.bbox.y1 + pad));
+              draw(ax, ay, right - ax, bottom - ay, 48 / anchor.height, flat);
+              const result = await worker.recognize(canvas, {}, { text: true });
+              // Ein Rahmenstrich am Rand des Ausschnitts wird als „|“ gelesen; es zählt der Teil dahinter.
+              lines.push({ text: (result.data.text || "").split("|").pop().trim(), height: anchor.height, confidence: result.data.confidence,
+                           bbox: anchor.bbox });
+            }
+            passes.push(lines);
+          }
+          candidate = Labeling.largeAmountCandidate(primary, passes, bodyHeight, heading);
+        }
+        return candidate?.confirmed ? Labeling.largeAmountHint(candidate.amount) : "";
+      } finally {
+        image.close();
+      }
+    }
+
     async function readDietAbovePurpose(worker, input, data, output, primary) {
       const region = Ocr.findTextRegion(data, Labeling.matchDietPurposeAnchor);
       if (!region) return "";
@@ -1105,6 +1205,66 @@
     }
 
     /**
+     * Liest ein Foto in überlappenden Kacheln: jede Kachel mit Beleuchtungsausgleich und eigener Geraderichtung
+     * (Ocr.flattenIllumination, Ocr.estimateSkew). Liefert die Kacheln mit ihren Zeilen (für Ocr.mergeTiles) oder null,
+     * wenn das Foto für Kacheln zu klein ist.
+     */
+    async function readLabelTiles(worker, input, output, step) {
+      const image = await createImageBitmap(input);
+      try {
+        const grid = Ocr.tileGrid(image.width, image.height);
+        if (!grid.length) return null;
+        const tiles = [];
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+        for (const [index, tile] of grid.entries()) {
+          step(`Ausschnitt ${index + 1} von ${grid.length} wird gelesen`);
+          const width = Math.round((tile.right - tile.x) * tile.scale);
+          const height = Math.round((tile.bottom - tile.y) * tile.scale);
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(image, tile.x, tile.y, tile.right - tile.x, tile.bottom - tile.y, 0, 0, width, height);
+          const pixels = ctx.getImageData(0, 0, width, height);
+          const gray = new Uint8ClampedArray(width * height);
+          for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+            gray[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
+          }
+          const { flat } = Ocr.flattenIllumination(gray, width, height);
+          const angle = Ocr.estimateSkew(flat, width, height);
+          for (let i = 0, p = 0; i < flat.length; i++, p += 4) {
+            pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flat[i];
+            pixels.data[p + 3] = 255;
+          }
+          ctx.putImageData(pixels, 0, 0);
+          let source = canvas;
+          if (angle) {
+            // Zeilen fallen um `angle` Grad nach rechts ab: gegen den Uhrzeigersinn zurückdrehen.
+            source = document.createElement("canvas");
+            source.width = width;
+            source.height = height;
+            const turned = source.getContext("2d");
+            turned.fillStyle = "rgb(128,128,128)";
+            turned.fillRect(0, 0, width, height);
+            turned.translate(width / 2, height / 2);
+            turned.rotate(-angle * Math.PI / 180);
+            turned.drawImage(canvas, -width / 2, -height / 2);
+          }
+          const result = await worker.recognize(source, {}, output);
+          const lines = Ocr.flattenLines(result.data.blocks)
+            .map(words => words.map(word => ({ ...word, bbox: Ocr.unrotateBox(word.bbox, angle, width, height) })));
+          tiles.push({ ...tile, source: "tiles", angle, lines });
+          canvas.width = canvas.height = 0;
+          if (source !== canvas) source.width = source.height = 0;
+        }
+        return tiles;
+      } finally {
+        image.close();
+      }
+    }
+
+    /**
      * Liest ein Foto; bei Hinweisen auf Packungsmenge oder Aufdruck folgen Zusatzläufe.
      * step(text) meldet den Fortschritt an die Statuszeile (die Zusatzläufe dauern am Handy spürbar),
      * warnings enthält fehlgeschlagene Zusatzläufe – der bereits gelesene Text bleibt erhalten.
@@ -1112,6 +1272,9 @@
      */
     async function readLabelPhoto(worker, file, step) {
       const output = { text: true, blocks: true };
+      // Grundlesung als ein Block. An ihr hängt die Ausrichtungsprüfung: Die Seitenaufteilung liest auch hochkant
+      // stehende Schrift, ihre Wortrahmen taugen dann aber nicht für Zeilen.
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
       let { data } = await worker.recognize(file, {}, output);
       let input = file;
       let rotated = null;
@@ -1125,9 +1288,51 @@
           warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${e?.message || e})`);
         }
       }
+      // Zweite Lesung mit automatischer Seitenaufteilung (Tesseract trennt Spalten und Textblöcke selbst) und
+      // Vereinigung beider: Die Blocklesung behält Zeilen über die ganze Breite, die die Seitenaufteilung zerschneidet
+      // (z. B. eine Anschrift unter zwei Spalten). Bei schwacher Lesung folgen aufbereitete Kacheln (ungleichmäßige
+      // Beleuchtung, schräg laufende Schrift).
+      let tilesTried = false;
+      try {
+        const bitmap = await createImageBitmap(input);
+        const size = { width: bitmap.width, height: bitmap.height };
+        bitmap.close();
+        const whole = (source, lines) => ({ x: 0, y: 0, right: size.width, bottom: size.height, scale: 1,
+                                                       col: 0, row: 0, cols: 1, rows: 1, source, lines });
+        step("Zweite Lesung");
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+        const page = await worker.recognize(input, {}, output);
+        // Hochkant gelesene Zeilen der Seitenaufteilung (Schrift quer zum übrigen Etikett) bleiben außen vor.
+        const auto = whole("auto", Ocr.uprightLines(Ocr.flattenLines(page.data.blocks)));
+        // Beide Lesungen liegen im Koordinatensystem von `input`: Nach einer Drehung ist `input` die gedrehte Fläche in
+        // der Größe, in der `data` gelesen wurde (rotated.dataScale beschreibt nur das Verhältnis zur Originaldatei).
+        const single = whole("block", Ocr.flattenLines(data.blocks));
+        // Die Lesung mit mehr sicher gelesenem Text gibt Zeilen und Reihenfolge vor, die andere ergänzt. Die
+        // Seitenaufteilung führt nur bei klarem Vorsprung: Sie zerschneidet gelegentlich Fließtext in Teilzeilen.
+        const autoLeads = Ocr.linesQuality(auto.lines) > Ocr.linesQuality(single.lines) * 1.05;
+        let lines = Ocr.mergeTiles(autoLeads ? [auto, single] : [single, auto]);
+        if (page.data.confidence < 70 || Ocr.shouldRecoverText(Ocr.textFromLines(lines))) {
+          const tiles = await readLabelTiles(worker, input, output, step);
+          tilesTried = !!tiles;
+          if (tiles) {
+            // Die Kacheln ersetzen die Vollbild-Lesung nur bei deutlich mehr sicher gelesenem Text. Sonst ergänzen sie
+            // sie: sicher gelesene Wörter und Zeilen, die im Vollbild fehlen (z. B. ein schräg stehender Aufdruck).
+            const tiled = Ocr.mergeTiles(tiles);
+            lines = Ocr.linesQuality(tiled) >= Ocr.linesQuality(lines) * 1.2 + 30
+              ? tiled
+              : Ocr.mergeTiles([...(autoLeads ? [auto, single] : [single, auto]), ...tiles]);
+          }
+        }
+        if (lines.length) {
+          data = { ...data, blocks: [{ paragraphs: [{ lines: lines.map(words => ({ words })) }] }] };
+        }
+      } catch (e) {
+        warnings.push(`Zweite Lesung fehlgeschlagen (${e?.message || e})`);
+      }
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
       const primary = Ocr.textFromResult(data);
       let text = primary;
-      if (Ocr.shouldRecoverText(primary)) {
+      if (!tilesTried && Ocr.shouldRecoverText(primary)) {
         // Bei engen, mehrsprachigen Tabellen werden kleine Zeilen im Vollbild
         // häufig komplett übergangen. Max. drei skalierte Textausschnitte,
         // nach dem ersten zusätzlichen verifizierbaren OCR-Beleg stoppen.
@@ -1156,6 +1361,13 @@
           warnings.push("Nachlesen kleiner Schrift fehlgeschlagen (" + (e?.message || e) + ")");
         }
       }
+      // Vorhandene Lesungen nutzen, ohne weiteren Durchgang: eine sicher gelesene Mengenzeile an der Mengenüberschrift
+      // oder in deutlich größerer Schrift als der Fließtext wird als zu bestätigender Kandidat vermerkt.
+      if (Labeling.lacksNetAmount(text)) {
+        const known = Ocr.flattenLines(data.blocks);
+        const hint = Labeling.readingAmountHint(text, Ocr.lineSummaries(known), Ocr.bodyHeight(known), netHeadingBox(data));
+        if (hint) text += `\n${hint}`;
+      }
       const checkWeight = Labeling.needsPackageAmount(text);
       const checkImprint = Labeling.needsImprintLot(text);
       const checkDiet = Labeling.needsDietDeclaration(text);
@@ -1167,15 +1379,24 @@
       }
 
       try {
-        if (checkWeight) {
+        if (checkWeight && Labeling.lacksNetAmount(text)) {
           step("Zusatzprüfung Packungsmenge");
+          // Gezielt an der Mengenüberschrift lesen: erst in voller Auflösung (Menge in Schriftgröße der Überschrift),
+          // dann verkleinert (groß gedruckte Menge). Ohne Überschrift bleibt nur die Mehrfachpackung „(10 x 1,5 kg)“,
+          // deren Gesamtmenge sich rechnerisch prüfen lässt.
           const nearby = await readAmountNearHeading(worker, input, data, output, primary);
           if (nearby) {
             text += `\n\n${nearby}`;
+          } else if (netHeadingBox(data)) {
+            const hint = await readAmountAroundHeading(worker, input, data, output, text);
+            if (hint) {
+              text += `\n${hint}`;
+              warnings.push("Menge an der Überschrift nachgelesen: Angabe am Originalfoto bestätigen");
+            }
           } else {
             await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
             const retry = await worker.recognize(input, {}, output);
-            const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
+            const hint = Labeling.packageAmountHint(primary, Ocr.lineSummaries(Ocr.flattenLines(retry.data.blocks)));
             if (hint) text += `\n${hint}`;
           }
         }

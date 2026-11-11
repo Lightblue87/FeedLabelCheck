@@ -252,7 +252,10 @@ const legacyWeightPattern = String.raw`\b\d+[,.]?\d*\s*(kg|g|t|ml|l)\b`;
 test("Nettomenge nutzt die deklarierte Menge statt Bezugs- und Fütterungswerten", () => {
   const ration = "Alleinfuttermittel für Hunde. Energie pro 100 g.\nKörpergewicht 8 kg 20 kg 52 kg";
   assert.equal(checkNumericLabelRule("art15_003", ration, legacyWeightPattern).status, "missing");
-  assert.equal(checkNumericLabelRule("art15_003", `${ration}\n800 g`, legacyWeightPattern).status, "probablyFound");
+  // Direkt unter der Zeile mit den Körpergewichten ist eine allein stehende Menge eine Tabellenzeile, kein Hinweis.
+  assert.equal(checkNumericLabelRule("art15_003", `${ration}\n800 g`, legacyWeightPattern).status, "missing");
+  // Abseits davon bleibt sie ein zu prüfender Kandidat.
+  assert.equal(checkNumericLabelRule("art15_003", `${ration}\nKühl und trocken lagern.\nMindestens haltbar bis: siehe Boden\n800 g`, legacyWeightPattern).status, "probablyFound");
   for (const net of ["Nettomasse: 800 g", "℮800g", "Net weight: 800 g"]) {
     const result = checkNumericLabelRule("art15_003", `${ration}\n${net}`, legacyWeightPattern);
     assert.equal(result.status, "found");
@@ -1249,6 +1252,36 @@ test("Zusatzstoffe: Tabellenzeilen mit Nachbarspalten-Text, fehlende Einheit und
   }
 });
 
+test("Zusatzstoffe: Liste nur aus Menge und Kennnummer ohne Stoffnamen", () => {
+  const rule = { id: "art15_006", severity: "warning", patterns: [{ patternValue: "Zusatzstoffe", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Alleinfuttermittel für ausgewachsene Katzen\nAnalytische Bestandteile: Protein 11 %, Taurin 600 mg/kg.\nErnährungsphysiologische Zusatzstoffe (/kg): 200 IE 3a671, 1 mg 3b406, 11,4 mg\n3b605, 1,4 mg 3b503, 0,1 mg 3b202.\nArt.-No. 83205";
+  const result = Labeling.check(label, FEED_TYPES[0], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.match(result.matchedText, /^Ernährungsphysiologische Zusatzstoffe \(\/kg\): 200 IE 3a671/);
+  assert.match(result.matchedText, /3b605, 1,4 mg 3b503, 0,1 mg 3b202/);
+});
+
+test("Mindesthaltbarkeit: Rest der Feldüberschrift „haltbar“ mit Datum in der nächsten Zeile", () => {
+  const rule = { id: "art16_002", severity: "critical", patterns: [{ patternValue: "Mindestens haltbar bis", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.9 }] };
+  const boxed = Labeling.check("Ergänzungsfuttermittel für Pferde\nChargennummer\n01102000040327\nhaltbar\n04.09.2026\nKühl lagern.", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(boxed.status, "found");
+  assert.match(boxed.matchedText, /04\.09\.2026/);
+  // Im Fließtext ist „haltbar“ vor einem Datum keine Feldüberschrift.
+  const prose = Labeling.check("Ergänzungsfuttermittel für Pferde\nNach dem Öffnen kühl gelagert lange haltbar\n04.09.2026 abgefüllt", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.notEqual(prose.status, "found");
+});
+
+test("Zusammensetzung: fremdsprachige Überschrift der Nachbarspalte am Zeilenende", () => {
+  const rule = { id: "art17_003_complementary", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Ergänzungsfuttermittel für ausgewachsene Hunde\nZusammensetzung: Fleisch und tierische Nebenerzeugnisse (90 %, 45 % vom Composition:\nHuhn und 4 % vom Wild), Apfel (4 %), Mineralstoffe. Analytische Bestandteile:\nProtein 37 %, Fettgehalt 23 %";
+  const result = Labeling.check(label, FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.match(result.matchedText, /^Zusammensetzung: Fleisch und tierische Nebenerzeugnisse \(90 %, 45 % vom Huhn und 4 % vom Wild\), Apfel \(4 %\), Mineralstoffe\./);
+  // Eine eigene englische Zutatenliste bleibt ein eigener Abschnitt.
+  const english = Labeling.check("Complementary feed for dogs\nComposition:\nmeat and animal derivatives (90 %), apple (4 %), minerals", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.match(english.matchedText || "", /meat and animal derivatives/);
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];
@@ -1699,4 +1732,75 @@ test("Feuchte über 100 Prozent bleibt sichtbar und erhält einen konkreten Korr
   assert.equal(result.status, "unclear");
   assert.match(result.matchedText, /80%.*809%/);
   assert.match(result.note, /über 100 %/);
+});
+
+// ── Spalten ohne „Überschrift: Überschrift“-Zeile (mehrsprachiges Etikett, animonda Vom Feinsten) ──
+
+test("zweispaltiges Etikett ohne Überschriftenpaar: die Spaltenlücke wird über die Wortabdeckung gefunden", () => {
+  // Links Deutsch (x 40–600), rechts Niederländisch (x 640–1200). Der linke Satz endet mitten im Wort, kein „:“ vor der Lücke.
+  const left = ["Zusammensetzung: 65 % Fleisch und", "tierische Neben- erzeugnisse (Schwein,", "25 % Pute, 8 % Kaninchen), Mineralstoffe.", "H = NL-08882; B = DE HB 100004.",
+                "Kennnummer der Partie / mindestens haltbar", "bis: siehe Aufdruck. Inverkehrbringer", "animonda petcare gmbh Frankfurter Str.", "31 49214 Bad Rothenfelde Art.-No.",
+                "83205 Futter für ausgewachsene Katzen", "Bitte stets frisches Wasser bereitstellen.", "Abhängig von Alter, Temperament und", "Haltung. Nettomasse siehe Deckel",
+                "Str. 31 Bad Rothenfelde Telefon Fax"];
+  const right = ["Samenstelling: 65 % vlees en dierlijke", "bijproducten (varken, 25 % kalkoen, 8 %", "konijn), mineralen. Refe- rentienummer van", "de partij / ten minste houdbaar tot:",
+                 "zie opdruk. Tijssen Goed voor Dieren", "Rijndijk 83 2394 AD Hazerswoude Volledig", "diervoeder voor volwassen katten met", "kalkoen en konijn voor volwassen katten",
+                 "Tijssen Goed voor Dieren Rijndijk 83", "Bitte stets vers water aanbieden voor", "afhankelijk van leeftijd temperament en", "houding. Netto hoeveelheid zie deksel",
+                 "Rijndijk 83 Hazerswoude Telefoon Fax"];
+  const lines = [boxed(0, ["Vom", 300, 360], ["Feinsten", 370, 520], ["Adult", 530, 640])];
+  left.forEach((text, i) => {
+    const y = 40 + i * 30;
+    const leftWords = text.split(" ").map((w, k, all) => [w, 40 + (k * 540) / all.length, 40 + (k * 540) / all.length + 480 / all.length]);
+    const rightWords = right[i].split(" ").map((w, k, all) => [w, 640 + (k * 540) / all.length, 640 + (k * 540) / all.length + 480 / all.length]);
+    lines.push(boxed(y, ...leftWords, ...rightWords));
+  });
+  const result = lineText(Ocr.reorderColumns(lines));
+  const firstRight = result.findIndex(l => l.startsWith("Samenstelling"));
+  const lastLeft = result.findIndex(l => l.startsWith("Str. 31 Bad Rothenfelde Telefon"));
+  assert.ok(firstRight > lastLeft, "alle linken Zeilen stehen vor den rechten");
+  assert.ok(result.every(l => !(/Zusammensetzung/.test(l) && /Samenstelling/.test(l))), "keine vermischte Zeile");
+  assert.ok(result.includes("Zusammensetzung: 65 % Fleisch und"));
+  assert.ok(result.includes("Samenstelling: 65 % vlees en dierlijke"));
+});
+
+test("einspaltiger Fließtext und Text ohne freie Mittellücke wird nicht getrennt", () => {
+  const rows = [];
+  for (let i = 0; i < 16; i++) {
+    // Wörter laufen durch die Mitte: kein freies Band
+    rows.push(boxed(10 + i * 30, ["Alleinfuttermittel", 40, 330], ["für", 340, 400], ["ausgewachsene", 410, 700], ["Katzen", 710, 900]));
+  }
+  assert.deepEqual(Ocr.reorderColumns(rows), rows);
+  // Wenige Zeilen: keine Trennung über die Abdeckung
+  const few = [boxed(10, ["Links", 40, 300], ["Rechts", 640, 900]), boxed(40, ["Links", 40, 300], ["Rechts", 640, 900])];
+  assert.deepEqual(Ocr.reorderColumns(few), few);
+  // Text nur auf einer Seite des Bandes
+  const oneSide = Array.from({ length: 14 }, (_, i) => boxed(10 + i * 30, ["Zusammensetzung", 40, 300], ["Weizen", 310, 380], ["Mais", 700, 760]));
+  assert.deepEqual(Ocr.reorderColumns(oneSide.map((words, i) => i < 3 ? words : words.slice(0, 2))), oneSide.map((words, i) => i < 3 ? words : words.slice(0, 2)));
+});
+
+test("Tabelle aus Namens- und Wertespalte wird über die Wortabdeckung nicht zerlegt", () => {
+  const names = ["Rohprotein", "Rohfett", "Rohfaser", "Rohasche", "Feuchtigkeit", "Calcium", "Phosphor", "Natrium", "Kalium", "Magnesium", "Taurin", "Zucker", "Stärke"];
+  const table = names.map((name, i) => boxed(10 + i * 30, [name, 40, 200], ["Gehalt", 210, 300], ["bezogen", 310, 400], [`${i},5 %`, 640, 700]));
+  assert.deepEqual(Ocr.reorderColumns(table), table);
+});
+
+// ── Zusatzstoffcodes ohne Klammer nach der Menge („200 IE 33671“, animonda Vom Feinsten) ──
+
+test("Kennnummer ohne Klammer nach einer Menge: verlesener Buchstabe wird nur bei genau einem Kandidaten korrigiert", () => {
+  Ocr.setAdditiveCodes(["3a671", "3b406", "3b605", "3b503", "3b202", "3a672a", "3b671"]);
+  try {
+    // 3a671 als 33671: Kandidaten 3a671 und 3b671 gibt es hier beide, also bleibt der Code unverändert.
+    assert.equal(Ocr.cleanText("200 IE 33671, 1 mg 3b406"), "200 IE 33671, 1 mg 3b406");
+    Ocr.setAdditiveCodes(["3a671", "3b406", "3b605", "3b503", "3b202", "3a672a"]);
+    assert.equal(Ocr.cleanText("(kg): 200 JE 33671, 1 Mg 3b406, 11,4 mg\n36605, 1,4 m0 36503, 0,1 mo 3b202."),
+      "(kg): 200 JE 3a671, 1 Mg 3b406, 11,4 mg\n3b605, 1,4 m0 3b503, 0,1 mo 3b202.");
+    // Bekannte Codes, Zahlen ohne Einheit davor und nicht eindeutige Kandidaten bleiben unberührt.
+    assert.equal(Ocr.cleanText("200 IE 3a671"), "200 IE 3a671");
+    assert.equal(Ocr.cleanText("Nettomenge 3 kg 33671 Stück"), "Nettomenge 3 kg 33671 Stück");
+    assert.equal(Ocr.cleanText("Artikel 33671 Charge 33605"), "Artikel 33671 Charge 33605");
+    assert.equal(Ocr.cleanText("2 mg 39999"), "2 mg 39999");
+    // Mit Klammer wie bisher
+    assert.equal(Ocr.cleanText("Vitamin A (33671)"), "Vitamin A (3a671)");
+  } finally {
+    Ocr.setAdditiveCodes([]);
+  }
 });
