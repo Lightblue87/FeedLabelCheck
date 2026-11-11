@@ -240,3 +240,12 @@ test("germanView: Analyseblock mit abweichender Bezugsbasis bleibt unverändert"
     assert.equal(Ocr.germanView(text), text);
   }
 });
+
+test("germanView: Analyseangaben außerhalb der Namensliste bleiben im umgeschriebenen Block", () => {
+  const text = "Analytische Bestandteile/Constituants analytiques: Protein/Protéine 24 % Fettgehalt/Teneur en matières grasses 5 % Chlorid/Chloride 0,15 % Schwefel/Sulphur 0,2 % Feuchtegehalt/Humidité 8 %";
+  assert.equal(Ocr.germanView(text),
+    "Analytische Bestandteile: Protein 24 %, Fettgehalt 5 %, Chlorid 0,15 %, Schwefel 0,2 %, Feuchtegehalt 8 %.");
+  // Lässt sich ein Eintrag nicht benennen (kein Wort vor dem Wert), bleibt der ganze Block unverändert.
+  const broken = "Analytische Bestandteile/Constituants analytiques: Protein/Protéine 24 % Fettgehalt/Teneur en matières grasses 5 % •/ 0,15 %";
+  assert.equal(Ocr.germanView(broken), broken);
+});

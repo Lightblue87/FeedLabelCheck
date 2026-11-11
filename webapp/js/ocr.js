@@ -1129,7 +1129,7 @@ const Ocr = (() => {
   const ANALYSIS_BLOCK_HEAD = /^[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?Analytische\s+Bestandteile\s*\//u;
   const OCR_LINE_NOISE = /^(?:[=~\-–—_*|<>]+|[A-Z]{1,2})\s+/;
   const ANALYSIS_BLOCK_END = /^(?:[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?)?(?:Ern[äa]hrungsphysiologische|Emn[äa]hrungsphysiologische|Technologische|Zootechnische|Sensorische|Zusatzstoffe|Additifs|Fütterung\w*|Inverkehrbringer|Hersteller|Vertrieb|Importeur|Zusammensetzung|Netto\w*|Inhalt(?![\p{L}])|Füllmenge|Mindestens|MHD|Charge\w*|Los(?:nummer|-Nr)|Kennnummer|Bezugsnummer|Lagerung\w*|Art\.)/iu;
-  const GERMAN_ANALYTIC_NAME = /^(?:Roh(?:protein|fett|faser|asche)|Protein|Eiwei[ßs]|Fett(?:gehalt)?|Feuchtigkeit|Feuchte|Asche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Taurin|Stärke|Zucker|Kohlenhydrate)$/iu;
+  const GERMAN_ANALYTIC_NAME = /^(?:Roh(?:protein|fett|faser|asche)|Protein|Eiwei[ßs]|Fett(?:gehalt)?|Feuchtigkeit|Feuchtegehalt|Feuchte|Asche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Taurin|Stärke|Zucker|Kohlenhydrate)$/iu;
   const OTHER_ANALYSIS_WORDS = /\b(?:constituants|componenti|bestanddelen|teneur|mati[eè]res|vetgehalte|tenore|materia|cellulose|cellulosa|celstof|ruwe|cendres|ceneri|humidit[eé&]|vocht|umidit[aà]|taurine|taurina|prot[eé&]ine|eiwit|proteine)\b/giu;
   const ANALYSIS_ENTRY = /(.+?)\s+(\d[\d.,]*)\s*(%|mg\/kg|g\/kg)(?![\p{L}\p{N}])/gu;
 
@@ -1160,15 +1160,23 @@ const Ocr = (() => {
     const content = joined.slice(colon + 1);
     if ((content.match(OTHER_ANALYSIS_WORDS) || []).length < 2) return null;
     const entries = [];
+    let known = 0;
     for (const match of content.matchAll(ANALYSIS_ENTRY)) {
       // Eine Zahl ohne Einheit mitten in den Namen („Protein/… 11 Fettgehalt/… 5 %“) ist ein Wert, dessen Einheit
       // nicht gelesen wurde. Der Eintrag davor entfällt; der Wert gehört nur zu den Namen dahinter.
       const own = match[1].split(/(?:^|\s)\d[\d.,]*\s+(?=\p{L})/u).pop();
       const names = own.replace(/^[\s•·+«»*,;.]+|[\s•·+«»*,;]+$/g, "").split("/").map(n => n.trim());
-      const name = names.find(n => GERMAN_ANALYTIC_NAME.test(n));
-      if (name) entries.push(`${name} ${match[2]} ${match[3]}`);
+      // Der deutsche Name aus der Liste; sonst der erste Name des Eintrags (die Überschrift nennt Deutsch zuerst, die
+      // Einträge folgen derselben Reihenfolge: „Chlorid/Chloride“, „Schwefel/Sulphur“). Kein Eintrag wird verworfen:
+      // Lässt sich einer nicht benennen, bleibt der ganze Block unverändert.
+      const listed = names.find(n => GERMAN_ANALYTIC_NAME.test(n));
+      const name = listed ?? names[0];
+      if (!name || !/^\p{L}[\p{L}\p{N} .()-]{2,40}$/u.test(name)) return null;
+      if (listed) known++;
+      entries.push(`${name} ${match[2]} ${match[3]}`);
     }
-    if (entries.length < 2) return null;
+    // Mindestens zwei Einträge mit bekanntem deutschen Namen belegen, dass es diese Schreibweise ist.
+    if (known < 2) return null;
     return { text: `Analytische Bestandteile: ${entries.join(", ")}.`, end };
   }
 
