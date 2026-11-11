@@ -717,12 +717,43 @@ const Labeling = (() => {
   // nicht vorzeitig, und die fremde Überschrift bekommt nicht den deutschen Folgetext als Liste.
   const NEIGHBOUR_COMPOSITION_HEADING = /(?<=\S[ \t]+)(?:composition|ingredients|composizione|samenstelling|composici[oó]n)[ \t]*:[ \t]*(?=\n)/gi;
 
+  // Gestörte Mehrsprachen-Überschrift: Die Texterkennung hat die Überschrift verstümmelt oder Nährstoff-Fragmente
+  // davor gelesen, die deutsche Zeile „DE Luzerne, Reiskleie, …“ ist aber lesbar. Sie gilt als Beleg, wenn davor
+  // (höchstens 800 Zeichen) eine Überschrift „Zusammensetzung/Komposition/Composition/Samenstelling“ steht und dazwischen
+  // keine andere Abschnittsgrenze liegt. Adresszeilen („DE Musterstraße 1, 12345 …“) zählen nie. Fortsetzungszeilen
+  // einer umbrochenen Liste (Vorzeile endet mit Komma) gehören zur Liste.
+  const COMPOSITION_WORD = /\b(?:Samenstelling|Komposition|Composition|Zusammensetzung)\b/gi;
+  const OTHER_SECTION = /\b(?:Hersteller|Vertrieb|Inverkehrbringer|Importeur|Analytische|Zusatzstoffe|Fütterung\w*|Feeding|Lagerung\w*|Netto\w*|Chargen?|Losnummer|MHD|Anschrift)\b|:[ \t]*(?:\n|$)/i;
+  const POSTAL_CODE = /\b\d{5}\b/;
+  const LANGUAGE_TAGGED_LINE = /^(?:NL|EN|FR|IT|ES|DA|SE|PL|PT|CZ|DE)[ \t]/;
+
+  function germanListAfterHeading(text) {
+    for (const m of text.matchAll(/^DE[ \t]+([^\n]+)$/gim)) {
+      let list = m[1].trim();
+      if ((list.match(/,/g) || []).length < 2 || !/,\s*\p{L}/u.test(list) || POSTAL_CODE.test(list)) continue;
+      const before = text.slice(Math.max(0, m.index - 800), m.index);
+      let heading = null;
+      for (const h of before.matchAll(COMPOSITION_WORD)) heading = h;
+      if (!heading || OTHER_SECTION.test(before.slice(heading.index))) continue;
+      const rest = text.slice(m.index + m[0].length).split("\n").slice(1);
+      for (const raw of rest) {
+        const line = raw.trim();
+        if (!list.endsWith(",") || !line || LANGUAGE_TAGGED_LINE.test(line) || OTHER_SECTION.test(line)) break;
+        list += ` ${line}`;
+      }
+      return `Komposition: ${list}`;
+    }
+    return null;
+  }
+
   function compositionEvidence(rawText) {
     const text = /\b[zt]usammensetzung\b/i.test(rawText) ? rawText.replace(NEIGHBOUR_COMPOSITION_HEADING, "") : rawText;
     const listed = text.match(MULTILINGUAL_COMPOSITION);
     if (listed && /,\s*\p{L}/u.test(listed[2])) return `${listed[1]}: ${listed[2]}`;
     const mixed = mixedColumnComposition(text);
     if (mixed) return mixed;
+    const taggedGerman = germanListAfterHeading(text);
+    if (taggedGerman) return taggedGerman;
     const heading = /\b(?:[zt]usammensetzung|composition|komposition)\b[^:\n]{0,65}:[\s=]*|^(?:(?:[zt]usammensetzung|composition|komposition)[ \t]*|ingredients[ \t]*:?[ \t]*)\n/gimu;
     const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition|ingredients)\b[^:\n]{0,65}:|\n[ \t]*(?:[zt]usammensetzung|composition|ingredients)[ \t]*\n|\n[ \t]*crude protein[ \t:]*[<>]?[ \t]*\d|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
