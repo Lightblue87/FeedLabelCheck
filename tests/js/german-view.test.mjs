@@ -122,7 +122,10 @@ test("Analytische Bestandteile: aus dem mehrsprachigen Fließtext wird eine deut
 
 test("Analytische Bestandteile: ein Eintrag ohne gelesenen Wert entfällt, mit weniger als zwei Einträgen bleibt der Text", () => {
   const withoutTaurin = ANALYSIS_MULTI.replace("Taurina 600 mg/kg.\n", "");
-  assert.match(Ocr.germanView(withoutTaurin).split("\n")[0], /Feuchtigkeit 81 %\.$/);
+  const view = Ocr.germanView(withoutTaurin).split("\n");
+  assert.match(view[0], /Feuchtigkeit 81 %\.$/);
+  // Der Name ohne gelesenen Wert bleibt wörtlich als eigene Zeile stehen.
+  assert.match(view[1], /^Taurin\/Taurine/);
   const one = ["Analytische Bestandteile/Constituants analytiques: Protein/Protéine/Eiwit 11 %", "Mehr Text folgt."].join("\n");
   assert.equal(Ocr.germanView(one), one);
 });
@@ -204,10 +207,11 @@ test("germanView: Analysewert ohne gelesene Einheit wird nicht dem nächsten Nam
     "celstof/Cellulosa grezza 0,3 % Rohasche/Cendres",
     "brutes/Ruwe as/Ceneri grezze 1,6 %.",
   ].join("\n");
+  // Der Block ist nicht eindeutig gelesen und bleibt unverändert: Der Wert des Fettgehalts wird so nicht dem Protein
+  // zugeordnet, und kein Eintrag geht verloren.
   const view = Ocr.germanView(text);
-  assert.match(view, /Fettgehalt 5 %, Rohfaser 0,3 %, Rohasche 1,6 %/);
-  assert.doesNotMatch(view, /Protein 5 %/, "der Wert des Fettgehalts gehört nicht zum Protein");
-  assert.doesNotMatch(view, /Protein 11/, "ohne Einheit kein Eintrag");
+  assert.equal(view, text);
+  assert.doesNotMatch(view, /Protein 5 %/);
 });
 
 test("germanView: Angaben direkt nach dem mehrsprachigen Analyseblock bleiben erhalten", () => {
@@ -248,4 +252,23 @@ test("germanView: Analyseangaben außerhalb der Namensliste bleiben im umgeschri
   // Lässt sich ein Eintrag nicht benennen (kein Wort vor dem Wert), bleibt der ganze Block unverändert.
   const broken = "Analytische Bestandteile/Constituants analytiques: Protein/Protéine 24 % Fettgehalt/Teneur en matières grasses 5 % •/ 0,15 %";
   assert.equal(Ocr.germanView(broken), broken);
+});
+
+test("germanView: Analyseblock wird nur umgeschrieben, wenn er vollständig und eindeutig gelesen ist", () => {
+  const head = "Analytische Bestandteile/Constituants analytiques: Rohprotein/Protéine 24 % Fettgehalt/Teneur en matières grasses 5 % ";
+  // Grenzangaben dürfen nicht zu exakten Werten werden.
+  for (const tail of ["Phosphor/Phosphore < 0,4 % Feuchtigkeit/Humidité < 14 %", "Phosphor/Phosphore max. 0,4 %", "Feuchtigkeit/Humidité ≤ 14 %",
+                      "Calcium/Calcium mind. 1 %", "Rohasche/Cendres ca. 7 %"]) {
+    assert.equal(Ocr.germanView(head + tail), head + tail, tail);
+  }
+  // Ein nicht gelesener Rest am Ende (unbekannte Einheit, Wert ohne Einheit, Name ohne Wert) bleibt wörtlich stehen.
+  for (const tail of ["Phosphor/Phosphore 4 mg/100 g", "Energie/Energy 3,5 MJ", "Phosphor/Phosphore 0,4", "Taurin/Taurine/"]) {
+    assert.equal(Ocr.germanView(head + tail), `Analytische Bestandteile: Rohprotein 24 %, Fettgehalt 5 %.\n${tail}`, tail);
+  }
+  // Ein nicht gelesener Teil mitten im Block lässt ihn unverändert.
+  const middle = head + "Energie/Energy 3,5 MJ Rohasche/Cendres 7 %";
+  assert.equal(Ocr.germanView(middle), middle);
+  // Einheiten mit Leerzeichen um den Schrägstrich werden gelesen.
+  assert.equal(Ocr.germanView(head + "Feuchtigkeit/Humidité 8 % Phosphor/Phosphore 4 g / kg Taurin/Taurine 600 mg / kg."),
+    "Analytische Bestandteile: Rohprotein 24 %, Fettgehalt 5 %, Feuchtigkeit 8 %, Phosphor 4 g/kg, Taurin 600 mg/kg.");
 });

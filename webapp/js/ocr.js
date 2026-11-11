@@ -1134,7 +1134,9 @@ const Ocr = (() => {
   const ANALYSIS_BLOCK_END = /^(?:[^\p{L}\n]*(?:[A-Z]{1,2}\s+)?)?(?:Ern[äa]hrungsphysiologische|Emn[äa]hrungsphysiologische|Technologische|Zootechnische|Sensorische|Zusatzstoffe|Additifs|Fütterung\w*|Inverkehrbringer|Hersteller|Vertrieb|Importeur|Zusammensetzung|Netto\w*|Inhalt(?![\p{L}])|Füllmenge|Mindestens|MHD|Charge\w*|Los(?:nummer|-Nr)|Kennnummer|Bezugsnummer|Lagerung\w*|Art\.)/iu;
   const GERMAN_ANALYTIC_NAME = /^(?:Roh(?:protein|fett|faser|asche)|Protein|Eiwei[ßs]|Fett(?:gehalt)?|Feuchtigkeit|Feuchtegehalt|Feuchte|Asche|Calcium|Phosphor|Natrium|Kalium|Magnesium|Taurin|Stärke|Zucker|Kohlenhydrate)$/iu;
   const OTHER_ANALYSIS_WORDS = /\b(?:constituants|componenti|bestanddelen|teneur|mati[eè]res|vetgehalte|tenore|materia|cellulose|cellulosa|celstof|ruwe|cendres|ceneri|humidit[eé&]|vocht|umidit[aà]|taurine|taurina|prot[eé&]ine|eiwit|proteine)\b/giu;
-  const ANALYSIS_ENTRY = /(.+?)\s+(\d[\d.,]*)\s*(%|mg\/kg|g\/kg)(?![\p{L}\p{N}])/gu;
+  const ANALYSIS_ENTRY = /(.+?)\s+(\d[\d.,]*)\s*(%|mg\s*\/\s*kg|g\s*\/\s*kg)(?![\p{L}\p{N}])/gu;
+  // Grenz- und Näherungsangaben („< 0,4 %“, „max. 14 %“, „ca. 7 %“) sind keine exakten Werte.
+  const ANALYSIS_QUALIFIER = /[<>≤≥~]|(?<![\p{L}])(?:max|min|mind|mindestens|höchstens|ca|circa|etwa|bis)\.?(?![\p{L}])/iu;
 
   // Liefert { text, end } für den Block ab Zeile `start` oder null, wenn kein mehrsprachiger Analyseblock vorliegt.
   function germanAnalysisBlock(lines, start) {
@@ -1162,24 +1164,35 @@ const Ocr = (() => {
     if (colon < 0) return null;
     const content = joined.slice(colon + 1);
     if ((content.match(OTHER_ANALYSIS_WORDS) || []).length < 2) return null;
+    // Umgeschrieben wird nur ein vollständig und eindeutig gelesener Block. Bei Grenzangaben, einem Wert ohne gelesene
+    // Einheit oder einem nicht gelesenen Rest bleibt er unverändert: Es geht dann nichts verloren, und kein Wert wird
+    // einem falschen Namen zugeordnet oder zu einem exakten Wert gemacht.
+    if (ANALYSIS_QUALIFIER.test(content)) return null;
     const entries = [];
     let known = 0;
+    let consumed = 0;
     for (const match of content.matchAll(ANALYSIS_ENTRY)) {
+      // Text zwischen zwei Einträgen, der kein Trennzeichen ist, wurde nicht gelesen.
+      if (/[\p{L}\p{N}]/u.test(content.slice(consumed, match.index))) return null;
+      consumed = match.index + match[0].length;
       // Eine Zahl ohne Einheit mitten in den Namen („Protein/… 11 Fettgehalt/… 5 %“) ist ein Wert, dessen Einheit
-      // nicht gelesen wurde. Der Eintrag davor entfällt; der Wert gehört nur zu den Namen dahinter.
-      const own = match[1].split(/(?:^|\s)\d[\d.,]*\s+(?=\p{L})/u).pop();
-      const names = own.replace(/^[\s•·+«»*,;.]+|[\s•·+«»*,;]+$/g, "").split("/").map(n => n.trim());
+      // nicht gelesen wurde.
+      if (/(?:^|\s)\d[\d.,]*\s+(?=\p{L})/u.test(match[1])) return null;
+      const names = match[1].replace(/^[\s•·+«»*,;.]+|[\s•·+«»*,;]+$/g, "").split("/").map(n => n.trim());
       // Der deutsche Name aus der Liste; sonst der erste Name des Eintrags (die Überschrift nennt Deutsch zuerst, die
-      // Einträge folgen derselben Reihenfolge: „Chlorid/Chloride“, „Schwefel/Sulphur“). Kein Eintrag wird verworfen:
-      // Lässt sich einer nicht benennen, bleibt der ganze Block unverändert.
+      // Einträge folgen derselben Reihenfolge: „Chlorid/Chloride“, „Schwefel/Sulphur“).
       const listed = names.find(n => GERMAN_ANALYTIC_NAME.test(n));
       const name = listed ?? names[0];
       if (!name || !/^\p{L}[\p{L}\p{N} .()-]{2,40}$/u.test(name)) return null;
       if (listed) known++;
-      entries.push(`${name} ${match[2]} ${match[3]}`);
+      entries.push(`${name} ${match[2]} ${match[3].replace(/\s+/g, "")}`);
     }
     // Mindestens zwei Einträge mit bekanntem deutschen Namen belegen, dass es diese Schreibweise ist.
     if (known < 2) return null;
+    // Ein nicht gelesener Rest hinter dem letzten Eintrag (Name ohne Wert, unbekannte Einheit) bleibt wörtlich als
+    // eigene Zeile stehen.
+    const rest = content.slice(consumed).replace(/^[\s•·+«»*,;.]+/, "").trim();
+    if (/[\p{L}\p{N}]/u.test(rest)) return { text: `Analytische Bestandteile: ${entries.join(", ")}.\n${rest}`, end };
     return { text: `Analytische Bestandteile: ${entries.join(", ")}.`, end };
   }
 
