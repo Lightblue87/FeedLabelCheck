@@ -336,3 +336,15 @@ test("applyCheck bei unbekanntem Eintrag gibt null zurück", async () => {
   const { history } = setup();
   assert.equal(await history.applyCheck("nope", { text: "x", feedType: "auto", lastCheck: {} }), null);
 });
+
+test("replaceText ersetzt den Text, verwirft das Ergebnis und lässt Fotos und Markierung unberührt", async () => {
+  const { a } = twoTabs();
+  const e = await a.startEntry({ text: "NN NdAdN" });
+  await a.update(e.id, { text: "NN NdAdN", lastCheck: { overall: "unklar" } });
+  await a.setKeep(e.id, true);
+  const entry = await a.replaceText(e.id, "neuer OCR-Text");
+  assert.equal(entry.text, "neuer OCR-Text");
+  assert.equal(entry.lastCheck, null);
+  assert.equal(entry.keep, true);
+  assert.equal(await a.replaceText("gibt-es-nicht", "x"), null);
+});

@@ -263,6 +263,18 @@ const LabelHistory = (() => {
     }
 
     /**
+     * Ersetzt den gespeicherten Text (z. B. nach erneutem Einlesen der Originalfotos). Das
+     * Prüfergebnis gilt danach nicht mehr. Fotos und Aufbewahrung bleiben unverändert.
+     */
+    async function replaceText(id, text) {
+      return store.update(id, (entry) => {
+        entry.text = text;
+        entry.lastCheck = null;
+        entry.updatedAt = now();
+      });
+    }
+
+    /**
      * Hängt ein Prüfergebnis an den Eintrag, aber nur, wenn die gespeicherten Eingaben noch zum
      * geprüften Stand passen: ein inzwischen anderswo (anderer Tab, späterer Autosave) gespeicherter
      * Text wird nie durch den geprüften Stand ersetzt. writeInputs speichert den geprüften Stand
@@ -334,7 +346,7 @@ const LabelHistory = (() => {
       return removed;
     }
 
-    return { startEntry, update, appendText, applyCheck, setKeep, addPhotos, get, photos, list, remove, purgeExpired };
+    return { startEntry, update, appendText, replaceText, applyCheck, setKeep, addPhotos, get, photos, list, remove, purgeExpired };
   }
 
   return {
