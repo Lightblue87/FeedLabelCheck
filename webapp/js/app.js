@@ -1023,6 +1023,84 @@
       return Labeling.declaredNetAmount(exact) ? exact : "";
     }
 
+    /**
+     * Sucht eine groß gedruckte Packungsmenge („5kg“, „℮ 100 g“), die die Lesung in voller Auflösung übergeht:
+     * 1. das verkleinerte Foto als verstreuter Text, in zwei Größen, je unverändert und mit Beleuchtungsausgleich;
+     * 2. Ausschnitte um Folgen großer Schriftzeichen, auf eine gut lesbare Schrifthöhe gebracht.
+     * Eine Menge zählt nur, wenn zwei Durchgänge sie gleich lesen oder einer sie sicher liest
+     * (Labeling.largeAmountCandidate). Liefert die Hinweiszeile für den Prüftext oder "".
+     */
+    async function readLargeAmount(worker, input, data, output, primary) {
+      const bodyHeight = Ocr.bodyHeight(Ocr.flattenLines(data.blocks));
+      if (!bodyHeight) return "";
+      const image = await createImageBitmap(input);
+      try {
+        const longest = Math.max(image.width, image.height);
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        // Zeichnet einen Bildausschnitt skaliert auf die Arbeitsfläche; liefert die Graustufen.
+        const draw = (sx, sy, sw, sh, scale, flat) => {
+          canvas.width = Math.max(3, Math.round(sw * scale));
+          canvas.height = Math.max(3, Math.round(sh * scale));
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const gray = new Uint8ClampedArray(canvas.width * canvas.height);
+          for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+            gray[i] = (pixels.data[p] * 77 + pixels.data[p + 1] * 150 + pixels.data[p + 2] * 29) >> 8;
+          }
+          if (flat) {
+            const flattened = Ocr.flattenIllumination(gray, canvas.width, canvas.height).flat;
+            for (let i = 0, p = 0; i < flattened.length; i++, p += 4) {
+              pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flattened[i];
+              pixels.data[p + 3] = 255;
+            }
+            ctx.putImageData(pixels, 0, 0);
+          }
+          return gray;
+        };
+        const passes = [];
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT });
+        const targets = longest <= 800 ? [longest] : longest <= 1100 ? [800, longest] : [800, 1100];
+        for (const target of targets) {
+          for (const flat of [false, true]) {
+            const scale = target / longest;
+            draw(0, 0, image.width, image.height, scale, flat);
+            const result = await worker.recognize(canvas, {}, output);
+            passes.push(Ocr.lineSummaries(Ocr.flattenLines(result.data.blocks), scale));
+          }
+        }
+        // Haben die Ganzbild-Durchgänge schon eine bestätigte Menge, entfallen die Ausschnitte.
+        const early = Labeling.largeAmountCandidate(primary, passes, bodyHeight);
+        if (early?.confirmed) return Labeling.largeAmountHint(early.amount);
+        // Folgen großer Zeichen: im verkleinerten Bild suchen (Fließtext etwa acht Bildpunkte hoch), im Foto ausschneiden.
+        const scale = Math.min(1, Math.max(0.25, 8 / bodyHeight));
+        const gray = draw(0, 0, image.width, image.height, scale, false);
+        const runs = Ocr.largeGlyphRuns(gray, canvas.width, canvas.height, bodyHeight * scale, 10);
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE });
+        for (const flat of [false, true]) {
+          const lines = [];
+          for (const run of runs) {
+            const height = run.height / scale;
+            const pad = height * 0.5;
+            const x = Math.max(0, Math.floor(run.x0 / scale - pad));
+            const y = Math.max(0, Math.floor(run.y0 / scale - pad));
+            const right = Math.min(image.width, Math.ceil(run.x1 / scale + pad));
+            const bottom = Math.min(image.height, Math.ceil(run.y1 / scale + pad));
+            draw(x, y, right - x, bottom - y, 48 / height, flat);
+            const result = await worker.recognize(canvas, {}, { text: true });
+            lines.push({ text: (result.data.text || "").trim(), height, confidence: result.data.confidence,
+                         bbox: { x0: x, y0: y, x1: right, y1: bottom } });
+          }
+          passes.push(lines);
+        }
+        const candidate = Labeling.largeAmountCandidate(primary, passes, bodyHeight);
+        return candidate?.confirmed ? Labeling.largeAmountHint(candidate.amount) : "";
+      } finally {
+        image.close();
+      }
+    }
+
     async function readDietAbovePurpose(worker, input, data, output, primary) {
       const region = Ocr.findTextRegion(data, Labeling.matchDietPurposeAnchor);
       if (!region) return "";
@@ -1266,7 +1344,9 @@
       const checkCalcium = Labeling.needsSplitCalcium(text);
       const checkMoisture = rotated && Labeling.needsMoistureCrop(text);
       const checkComposition = Labeling.needsCompositionCrop(text);
-      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition) {
+      const checkLargeAmount = Labeling.lacksNetAmount(text);
+      if (!checkWeight && !checkImprint && !checkDiet && !checkCalcium && !checkMoisture && !checkComposition
+          && !checkLargeAmount) {
         return { text, warnings };
       }
 
@@ -1281,6 +1361,14 @@
             const retry = await worker.recognize(input, {}, output);
             const hint = Labeling.packageAmountHint(primary, Ocr.textFromResult(retry.data));
             if (hint) text += `\n${hint}`;
+          }
+        }
+        if (checkLargeAmount && Labeling.lacksNetAmount(text)) {
+          step("Zusatzprüfung groß gedruckte Menge");
+          const amount = await readLargeAmount(worker, input, data, output, text);
+          if (amount) {
+            text += `\n${amount}`;
+            warnings.push("Groß gedruckte Menge nachgelesen: Angabe am Originalfoto bestätigen");
           }
         }
         if (checkImprint) {

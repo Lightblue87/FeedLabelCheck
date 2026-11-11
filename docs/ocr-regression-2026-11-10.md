@@ -185,3 +185,33 @@ Offen aus dieser Runde:
 - Kaufland-Dose: Hersteller und Nettomasse liegen im Schatten und bleiben ungelesen.
 - Katzenmilch-Snack: „Zusatzstoffe/kg: Taurin 570 mg/kg.“ steht doppelt im Beleg.
 - Laufzeit in Chromium: 4 bis 91 s je Etikett (vorher 3 bis 90 s). Die hochkant fotografierten Etiketten brauchen wegen der Drehversuche 52 bis 91 s. Auf dem iPhone nicht gemessen.
+
+## Groß gedruckte Nettomenge (11.11.2026)
+
+Ausgangsbefund: Bei keinem der elf Produkte aus der vorigen Runde wurde die Nettomenge belegt. Die Menge steht meist in sehr großer, fetter Schrift für sich („5kg“, „Inhalt: 3 kg“, „500g ℮“). In voller Auflösung übergeht die Texterkennung solche Zeichen oder liest Bruchstücke („3 k“). Verkleinert und als verstreuter Text gelesen werden sie lesbar, aber nicht bei jeder Größe.
+
+Zusatzprüfung `readLargeAmount` in `webapp/js/app.js`, nur wenn der Prüftext keine Mengenangabe und keinen Mengenhinweis enthält (`Labeling.lacksNetAmount`):
+
+1. Das Foto wird auf 800 und 1.100 Bildpunkte Kantenlänge verkleinert und als verstreuter Text gelesen, je unverändert und mit Beleuchtungsausgleich (vier Durchgänge, bei kleinen Fotos weniger).
+2. Steht danach keine bestätigte Menge fest: `Ocr.largeGlyphRuns` sucht ohne Texterkennung Folgen von zwei bis acht großen Schriftzeichen (zusammenhängende Flächen, mindestens 1,8-fache Fließtexthöhe). Bis zu zehn solcher Stellen werden ausgeschnitten, auf 48 Bildpunkte Schrifthöhe gebracht und als einzelne Zeile gelesen (zwei Durchgänge).
+3. `Labeling.largeAmountCandidate` wählt aus allen Durchgängen: Die Zeile besteht allein aus einer Menge (ein verlesenes ℮ davor oder dahinter ist erlaubt), ist mindestens 1,5-mal so hoch wie der Fließtext, und die Menge steht nicht schon im Prüftext (Fütterungstabelle, Rationsangabe). Bei mehreren großen Mengen muss eine klar die größte sein (Faktor 1,3). Zwei Lesarten an derselben Stelle („500 g“ und „5009 g“): Die häufigere zählt, bei Gleichstand keine.
+4. Übernommen wird nur, was zwei Durchgänge gleich lesen oder einer sicher liest (ab 80). Das Ergebnis ist die Zeile „OCR-Kandidat Packungsmenge: …“. Die Karte bleibt „Wahrscheinlich“ mit dem Vermerk, die Angabe am Etikett zu bestätigen.
+
+Ergebnis im Browser (Chromium, normaler Foto-Upload):
+
+| Etikett | Vorher | Nachher |
+| --- | --- | --- |
+| AlpenGrün Mash | Kein OCR-Treffer | Wahrscheinlich: „5 kg“ |
+| AGROBS Seniormineral | Kein OCR-Treffer | Wahrscheinlich: „3 kg“ |
+| proCani (3 Fotos) | Kein OCR-Treffer | Wahrscheinlich: „500 g“ |
+| animonda Schale | Wahrscheinlich (nur Überschrift „Nettomasse“) | unverändert; „100 g“ wird nur in einem Durchgang unsicher gelesen und deshalb nicht übernommen |
+| Kaufland-Dose, Lucky-Kitty, Purina, Vitakraft | Kein OCR-Treffer bzw. nur Überschrift | unverändert |
+| IAMS, Katzenmilch-Snack, animonda Hundesnack, Pavo, Carolina | Kein OCR-Treffer (auf den Fotos steht keine Nettomenge) | unverändert, kein Fehltreffer |
+
+Grenzen:
+
+- Für das Seniormineral verlangt die Abnahme in `CLAUDE.md` „3 kg“ als getrenntes Feld. Die Menge erscheint jetzt als Hinweis („Wahrscheinlich“), nicht als belegte Angabe: Die Überschrift „Inhalt:“ und die Menge werden in getrennten Durchgängen gelesen.
+- Lucky-Kitty: „200g“ steht bereits im Prüftext hinter der Internetadresse („www.lucky-kitty.de EC 200g“, das ℮ als „EC“ gelesen) und gilt dort nicht als Mengenangabe. Die Zusatzprüfung schließt Mengen aus, die schon im Prüftext stehen.
+- Purina („2 x 57 g ℮ = 114 g“ im gedrehten Foto), Vitakraft („e 40g“) und Kaufland („400 g“ im Schatten) werden in keinem Durchgang gelesen.
+- Laufzeit: Die Zusatzprüfung kostet in Chromium je Foto ohne Mengenangabe etwa 5 bis 10 s, bei Produkten mit mehreren Fotos entsprechend mehr (proCani 40 → 57 s, Purina 91 → 112 s). Auf dem iPhone nicht gemessen.
+- Tests: `tests/js/large-amount.test.mjs`.

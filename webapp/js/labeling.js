@@ -454,6 +454,61 @@ const Labeling = (() => {
     return amounts.size === 1 ? OCR_AMOUNT_HINT + amounts.values().next().value : "";
   }
 
+  // ── Groß gedruckte Packungsmenge ──
+  // Die Nettomenge steht oft in sehr großer Schrift für sich („5kg“, „℮ 100 g“), die die Texterkennung in voller
+  // Auflösung übergeht. Das Foto wird dafür verkleinert und als verstreuter Text gelesen (mehrere Durchgänge), dazu
+  // kommen Ausschnitte um Folgen großer Schriftzeichen (Ocr.largeGlyphRuns). Als
+  // Kandidat zählt nur eine Zeile, die allein aus einer Menge besteht, deutlich größer gedruckt ist als der Fließtext
+  // und deren Menge nicht schon im Prüftext steht (Fütterungstabelle, Rationsangaben). Stehen mehrere Mengen in großer
+  // Schrift da, muss eine klar die größte sein. Das Ergebnis bleibt ein Hinweis, der am Original zu bestätigen ist.
+  // Das ℮-Zeichen vor oder hinter der Menge liest die Texterkennung als „e“, „€“, „C“, „@“ oder „©“, teils mit einem
+  // Anführungszeichen davor.
+  const LARGE_AMOUNT_LINE = new RegExp(String.raw`^[ \t]*(?:[„"'‚(]?[℮e€@©C][ \t]*)?${PACKAGE_AMOUNT}[ \t]*[℮e€@©]{0,2}[ \t]*$`, "i");
+  const amountKey = (amount, unit) => `${amountNumber(amount)} ${unit.toLowerCase()}`;
+
+  function lacksNetAmount(text) {
+    return !declaredNetAmounts(text).length && !AMOUNT_LINE.test(text) && !text.includes(OCR_AMOUNT_HINT);
+  }
+
+  /**
+   * @param {string} primaryText bisheriger Prüftext
+   * @param {Array<Array<{text: string, height: number, confidence: number, bbox: object}>>} passes Zeilen je Durchgang,
+   *        Höhe und Rahmen in Bildpunkten des Fotos
+   * @param {number} bodyHeight mittlere Worthöhe des Fließtexts im Foto
+   * @returns {{amount: string, confirmed: boolean, bbox: object, height: number}|null}
+   */
+  function largeAmountCandidate(primaryText, passes, bodyHeight) {
+    const found = new Map();
+    passes.forEach((lines, pass) => {
+      for (const line of lines) {
+        const match = LARGE_AMOUNT_LINE.exec(line.text);
+        if (!match || !(line.height >= bodyHeight * 1.5)) continue;
+        const [, amount, unit] = match;
+        if (!(amountNumber(amount) > 0)) continue;
+        const inText = new RegExp(String.raw`(?<![\d.,])${amount.replace(/[.,]/g, "[.,]")}[ \t]*${unit}(?![\p{L}\p{N}])`, "iu");
+        if (inText.test(primaryText)) continue;
+        const key = amountKey(amount, unit);
+        const entry = found.get(key) ?? { amount: `${amount} ${unit}`, passes: new Set(), confidence: 0, height: 0, bbox: line.bbox };
+        entry.passes.add(pass);
+        entry.confidence = Math.max(entry.confidence, line.confidence);
+        if (line.height > entry.height) { entry.height = line.height; entry.bbox = line.bbox; }
+        found.set(key, entry);
+      }
+    });
+    // Zwei verschiedene Mengen an derselben Stelle sind zwei Lesarten eines Aufdrucks („500 g“ und „5009 g“, wenn das
+    // „g“ zusätzlich als „9“ gelesen wird). Es bleibt die in mehr Durchgängen gelesene; bei Gleichstand keine.
+    const overlaps = (a, b) => Math.min(a.x1, b.x1) > Math.max(a.x0, b.x0) && Math.min(a.y1, b.y1) > Math.max(a.y0, b.y0);
+    const entries = [...found.values()];
+    const kept = entries.filter(entry => entries.every(other => other === entry || !overlaps(entry.bbox, other.bbox)
+      || entry.passes.size > other.passes.size));
+    const ranked = kept.sort((a, b) => b.height - a.height);
+    if (!ranked.length || (ranked[1] && ranked[0].height < ranked[1].height * 1.3)) return null;
+    const [top] = ranked;
+    return { amount: top.amount, confirmed: top.passes.size >= 2 || top.confidence >= 80, bbox: top.bbox, height: top.height };
+  }
+
+  const largeAmountHint = amount => OCR_AMOUNT_HINT + amount;
+
   function percentageEvidence(text, fieldNames) {
     const field = String.raw`\b(?:${fieldNames})\b`;
     const percent = String.raw`${DECIMAL}[ \t|]*%`;
@@ -1662,6 +1717,7 @@ const Labeling = (() => {
   return {
     openDatabase, loadFeedTypes, loadRules, loadDatabaseInfo,
     searchFeedMaterials, detectFeedType, check, needsPackageAmount, packageAmountHint, declaredNetAmount,
+    lacksNetAmount, largeAmountCandidate, largeAmountHint,
     matchNetHeading: text => text.match(NET_HEADING),
     matchFeedingTableHeading: text => text.match(FEEDING_TABLE_HEADING),
     needsCompositionCrop, compositionCropHint,
