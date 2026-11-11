@@ -1106,7 +1106,7 @@
 
     /**
      * Liest ein Foto in überlappenden Kacheln: jede Kachel mit Beleuchtungsausgleich und eigener Geraderichtung
-     * (Ocr.flattenIllumination, Ocr.estimateSkew). Liefert die zusammengesetzten Zeilen in Bildkoordinaten oder null,
+     * (Ocr.flattenIllumination, Ocr.estimateSkew). Liefert die Kacheln mit ihren Zeilen (für Ocr.mergeTiles) oder null,
      * wenn das Foto für Kacheln zu klein ist.
      */
     async function readLabelTiles(worker, input, output, step) {
@@ -1158,7 +1158,7 @@
           canvas.width = canvas.height = 0;
           if (source !== canvas) source.width = source.height = 0;
         }
-        return Ocr.mergeTiles(tiles);
+        return tiles;
       } finally {
         image.close();
       }
@@ -1172,8 +1172,9 @@
      */
     async function readLabelPhoto(worker, file, step) {
       const output = { text: true, blocks: true };
-      // Grundlesung mit automatischer Seitenaufteilung: Tesseract trennt Spalten und Textblöcke selbst.
-      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+      // Grundlesung als ein Block. An ihr hängt die Ausrichtungsprüfung: Die Seitenaufteilung liest auch hochkant
+      // stehende Schrift, ihre Wortrahmen taugen dann aber nicht für Zeilen.
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
       let { data } = await worker.recognize(file, {}, output);
       let input = file;
       let rotated = null;
@@ -1187,9 +1188,10 @@
           warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${e?.message || e})`);
         }
       }
-      // Zweite Lesung als ein Block und Vereinigung beider: Die Blocklesung behält Zeilen über die ganze Breite, die
-      // die Seitenaufteilung zerschneidet (z. B. eine Anschrift unter zwei Spalten). Bei schwacher Lesung folgen
-      // aufbereitete Kacheln (ungleichmäßige Beleuchtung, schräg laufende Schrift).
+      // Zweite Lesung mit automatischer Seitenaufteilung (Tesseract trennt Spalten und Textblöcke selbst) und
+      // Vereinigung beider: Die Blocklesung behält Zeilen über die ganze Breite, die die Seitenaufteilung zerschneidet
+      // (z. B. eine Anschrift unter zwei Spalten). Bei schwacher Lesung folgen aufbereitete Kacheln (ungleichmäßige
+      // Beleuchtung, schräg laufende Schrift).
       let tilesTried = false;
       try {
         const bitmap = await createImageBitmap(input);
@@ -1198,19 +1200,26 @@
         const whole = (source, lines, scale = 1) => ({ x: 0, y: 0, right: size.width, bottom: size.height, scale,
                                                        col: 0, row: 0, cols: 1, rows: 1, source, lines });
         step("Zweite Lesung");
-        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
-        const block = await worker.recognize(input, {}, output);
-        const auto = whole("auto", Ocr.flattenLines(data.blocks), rotated?.dataScale ?? 1);
-        const single = whole("block", Ocr.flattenLines(block.data.blocks));
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+        const page = await worker.recognize(input, {}, output);
+        // Hochkant gelesene Zeilen der Seitenaufteilung (Schrift quer zum übrigen Etikett) bleiben außen vor.
+        const auto = whole("auto", Ocr.uprightLines(Ocr.flattenLines(page.data.blocks)));
+        const single = whole("block", Ocr.flattenLines(data.blocks), rotated?.dataScale ?? 1);
         // Die Lesung mit mehr sicher gelesenem Text gibt Zeilen und Reihenfolge vor, die andere ergänzt. Die
         // Seitenaufteilung führt nur bei klarem Vorsprung: Sie zerschneidet gelegentlich Fließtext in Teilzeilen.
         const autoLeads = Ocr.linesQuality(auto.lines) > Ocr.linesQuality(single.lines) * 1.05;
         let lines = Ocr.mergeTiles(autoLeads ? [auto, single] : [single, auto]);
-        if (data.confidence < 70 || Ocr.shouldRecoverText(Ocr.textFromLines(lines))) {
-          const tiled = await readLabelTiles(worker, input, output, step);
-          tilesTried = !!tiled;
-          // Die Kacheln ersetzen die Vollbild-Lesung nur bei deutlich mehr sicher gelesenem Text.
-          if (tiled && Ocr.linesQuality(tiled) >= Ocr.linesQuality(lines) * 1.2 + 30) lines = tiled;
+        if (page.data.confidence < 70 || Ocr.shouldRecoverText(Ocr.textFromLines(lines))) {
+          const tiles = await readLabelTiles(worker, input, output, step);
+          tilesTried = !!tiles;
+          if (tiles) {
+            // Die Kacheln ersetzen die Vollbild-Lesung nur bei deutlich mehr sicher gelesenem Text. Sonst ergänzen sie
+            // sie: sicher gelesene Wörter und Zeilen, die im Vollbild fehlen (z. B. ein schräg stehender Aufdruck).
+            const tiled = Ocr.mergeTiles(tiles);
+            lines = Ocr.linesQuality(tiled) >= Ocr.linesQuality(lines) * 1.2 + 30
+              ? tiled
+              : Ocr.mergeTiles([...(autoLeads ? [auto, single] : [single, auto]), ...tiles]);
+          }
         }
         if (lines.length) {
           data = { ...data, blocks: [{ paragraphs: [{ lines: lines.map(words => ({ words })) }] }] };
@@ -1219,6 +1228,7 @@
       } catch (e) {
         warnings.push(`Zweite Lesung fehlgeschlagen (${e?.message || e})`);
       }
+      await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
       const primary = Ocr.textFromResult(data);
       let text = primary;
       if (!tilesTried && Ocr.shouldRecoverText(primary)) {

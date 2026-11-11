@@ -568,7 +568,13 @@ const Labeling = (() => {
     return columns ? `Zusammensetzung (aus vermischten Spalten getrennt):\n${joinHyphenation(columns.items).join("\n")}` : null;
   }
 
-  function compositionEvidence(text) {
+  // Fremdsprachige Überschrift am Zeilenende hinter anderem Text („… Nebenerzeugnisse (90 %, 45 % Composition:“): Sie
+  // gehört zur Nachbarspalte, deren Zeilen die Texterkennung angehängt hat. Ohne sie endet der deutsche Abschnitt
+  // nicht vorzeitig, und die fremde Überschrift bekommt nicht den deutschen Folgetext als Liste.
+  const NEIGHBOUR_COMPOSITION_HEADING = /(?<=\S[ \t]+)(?:composition|ingredients|composizione|samenstelling|composici[oó]n)[ \t]*:[ \t]*(?=\n)/gi;
+
+  function compositionEvidence(rawText) {
+    const text = /\b[zt]usammensetzung\b/i.test(rawText) ? rawText.replace(NEIGHBOUR_COMPOSITION_HEADING, "") : rawText;
     const listed = text.match(MULTILINGUAL_COMPOSITION);
     if (listed && /,\s*\p{L}/u.test(listed[2])) return `${listed[1]}: ${listed[2]}`;
     const mixed = mixedColumnComposition(text);
@@ -1046,7 +1052,9 @@ const Labeling = (() => {
     return null;
   }
 
-  const EXPIRY_MARKER = String.raw`(?:${DATE_PRINT_FIELD}|mindesthaltbar\s+bis|verwendbar\s+bis|haltbar\s+bis|BBD|BBE|EXP)`;
+  // „haltbar“ allein auf einer Zeile mit dem Datum direkt darunter: Rest einer klein gedruckten Feldüberschrift
+  // („Mindestens haltbar bis:“ über dem Datumsfeld), von der die Texterkennung nur ein Wort gelesen hat.
+  const EXPIRY_MARKER = String.raw`(?:${DATE_PRINT_FIELD}|mindesthaltbar\s+bis|verwendbar\s+bis|haltbar\s+bis|BBD|BBE|EXP|(?<=(?:^|\n)[ \t]*)haltbar(?=[ \t:]*\n))`;
   const EXPLICIT_EXPIRY = new RegExp(String.raw`\b${EXPIRY_MARKER}(?:[ \t]+Ende)?[ \t:]*\n?[ \t]*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-](?:\d{4}|\d{2})|\d{1,2}[./-]\d{4})\b(?![./-]\d)`, "gi");
 
   function declaredExpiry(text) {

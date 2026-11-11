@@ -195,3 +195,17 @@ test("germanView: einsprachige Zusatzstoffzeilen mit Schrägstrich bleiben unver
     assert.equal(Ocr.germanView(line), line);
   }
 });
+
+test("germanView: Analysewert ohne gelesene Einheit wird nicht dem nächsten Namen zugeordnet", () => {
+  const text = [
+    "Analytische Bestandteile/Constituants analytiques/Analytische bestanddelen/Componenti",
+    "analitici: Protein/Protéine/Eiwit/Proteine 11 Fettgehalt/Teneur en matières grasses/Vetgehalte/Tenore",
+    "in materia grassa 5 % Rohfaser/Cellulose brute/Ruwe",
+    "celstof/Cellulosa grezza 0,3 % Rohasche/Cendres",
+    "brutes/Ruwe as/Ceneri grezze 1,6 %.",
+  ].join("\n");
+  const view = Ocr.germanView(text);
+  assert.match(view, /Fettgehalt 5 %, Rohfaser 0,3 %, Rohasche 1,6 %/);
+  assert.doesNotMatch(view, /Protein 5 %/, "der Wert des Fettgehalts gehört nicht zum Protein");
+  assert.doesNotMatch(view, /Protein 11/, "ohne Einheit kein Eintrag");
+});

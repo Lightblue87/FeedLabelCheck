@@ -17,7 +17,9 @@ const whole = (source, lines, width = 1300, height = 1700) =>
 const texts = lines => lines.map(words => words.map(w => w.text).join(" "));
 
 test("tileGrid: kleine Fotos bleiben ganz, große werden mit Überlappung gekachelt", () => {
-  assert.deepEqual(Ocr.tileGrid(900, 1000), []);
+  // Kleines Foto: eine vergrößerte Kachel über das ganze Bild
+  assert.deepEqual(Ocr.tileGrid(480, 640), [{ col: 0, row: 0, cols: 1, rows: 1, x: 0, y: 0, right: 480, bottom: 640, scale: 2 }]);
+  assert.deepEqual(Ocr.tileGrid(1100, 1000), []);
   assert.deepEqual(Ocr.tileGrid(0, 100), []);
   assert.deepEqual(Ocr.tileGrid(NaN, 100), []);
   const tiles = Ocr.tileGrid(2400, 1600);
@@ -219,6 +221,9 @@ test("estimateSkew: Neigung der Zeilen, positiv bei nach rechts abfallenden Zeil
   assert.ok(Math.abs(falling - 3) <= 0.5, `gemessen ${falling}`);
   const rising = Ocr.estimateSkew(stripes(840, 600, -2.5), 840, 600);
   assert.ok(Math.abs(rising + 2.5) <= 0.5, `gemessen ${rising}`);
+  // Auch ein deutlich schräg gehaltener Aufdruck (Streifen am Kartonrand)
+  const steep = Ocr.estimateSkew(stripes(840, 600, -13), 840, 600);
+  assert.ok(Math.abs(steep + 13) <= 0.75, `gemessen ${steep}`);
   // Leere Fläche und zu kleine Bilder: keine Aussage
   assert.equal(Ocr.estimateSkew(new Uint8ClampedArray(840 * 600).fill(200), 840, 600), 0);
   assert.equal(Ocr.estimateSkew(new Uint8ClampedArray(30 * 30), 30, 30), 0);
@@ -236,4 +241,101 @@ test("unrotateBox: rechnet Wortrahmen aus dem gerade gerichteten Bild zurück", 
   assert.ok(Math.abs((back.y0 + back.y1) / 2 - expectedY) < 1e-9);
   assert.ok((back.x0 + back.x1) / 2 < 750);
   assert.ok(Math.abs((back.x1 - back.x0) - 100) < 1e-9 && Math.abs((back.y1 - back.y0) - 20) < 1e-9, "Größe bleibt erhalten");
+});
+
+// ── Randspalte neben Fließtext ──
+// Wörter einer Zeile aus Text: jedes Zeichen 10 breit, Wortabstand 8, ab x.
+function words(text, x, y, height = 20) {
+  const out = [];
+  for (const part of text.split(" ")) {
+    out.push(word(part, x, y, x + part.length * 10, y + height));
+    x += part.length * 10 + 8;
+  }
+  return out;
+}
+const withSide = (left, right, y, sideX = 760) => [...(left ? words(left, 60, y) : []), ...(right ? words(right, sideX, y) : [])];
+
+test("textFromLines: schmale Randspalte neben Fließtext wird abgetrennt", () => {
+  const lines = [
+    withSide("Zusammensetzung: Putenfleisch 95 % und Karotte", null, 100),
+    withSide("und Zucchini sowie gemahlene Eierschalen und Meersalz", "Inhaltsstoffe", 130),
+    withSide("Fütterungsempfehlung: ca. 4 % des Körpergewichts täglich", "Rohasche 1,45%", 160),
+    withSide("und Gemüse entsteht. Da wir keine Bindemittel", "Feuchtigkeit 73,7%", 190),
+    withSide("der natürliche Sud bleibt erhalten und wird gefüttert", null, 220),
+    withSide("Damit Ihre Katze auch genug trinkt", "Mindesthaltbarkeitsdatum,", 250),
+    withSide("Vertrieb: Beispiel GmbH & Co. KG, Musterstraße 4,", "Bezugsnummer der Partie:", 280),
+    withSide("40233 Düsseldorf", "siehe Dosenaufdruck.", 310),
+  ];
+  const text = Ocr.textFromLines(lines).split("\n");
+  assert.ok(text.includes("40233 Düsseldorf"), text.join(" | "));
+  assert.ok(text.includes("siehe Dosenaufdruck."));
+  assert.ok(text.includes("Vertrieb: Beispiel GmbH & Co. KG, Musterstraße 4,"));
+  // Die Randspalte folgt geschlossen nach dem linken Text.
+  assert.equal(text.indexOf("siehe Dosenaufdruck."), text.indexOf("Bezugsnummer der Partie:") + 1);
+  assert.ok(text.indexOf("Inhaltsstoffe") > text.indexOf("40233 Düsseldorf"));
+});
+
+test("textFromLines: die Randspalte läuft nach einer Unterbrechung an derselben Stelle weiter", () => {
+  const head = [
+    withSide("zur täglichen Fütterung gut geeignet", "Hersteller:", 100),
+    withSide("langsam und in Ruhe anfüttern", "Beispiel GmbH & Co. KG", 130),
+    withSide("Analytische Bestandteile der Mischung sind", "Musterweg 27", 160),
+    withSide("Rohprotein und Rohfett sowie Rohfaser gemessen", "info@beispiel.example", 190),
+  ];
+  // Eine Zeile über die ganze Breite beendet die erste Folge.
+  const across = words("Zur Mineralstoffversorgung empfehlen wir ein zu Ihrem Pferd und seinem Bedarf passendes Mineralfutter", 60, 220);
+  const tail = [
+    withSide("Die analysierten Werte sind nativen Ursprungs und nicht zugesetzt", "Chargennummer", 250),
+    withSide("Zucker ist rein nativ enthalten und nicht zugesetzt", "01102000040327", 280),
+  ];
+  const text = Ocr.textFromLines([...head, across, ...tail]).split("\n");
+  assert.equal(text[text.indexOf("Chargennummer") + 1], "01102000040327", text.join(" | "));
+  assert.ok(text.includes("Zucker ist rein nativ enthalten und nicht zugesetzt"));
+  // Ohne vorangehende Randspalte genügen zwei Zeilen nicht.
+  assert.equal(Ocr.textFromLines(tail).split("\n")[1], "Zucker ist rein nativ enthalten und nicht zugesetzt 01102000040327");
+});
+
+test("textFromLines: Tabellen aus Name und Wert und kurze Folgen bleiben zusammen", () => {
+  const table = [
+    withSide("Rohprotein", "17,8 %", 100), withSide("Rohfett", "5,68 %", 130), withSide("Rohfaser", "2,28 %", 160),
+    withSide("Rohasche", "1,45 %", 190), withSide("Feuchtigkeit", "73,7 %", 220),
+  ];
+  assert.deepEqual(Ocr.textFromLines(table).split("\n"),
+    ["Rohprotein 17,8 %", "Rohfett 5,68 %", "Rohfaser 2,28 %", "Rohasche 1,45 %", "Feuchtigkeit 73,7 %"]);
+  // Fließtext mit Zahlenspalte rechts (Fütterungstabelle): rechts steht kein Text.
+  const amounts = [
+    withSide("Katzen bis drei Kilogramm Gewicht", "200 g", 100), withSide("Katzen bis vier Kilogramm Gewicht", "245 g", 130),
+    withSide("Katzen bis fünf Kilogramm Gewicht", "280 g", 160), withSide("Katzen bis sechs Kilogramm Gewicht", "310 g", 190),
+  ];
+  assert.equal(Ocr.textFromLines(amounts).split("\n")[0], "Katzen bis drei Kilogramm Gewicht 200 g");
+  // Nur drei Zeilen mit Lücke: zu wenig für eine Randspalte.
+  const few = [
+    withSide("Zusammensetzung: Hafer und Gerste sowie Leinsaat", "Hersteller:", 100),
+    withSide("Analytische Bestandteile der Mischung im Sack", "Beispiel GmbH", 130),
+    withSide("Rohprotein und Rohfett sowie Rohfaser gemessen", "Musterweg 27", 160),
+  ];
+  assert.equal(Ocr.textFromLines(few).split("\n")[0], "Zusammensetzung: Hafer und Gerste sowie Leinsaat Hersteller:");
+});
+
+test("uprightLines: hochkant gelesene Zeilen der Seitenaufteilung bleiben außen vor", () => {
+  const upright = row(100, 20, ["Alleinfuttermittel", 100, 300], ["für", 310, 340], ["Katzen", 350, 420]);
+  const sideways = [word("Zusammensetzung", 500, 100, 522, 300), word("Fleisch", 500, 310, 522, 390), word("%", 500, 400, 522, 412)];
+  assert.deepEqual(Ocr.uprightLines([upright, sideways]), [upright]);
+  // Kurze Wörter und Zeilen ohne lange Wörter entscheiden nichts.
+  const short = [word("8", 100, 100, 110, 122), word("g", 120, 100, 130, 122)];
+  assert.deepEqual(Ocr.uprightLines([short]), [short]);
+});
+
+test("mergeTiles: sicher gelesenes Wort ersetzt das fast gleiche unsichere, doppelte Lesung an einer Stelle entfällt", () => {
+  // Vollbild: „HD“ unsicher und das Datum als Zahlensalat mit entartetem Rahmen. Kachel: „MHD 03/2028“ sicher.
+  const full = [[word("HD", 359, 1090, 480, 1130, 39), word("0312075", 512, 1032, 760, 1158, 58), word("S17", 830, 1088, 930, 1128, 80)]];
+  const tile = [[word("MHD", 356, 1088, 480, 1130, 89), word("03/2028", 506, 1090, 760, 1130, 96)]];
+  const merged = texts(Ocr.mergeTiles([whole("block", full, 1512, 2016), { ...whole("tiles", tile, 1512, 2016), angle: 0 }]));
+  assert.deepEqual(merged, ["MHD 03/2028 S17"]);
+});
+
+test("mergeTiles: die sicherere Lesung ersetzt nicht, wenn sie ein Zeichen verliert", () => {
+  const first = [row(100, 20, ["Proteine", 100, 200], ["11%", 210, 250, 70], ["Fettgehalt", 270, 380])];
+  const second = [row(100, 20, ["Proteine", 100, 200], ["11", 210, 238, 93], ["Fettgehalt", 270, 380])];
+  assert.deepEqual(texts(Ocr.mergeTiles([whole("block", first), whole("auto", second)])), ["Proteine 11% Fettgehalt"]);
 });

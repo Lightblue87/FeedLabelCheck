@@ -146,3 +146,42 @@ Grenzen:
 - Beim Carolina-Etikett bleiben die eng gesetzten, zweizeiligen Einträge für Kupfer, Jod und Selen in beiden Lesungen fehlerhaft. Die Vereinigung verbindet sie nicht mehr falsch, liest sie aber auch nicht besser.
 - Die Kacheln werden beim Carolina-Etikett ausgelöst, obwohl sie nichts beitragen (eine Zutat je Zeile gilt für `shouldRecoverText` als unvollständig). Das kostet Zeit, ändert aber das Ergebnis nicht.
 - Tests: `tests/js/ocr-tiles.test.mjs` (konstruierte Wortrahmen und Graustufenbilder) und `tests/js/german-view.test.mjs`. Die Nutzerfotos bleiben außerhalb des Repositorys.
+
+## Weitere Nutzerfotos: Drehung, Randspalten, Aufdrucke (10.11.2026)
+
+Elf weitere Produkte aus 15 Nutzerfotos im normalen Foto-Upload geprüft (Chromium, vorher = `14504c5`): animonda Schale, IAMS, Purina Gourmet, Katzenmilch-Snack mit Aufdruckfoto, AlpenGrün Mash, AGROBS Seniormineral, Vitakraft, proCani, animonda Hundesnack, Kaufland-Dose, Lucky-Kitty. Die Fotos bleiben außerhalb des Repositorys.
+
+Funde und Korrekturen:
+
+- **Hochkant fotografierte Etiketten (IAMS, Purina, Vitakraft).** Mit der Seitenaufteilung als erster Lesung waren die Wörter durcheinander („Katzen, Alleinfuttermittel WEIL ausgewachsene NAPF JEDER“): Sie liest auch um 90° gedrehte Schrift, die Ausrichtungsprüfung griff dann nicht, und die hochkant stehenden Wortrahmen wurden als waagerechte Zeilen verarbeitet. Jetzt ist die Blocklesung wieder die erste Lesung, an ihr hängt die Ausrichtungsprüfung; die Seitenaufteilung folgt auf dem gedrehten Foto. `Ocr.uprightLines` lässt hochkant gelesene Zeilen der Seitenaufteilung weg.
+- **Schmale Randspalte neben Fließtext (Lucky-Kitty, AlpenGrün Mash).** Ein Kasten mit Hersteller, Charge und Haltbarkeit oder eine Tabelle „Inhaltsstoffe“ neben dem Haupttext wurde zeilenweise angehängt. Folge: Partie „40233“ (die Postleitzahl hinter „Bezugsnummer der Partie:“), Hersteller „langsam anfüttern AGROBS GmbH & Co. KG“. `reorderSideColumns` in `webapp/js/ocr.js` erkennt eine Folge von Zeilen mit breiter Wortlücke an derselben Stelle und trennt sie: erst der linke Text, dann die Randspalte. Bedingungen: mindestens vier getrennte Zeilen, links Fließtext (Median mindestens vier Wörter), rechts überwiegend Text. Tabellen aus Name und Wert und Fütterungstabellen bleiben zusammen. Schließt eine weitere Folge an derselben Stelle an, genügen zwei Zeilen.
+- **Schräger Aufdruck (MHD-Streifen am Karton, etwa 13° geneigt).** `estimateSkew` misst jetzt bis ±15°. Kacheln, die die Vollbild-Lesung nicht ersetzen, ergänzen sie: sicher gelesene Wörter und Zeilen kommen dazu. Ein sicher gelesenes Wort ersetzt das fast gleiche unsichere („HD“ → „MHD“); bei mindestens 30 Punkten mehr Sicherheit darf es etwas kürzer sein („03/2028“ statt „0312075“). Zwei Wörter einer Zeile an derselben waagerechten Stelle: Das deutlich unsicherere entfällt.
+- **Kleine Fotos (unter 1.100 Bildpunkten Kantenlänge)** werden bei schwacher Lesung als eine vergrößerte, aufbereitete Kachel nachgelesen (Kaufland-Dose: Text im Schatten).
+- **„haltbar“ über dem Datum (AlpenGrün Mash).** Von der klein gedruckten Feldüberschrift „Mindestens haltbar bis:“ liest die Texterkennung teils nur „haltbar“. Steht das Wort allein auf einer Zeile und das Datum direkt darunter, zählt es als Haltbarkeitsangabe. Im Fließtext nicht.
+- **Fremde Überschrift aus der Nachbarspalte (animonda Hundesnack).** „… Nebenerzeugnisse (90 %, 45 % Composition:“: Die englische Überschrift am Zeilenende gehört zur Nachbarspalte. Sie beendet den deutschen Abschnitt nicht mehr und bekommt den deutschen Folgetext nicht als Liste.
+- **Analysewert ohne gelesene Einheit.** Ging bei „Protein/… 11 % • Fettgehalt/… 5 %“ das erste „%“ verloren, ordnete `germanAnalysisBlock` den Wert des Fettgehalts dem Protein zu („Protein 5 %“). Eine Zahl ohne Einheit mitten in den Namen beendet jetzt den Eintrag davor ohne Ergebnis; der nächste Wert gehört nur zu den Namen dahinter. In `mergeTiles` ersetzt eine sicherere Lesung die andere nicht, wenn sie ein Zeichen verliert („11“ statt „11%“).
+
+Ergebnis je Etikett (Karten Gefunden / Wahrscheinlich / Kein OCR-Treffer, vorher → nachher):
+
+| Etikett | Karten | Wesentliche Änderung |
+| --- | --- | --- |
+| animonda Schale | 7/3/1 → 8/3/0 | Zusatzstoffe mit Kennnummern „Gefunden“, volle Anschrift |
+| IAMS (hochkant) | 7/2/2 → 8/2/1 | mehr Text (3.574 → 4.166 Zeichen), „Amazonia AG … 4142 Münchenstein“ richtig gelesen |
+| Purina Gourmet (hochkant, 2 Fotos) | 8/1/2 → 8/1/2 | „Fettgehalt: 3,0 %“ und „IE/kg: Vitamin D3: 107“ richtig gelesen |
+| Katzenmilch-Snack + Aufdruckfoto | 6/0/5 → 7/0/4 | „MHD 03/2028“ vom schrägen Aufdruck |
+| AlpenGrün Mash | 6/1/4 → 8/0/3 | „Chargennummer 01102000040327“, „Mindestens haltbar bis: 04.09.2026“, Hersteller ohne Fremdtext, Analyse mit Werten |
+| AGROBS Seniormineral | 9/0/2 → 9/0/2 | „(3a672a)“ statt „(336728)“ |
+| Vitakraft | keine Karten | Futtermittelart nicht erkannt (mehrsprachig, hochkant), unverändert |
+| proCani (3 Fotos) | 1/2/7 → 3/0/7 | Feuchte „77,0 %“ als Beleg |
+| animonda Hundesnack | 3/0/8 → 6/4/1 | Zusammensetzung, Analyse, Inverkehrbringer, Verweis auf Aufdruck |
+| Kaufland-Dose | 3/2/6 → 3/2/6 | 53 Zeichen mehr Text, Karten gleich |
+| Lucky-Kitty | 8/1/1 → 7/2/1 | Partie nicht mehr „40233“ (Postleitzahl), sondern „Bezugsnummer der Partie:“ als Hinweis |
+
+Offen aus dieser Runde:
+
+- Nettomenge: „5kg“ (Mash), „Inhalt: 3 kg“ (Seniormineral, gelesen als „3 k“), „400 g“ (Kaufland), „500g“ (proCani), „e 200 g“ (Lucky-Kitty), „e100g“ (animonda) werden nicht belegt. Große, fette Schrift neben dem ℮-Zeichen liest das Modell schlecht. Für das Seniormineral verlangt die Abnahme in CLAUDE.md „3 kg“; das war auch vorher nicht erfüllt.
+- proCani: Zusammensetzung („Zusammenseizung“ in sehr kleiner Schrift), Haltbarkeit „09.12.26“ und Hersteller bleiben ohne Treffer. Die Karte Futtermittelart zeigt einen Fließtextsatz mit „Heimtierfutter“ als Beleg, auf dem Etikett steht „Mischfuttermittel / straight feed“.
+- Lucky-Kitty: Feuchtigkeit wird als „737%“ gelesen (Komma fehlt), die Karte bleibt „Unklar“.
+- Kaufland-Dose: Hersteller und Nettomasse liegen im Schatten und bleiben ungelesen.
+- Katzenmilch-Snack: „Zusatzstoffe/kg: Taurin 570 mg/kg.“ steht doppelt im Beleg.
+- Laufzeit in Chromium: 4 bis 91 s je Etikett (vorher 3 bis 90 s). Die hochkant fotografierten Etiketten brauchen wegen der Drehversuche 52 bis 91 s. Auf dem iPhone nicht gemessen.

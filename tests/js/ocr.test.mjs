@@ -1258,6 +1258,27 @@ test("Zusatzstoffe: Liste nur aus Menge und Kennnummer ohne Stoffnamen", () => {
   assert.match(result.matchedText, /3b605, 1,4 mg 3b503, 0,1 mg 3b202/);
 });
 
+test("Mindesthaltbarkeit: Rest der Feldüberschrift „haltbar“ mit Datum in der nächsten Zeile", () => {
+  const rule = { id: "art16_002", severity: "critical", patterns: [{ patternValue: "Mindestens haltbar bis", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.9 }] };
+  const boxed = Labeling.check("Ergänzungsfuttermittel für Pferde\nChargennummer\n01102000040327\nhaltbar\n04.09.2026\nKühl lagern.", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(boxed.status, "found");
+  assert.match(boxed.matchedText, /04\.09\.2026/);
+  // Im Fließtext ist „haltbar“ vor einem Datum keine Feldüberschrift.
+  const prose = Labeling.check("Ergänzungsfuttermittel für Pferde\nNach dem Öffnen kühl gelagert lange haltbar\n04.09.2026 abgefüllt", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.notEqual(prose.status, "found");
+});
+
+test("Zusammensetzung: fremdsprachige Überschrift der Nachbarspalte am Zeilenende", () => {
+  const rule = { id: "art17_003_complementary", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const label = "Ergänzungsfuttermittel für ausgewachsene Hunde\nZusammensetzung: Fleisch und tierische Nebenerzeugnisse (90 %, 45 % vom Composition:\nHuhn und 4 % vom Wild), Apfel (4 %), Mineralstoffe. Analytische Bestandteile:\nProtein 37 %, Fettgehalt 23 %";
+  const result = Labeling.check(label, FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.match(result.matchedText, /^Zusammensetzung: Fleisch und tierische Nebenerzeugnisse \(90 %, 45 % vom Huhn und 4 % vom Wild\), Apfel \(4 %\), Mineralstoffe\./);
+  // Eine eigene englische Zutatenliste bleibt ein eigener Abschnitt.
+  const english = Labeling.check("Complementary feed for dogs\nComposition:\nmeat and animal derivatives (90 %), apple (4 %), minerals", FEED_TYPES[1], [rule]).ruleResults[0];
+  assert.match(english.matchedText || "", /meat and animal derivatives/);
+});
+
 test("Zusammensetzung neben einer anderen Überschrift weist auf ein mehrspaltiges Layout hin", () => {
   const rule = { id: "art17_003_mineral", severity: "critical", patterns: [{ patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
   const result = Labeling.check("Mineralfutter für Rinder\nZusammensetzung: Analytische Bestandteile:\nWeizengrießkleie 4% Phosphor\nCalciumcarbonat 10% Calcium", FEED_TYPES[2], [rule]).ruleResults[0];

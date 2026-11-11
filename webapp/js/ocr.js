@@ -158,10 +158,118 @@ const Ocr = (() => {
   // den Konfidenzfilter bestanden, wird ein einzelnes Wort der einen Spalte nicht nachträglich verworfen.
   const fragmentOrigin = new WeakMap();
 
+  // ── Randspalte neben Fließtext ──
+  // Neben dem Haupttext steht oft eine schmale zweite Spalte: ein Kasten mit Hersteller, Charge und Haltbarkeit oder
+  // eine Tabelle „Inhaltsstoffe“. Sie reicht nicht über die ganze Höhe und liegt nicht in der Mitte, die Suche nach
+  // einer Spaltenlücke für das ganze Etikett findet sie nicht. Erkannt wird sie an einer Folge von Zeilen mit einer
+  // breiten Wortlücke an derselben Stelle. Die Zeilen der Folge werden an der Lücke getrennt: erst der linke Text,
+  // dann die Randspalte.
+  // Streng gehalten: mindestens vier getrennte Zeilen, links Fließtext (im Median mindestens vier Wörter), rechts
+  // überwiegend Text. Eine Tabelle aus Name und Wert („Rohprotein … 17,8 %“) bleibt deshalb zusammen.
+  function widestGap(words, height) {
+    let best = null;
+    const gaps = [];
+    for (let j = 1; j < words.length; j++) {
+      const from = words[j - 1].bbox.x1;
+      const to = words[j].bbox.x0;
+      gaps.push(to - from);
+      if (!best || to - from > best.to - best.from) best = { from, to, at: j };
+    }
+    if (!best || best.to - best.from < height * 1.5) return null;
+    // Deutlich breiter als die übrigen Wortabstände der Zeile (Blocksatz hat überall breite Abstände).
+    const others = gaps.filter((_, index) => index !== best.at - 1).sort((a, b) => a - b);
+    const usual = others.length ? others[Math.floor(others.length / 2)] : 0;
+    return best.to - best.from >= usual * 2.5 ? best : null;
+  }
+
+  function sideColumnRuns(lines) {
+    const sorted = lines.map(words => words.slice().sort((a, b) => a.bbox.x0 - b.bbox.x0));
+    const runs = [];
+    let index = 0;
+    while (index < lines.length) {
+      const height = lineHeight(sorted[index]);
+      const gap = widestGap(sorted[index], height);
+      if (!gap) { index++; continue; }
+      let from = gap.from;
+      let to = gap.to;
+      // Freier Bereich einer Zeile, der das Band am besten deckt: eine Wortlücke oder der Rand neben dem Text (eine
+      // längere linke Zeile schiebt den Bandanfang nach rechts, eine Zeile nur der Randspalte das Ende nach links).
+      // Bleibt kein Band von mindestens einer Zeilenhöhe, endet die Folge.
+      const narrow = words => {
+        let nextFrom = from;
+        let nextTo = from;
+        const edges = [-Infinity, ...words.flatMap(w => [w.bbox.x0, w.bbox.x1]), Infinity];
+        for (let e = 0; e < edges.length; e += 2) {
+          const lo = Math.max(edges[e], from);
+          const hi = Math.min(edges[e + 1], to);
+          if (hi - lo > nextTo - nextFrom) { nextFrom = lo; nextTo = hi; }
+        }
+        if (nextTo - nextFrom < height) return false;
+        from = nextFrom;
+        to = nextTo;
+        return true;
+      };
+      let end = index;
+      while (end + 1 < lines.length && narrow(sorted[end + 1])) end++;
+      // Zeilen direkt darüber gehören dazu, wenn sie das Band frei lassen (ihre eigene Lücke war als Anfang zu schmal).
+      let start = index;
+      const floor = runs.length ? runs[runs.length - 1].end + 1 : 0;
+      while (start > floor && narrow(sorted[start - 1])) start--;
+      let split = 0;
+      let rightText = 0;
+      let rightRows = 0;
+      const leftCounts = [];
+      for (let k = start; k <= end; k++) {
+        const left = sorted[k].filter(w => w.bbox.x1 <= from + 1);
+        const right = sorted[k].filter(w => w.bbox.x0 >= to - 1);
+        if (left.length && right.length) { split++; leftCounts.push(left.length); }
+        if (right.length) {
+          rightRows++;
+          if (/^\P{N}*\p{L}{2}/u.test(right[0].text)) rightText++;
+        }
+      }
+      leftCounts.sort((a, b) => a - b);
+      const prose = leftCounts.length ? leftCounts[Math.floor(leftCounts.length / 2)] >= 4 : false;
+      // Dieselbe Randspalte läuft weiter, wenn die Folge an die vorige anschließt (höchstens zwei Zeilen über die
+      // ganze Breite dazwischen) und rechts an derselben Stelle beginnt. Dann genügen zwei getrennte Zeilen.
+      const previous = runs[runs.length - 1];
+      const continues = previous && start <= previous.end + 3 && Math.abs(to - previous.to) <= height * 2;
+      if (prose && (continues ? split >= 2 : split >= 4 && rightText >= rightRows * 0.6)) {
+        runs.push({ start, end, x: (from + to) / 2, to });
+        index = end + 1;
+      } else index++;
+    }
+    return runs;
+  }
+
+  function reorderSideColumns(lines) {
+    if (lines.length < 4 || !lines.every(words => words.length && words.every(w => w.bbox))) return lines;
+    const runs = sideColumnRuns(lines);
+    if (!runs.length) return lines;
+    const result = [];
+    let at = 0;
+    for (const run of runs) {
+      result.push(...lines.slice(at, run.start));
+      const left = [];
+      const right = [];
+      for (const words of lines.slice(run.start, run.end + 1)) {
+        const l = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 < run.x);
+        const r = words.filter(w => (w.bbox.x0 + w.bbox.x1) / 2 >= run.x);
+        for (const part of [l, r]) if (part.length && part.length < words.length) fragmentOrigin.set(part, words);
+        if (l.length) left.push(l);
+        if (r.length) right.push(r);
+      }
+      result.push(...left, ...right);
+      at = run.end + 1;
+    }
+    result.push(...lines.slice(at));
+    return result;
+  }
+
   /** Ordnet die Zeilen eines zweispaltigen Etiketts spaltenweise (links, dann rechts). */
   function reorderColumns(lines) {
     const gutter = findColumnGutter(lines);
-    if (!gutter) return lines;
+    if (!gutter) return reorderSideColumns(lines);
     const tolerance = gutter.height * 0.4;
     const result = [];
     let left = [];
@@ -255,7 +363,9 @@ const Ocr = (() => {
     if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) return [];
     const cols = override?.cols ?? Math.min(TILE_MAX_PER_SIDE, Math.max(1, Math.ceil(width / TILE_TARGET)));
     const rows = override?.rows ?? Math.min(TILE_MAX_PER_SIDE, Math.max(1, Math.ceil(height / TILE_TARGET)));
-    if (cols * rows < 2) return [];
+    // Ein großes Foto, das in eine Kachel passt, bleibt ganz. Ein kleines (unter einer Kachelkante) wird als eine
+    // vergrößerte, aufbereitete Kachel gelesen: Schrift im Schatten wird so oft erst lesbar.
+    if (cols * rows < 2 && Math.max(width, height) >= TILE_TARGET) return [];
     const tiles = [];
     const tileWidth = width / cols;
     const tileHeight = height / rows;
@@ -322,6 +432,18 @@ const Ocr = (() => {
       }
     }
     return prev[y.length] <= Math.max(1, Math.floor(Math.max(x.length, y.length) / 4));
+  }
+
+  // Die Seitenaufteilung liest auch um 90° gedrehte Textblöcke. Deren Wortrahmen sind höher als breit; als waagerechte
+  // Zeilen verarbeitet kämen die Wörter durcheinander. Eine Zeile gilt als hochkant, wenn die Mehrheit ihrer Wörter
+  // ab drei Zeichen deutlich höher als breit ist.
+  function uprightLines(lines) {
+    return lines.filter(words => {
+      const long = words.filter(w => w.bbox && w.text.length >= 3);
+      if (!long.length) return true;
+      const tall = long.filter(w => w.bbox.y1 - w.bbox.y0 > (w.bbox.x1 - w.bbox.x0) * 1.3).length;
+      return tall * 2 <= long.length;
+    });
   }
 
   // Mittlere Neigung langer Zeilen (ab vier Wörtern und 200 Bildpunkten Länge), 0 ohne solche Zeilen.
@@ -391,9 +513,15 @@ const Ocr = (() => {
             const home = homes[index];
             if (home) {
               // Gleich gelesen: nichts zu tun. Sonst gewinnt die deutlich sicherere Lesung, aber nur, wenn sie nicht
-              // weniger Zeichen trägt (ein „%“ ersetzt kein „11%“).
-              if (similarText(word.text, home.twin.text)) home.twin.confidence = Math.max(home.twin.confidence, word.confidence);
-              else if (word.confidence >= home.twin.confidence + 10 && countAlnum(word.text) >= countAlnum(home.twin.text)) Object.assign(home.twin, word);
+              // weniger Zeichen trägt (ein „%“ ersetzt kein „11%“, ein „11“ auch nicht).
+              // Das gilt auch für fast gleich Gelesenes („HD“ unsicher, „MHD“ sicher).
+              if (word.text === home.twin.text) home.twin.confidence = Math.max(home.twin.confidence, word.confidence);
+              // Bei sehr viel sichererer Lesung darf sie etwas kürzer sein („03/2028“ statt „0312075“).
+              else if (word.text.length >= home.twin.text.length * 0.75
+                       && ((word.confidence >= home.twin.confidence + 10 && countAlnum(word.text) >= countAlnum(home.twin.text)
+                            && word.text.length >= home.twin.text.length)
+                           || (word.confidence >= home.twin.confidence + 30 && countAlnum(word.text) >= countAlnum(home.twin.text) * 0.75))) Object.assign(home.twin, word);
+              else if (similarText(word.text, home.twin.text)) home.twin.confidence = Math.max(home.twin.confidence, word.confidence);
               return;
             }
             // Neues Wort: nur wenn es sicher gelesen ist (Rauschzeichen am Zeilenrand fallen weg). Es kommt in die Zeile
@@ -455,6 +583,22 @@ const Ocr = (() => {
             && words.filter(w => w.confidence >= 60 && countAlnum(w.text) >= 2).length < 2) continue;
         kept.push({ words, tile, row: tile.row, col: tile.col, source: tile.source, first: tile === tiles[0] });
       }
+    }
+    // Zwei Wörter einer Zeile an derselben waagerechten Stelle sind zwei Lesungen desselben Aufdrucks, die wegen eines
+    // entarteten Rahmens nicht als Gegenstück erkannt wurden. Die deutlich unsicherere Lesung entfällt.
+    for (const line of kept) {
+      if (line.words.length < 2) continue;
+      const drop = new Set();
+      for (let i = 0; i < line.words.length; i++) {
+        for (let j = i + 1; j < line.words.length; j++) {
+          const a = line.words[i];
+          const b = line.words[j];
+          const overlap = Math.min(a.bbox.x1, b.bbox.x1) - Math.max(a.bbox.x0, b.bbox.x0);
+          if (overlap < Math.min(a.bbox.x1 - a.bbox.x0, b.bbox.x1 - b.bbox.x0) * 0.5) continue;
+          if (Math.abs(a.confidence - b.confidence) >= 20) drop.add(a.confidence < b.confidence ? a : b);
+        }
+      }
+      if (drop.size) line.words = line.words.filter(w => !drop.has(w));
     }
     // Reihenfolge von oben nach unten. Die Zeilenneigung (schräg fotografiert) wird herausgerechnet, damit eine kurze
     // Zeile am rechten Rand nicht vor ihre linken Nachbarn rutscht.
@@ -568,7 +712,7 @@ const Ocr = (() => {
    * die Schrift als Maske genommen und für jeden Winkel das Zeilenprofil gebildet; bei geraden Zeilen ist das Profil
    * am schärfsten. 0, wenn kein Winkel klar besser ist als „gerade“.
    */
-  function estimateSkew(gray, width, height, maxAngle = 6) {
+  function estimateSkew(gray, width, height, maxAngle = 15) {
     const factor = Math.max(1, Math.ceil(width / 420));
     const w = Math.floor(width / factor);
     const h = Math.floor(height / factor);
@@ -981,7 +1125,10 @@ const Ocr = (() => {
     if ((content.match(OTHER_ANALYSIS_WORDS) || []).length < 2) return null;
     const entries = [];
     for (const match of content.matchAll(ANALYSIS_ENTRY)) {
-      const names = match[1].replace(/^[\s•·+«»*,;.]+|[\s•·+«»*,;]+$/g, "").split("/").map(n => n.trim());
+      // Eine Zahl ohne Einheit mitten in den Namen („Protein/… 11 Fettgehalt/… 5 %“) ist ein Wert, dessen Einheit
+      // nicht gelesen wurde. Der Eintrag davor entfällt; der Wert gehört nur zu den Namen dahinter.
+      const own = match[1].split(/(?:^|\s)\d[\d.,]*\s+(?=\p{L})/u).pop();
+      const names = own.replace(/^[\s•·+«»*,;.]+|[\s•·+«»*,;]+$/g, "").split("/").map(n => n.trim());
       const name = names.find(n => GERMAN_ANALYTIC_NAME.test(n));
       if (name) entries.push(`${name} ${match[2]} ${match[3]}`);
     }
@@ -1044,7 +1191,7 @@ const Ocr = (() => {
     return out.join("\n");
   }
 
-  return { textFromResult, textFromLines, tileGrid, mergeTiles, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
+  return { textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).
