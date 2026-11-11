@@ -4,7 +4,7 @@
 
 FeedLabelCheck unterstützt die Kontrolle von Futtermittel-Zusatzstoffen und Etiketten. Die PWA läuft als statische Website in `webapp/`. Sie prüft Laborwerte gegen hinterlegte Grenzwerte, sucht Angaben in Etikettentext und erschließt zwei Futtermittelkataloge. Die Ergebnisse unterstützen die manuelle Kontrolle. Halte in der Ausgabe erkennbar, welche Daten, Regeln und Annahmen zu einem Ergebnis geführt haben.
 
-- Halte Laborwerte, Etikettentexte und Fotos lokal im Browser. Externe Abrufe dienen der Bereitstellung der App und dem Download von Fachdaten. Änderungen am Datenschutzmodell brauchen eine Produktentscheidung.
+- Halte Laborwerte, Etikettentexte und Fotos lokal im Browser. Externe Abrufe dienen der Bereitstellung der App und dem Download von Fachdaten. Änderungen am Datenschutzmodell brauchen eine Produktentscheidung. Ausnahme: optionale externe OCR auf Nutzerwunsch, siehe Produktentscheidung vom 11. November 2026.
 - Behandle fehlende oder widersprüchliche Angaben, nicht vergleichbare Einheiten und unvollständigen OCR-Text als eigene Zustände. Eine automatisch erkannte Angabe oder ein Treffer im Prüfmuster belegt für sich allein keine fachliche Konformität.
 - Ändere Fachlogik, Datenverträge und Oberfläche in getrennt prüfbaren Schritten. Verwende vorhandene Module und Regressionstests. `laves_eval.py` und die Swift-Dienste sind Vergleichsreferenzen. Bei Abweichungen sind Daten, fachliche Vorgaben und konkrete Fälle maßgeblich.
 - Die Oberfläche bleibt in Entwicklung. PR #34 hat Navigation, sichtbaren gemeinsamen Prüfkontext, mobile Bedienung und Fotoaufnahme eingeführt. Tabs, CSS-Klassen und Layoutdetails sind Momentaufnahmen. Halte fachliche Fixes möglichst unabhängig vom Markup. [Oberfläche aus PR #34](https://github.com/Lightblue87/FeedLabelCheck/pull/34)
@@ -320,3 +320,37 @@ Zusätzlich zur neutralen Darstellung von OCR-Nichttreffern ist in **PR #54** nu
 - **`.github/workflows/test-js.yml`** führt die JavaScript-Tests automatisch bei PRs aus. [GitHub Actions Lauf 42801689415](https://github.com/Lightblue87/FeedLabelCheck/actions/runs/42801689415): **208/208 Tests erfolgreich** auf dem Stand nach den OCR-/Teständerungen; spätere reine Dokumentationsänderungen beeinflussen diesen Teststand nicht.
 
 **Restaufgaben:** Gleiche Originalfotos in echter iPhone-Home-Screen-PWA erneut aufnehmen, qualitative und zeitliche Auswirkungen protokollieren; mindestens ein weiteres reales Heimtier- und Nutztier-Mehrsprachenetikett testen; spätere alternative Offline-Sprachmodelle nur mit gemessener Erkennungsverbesserung, geprüften Lizenz-/Speicherfolgen und korrektem Service-Worker-/Vendor-Cache einführen. **Mehrsprachiger Rohtext gilt nicht als rechtliche Erfüllung deutscher Kennzeichnungspflichten.** Kein Merge ohne ausdrückliche Freigabe.
+
+
+## Produktentscheidung: Optionale externe OCR mit Unlimited-OCR (11.11.2026)
+
+**Verbindliche Entscheidung des Auftraggebers:** Etikettenfotos sind keine Risikobilder. Auf ausdrücklichen Wunsch des Nutzers darf die PWA Fotos deshalb zur Texterkennung an die öffentliche Hugging-Face-Demo von Unlimited-OCR senden. Das ist eine bewusste, eng begrenzte Ausnahme von der Regel „Fotos bleiben lokal im Browser“ (siehe Arbeitsregeln). Laborwerte, Prüfverlauf und alle übrigen Daten bleiben unverändert lokal. **Es dürfen keine Kosten entstehen.** Der Stand ist geplant, noch nicht umgesetzt. [Unlimited-OCR (Baidu, MIT)](https://github.com/baidu/Unlimited-OCR) · [Hugging Face Space](https://huggingface.co/spaces/baidu/Unlimited-OCR)
+
+### Hintergrund
+
+- Unlimited-OCR ist ein Vision-Sprachmodell von Baidu, eine Weiterentwicklung von DeepSeek-OCR. Es braucht eine NVIDIA-GPU (CUDA) oder einen vLLM-/SGLang-Server und läuft weder im Browser noch auf dem iPhone. Eine Einbettung in die statische PWA ist daher nicht möglich.
+- Die Demo läuft als Hugging-Face-Space auf ZeroGPU und lässt sich vermutlich über den Gradio-JS-Client direkt aus dem Browser aufrufen. Endpunkte, Eingaben (Bild/PDF, Modus schnell oder genau) und Ausgabeformat sind vor dem Bau am Space zu prüfen und hier nachzutragen.
+
+### Vorgaben für die Umsetzung
+
+1. **Opt-in.** Schalter im Etikett-Tab, etwa „Genauere Erkennung (extern, Hugging Face)“, standardmäßig aus. Beim Einschalten deutlich anzeigen, dass Fotos das Gerät verlassen und an Hugging Face gesendet werden. Tesseract bleibt der Standard.
+2. **Metadaten entfernen.** Vor dem Upload das Foto neu kodieren (Canvas), damit EXIF-Daten wie GPS und Kamerainformationen nicht mitgesendet werden. Das unveränderte Original bleibt im lokalen Prüfverlauf (Produktentscheidung 4 vom 9. November 2026 gilt weiter).
+3. **Rückfall.** Bei Offline, Fehler, Zeitüberschreitung, Warteschlange, erschöpftem Kontingent oder geändertem Space automatisch lokal mit Tesseract weiterlesen und den Grund anzeigen. Die PWA muss ohne den Space vollständig funktionieren.
+4. **Herkunft sichtbar.** In Ergebnis und Verlauf festhalten, welche Erkennung (Tesseract lokal oder Unlimited-OCR extern) den Text geliefert hat. Der externe Text ist eine Eingabe wie jeder OCR-Text: sicher rendern, nicht als Beleg ohne Abgleich mit dem Original behandeln.
+5. **Ausgabe bereinigen.** Das Modell liefert Text mit Layout- und Markdown-Markierungen. `ocr.js` muss diese vor der Regelprüfung entfernen, Tabellen zeilenweise erhalten und keine Werte ergänzen. Regressionstests mit den Referenzfällen (u. a. Pavo WeightLift, AGROBS Seniormineral, Purina) ergänzen.
+6. **Abhängigkeit.** Den Gradio-JS-Client als fertige Datei unter `webapp/vendor/` einbinden (kein Build-Schritt), in die Vorabladeliste von `sw.js` aufnehmen und `VENDOR_VERSION` erhöhen. Netzfreigabe nur für die tatsächlich benötigten Hugging-Face-Hosts.
+
+### Hugging-Face-Konto und Kostenfreiheit
+
+- Der Auftraggeber hat ein eigenes, kostenloses Hugging-Face-Konto. ZeroGPU-Spaces sind für alle kostenlos nutzbar. Laut Hugging-Face-Dokumentation (Stand 11.11.2026) beträgt das tägliche GPU-Kontingent ohne Anmeldung 2 Minuten, mit kostenlosem Konto 5 Minuten und mit PRO 40 Minuten. Mehr Kontingent gibt es mit kostenlosem Konto nicht; das Kontingent bestimmt auch die Priorität in der Warteschlange. [ZeroGPU-Dokumentation](https://huggingface.co/docs/hub/spaces-zerogpu)
+- Verbraucht wird die Laufzeit der GPU-Funktion des Spaces, nicht die Wartezeit. Laut Nutzerberichten kann pro Aufruf die vom Space reservierte Dauer (Standard 60 Sekunden) zählen. Mit kostenlosem Konto reicht das möglicherweise nur für wenige Fotos pro Tag. Den tatsächlichen Verbrauch pro Foto vor der Umsetzung messen und hier nachtragen.
+- **Token nur lokal.** Ein Hugging-Face-Token darf **niemals** im Repository, in `webapp/`, im Build, in Logs, im Prüfverlauf oder in Exporten stehen. Die Website ist öffentlich, jeder Token im Code wäre auslesbar. Jeder Nutzer trägt optional seinen eigenen Token in der App ein. Er wird nur lokal auf dem Gerät gespeichert, lässt sich jederzeit löschen und wird nur an Hugging Face gesendet. Einen fein eingeschränkten Token mit minimalen Rechten (nur Lesen) verwenden; den tatsächlich nötigen Umfang beim Bau prüfen. Ohne Token läuft der Aufruf anonym mit dem kleineren Kontingent.
+- **Kostensperre.** Kein PRO-Abo, keine Prepaid-Credits, keine Inference Endpoints, keine kostenpflichtige Space-Hardware und kein eigenes Duplikat des Spaces auf bezahlter Hardware. Ist das Kontingent erschöpft, endet die externe Erkennung für den Tag mit Rückfall auf Tesseract, nicht mit einem kostenpflichtigen Pfad.
+
+### Risiken und Grenzen
+
+- Die Demo ist kein offizieller Dienst mit Zusage. Sie kann jederzeit geändert, pausiert, eingeschränkt oder entfernt werden. Die Funktion bleibt deshalb optional und darf keine Kernfunktion ersetzen.
+- Nutzungsbedingungen von Hugging Face und des Spaces vor der Freigabe prüfen, auch zur automatisierten Nutzung.
+- Ein besseres OCR-Ergebnis ändert nichts an den Statusregeln: kein Konformitätsstempel aus OCR-Text, Abgleich am Originalfoto bleibt nötig.
+
+**Abnahme:** Dieselben Originalfotos mit Tesseract und Unlimited-OCR lesen und pro Pflichtangabe vergleichen; Laufzeit, Kontingentverbrauch und Rückfall (offline, Kontingent erschöpft, Space nicht erreichbar) protokollieren; prüfen, dass kein Token und keine EXIF-Daten das Gerät verlassen bzw. im Repository landen. **Kein Merge ohne ausdrückliche Freigabe.**
