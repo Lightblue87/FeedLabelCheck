@@ -272,3 +272,32 @@ test("germanView: Analyseblock wird nur umgeschrieben, wenn er vollständig und 
   assert.equal(Ocr.germanView(head + "Feuchtigkeit/Humidité 8 % Phosphor/Phosphore 4 g / kg Taurin/Taurine 600 mg / kg."),
     "Analytische Bestandteile: Rohprotein 24 %, Fettgehalt 5 %, Feuchtigkeit 8 %, Phosphor 4 g/kg, Taurin 600 mg/kg.");
 });
+
+test("Pavo (Nutzerfoto): gestörte Überschrift und Nährstoff-Fragmente davor – Beleg ist die deutsche Zutatenzeile", () => {
+  const raw = [
+    "Omega 6 Omega-6 Omega-%",
+    "Samenstelling / Komposition / Composition / Sa",
+    "Kalium Potas Bold Drasik",
+    "Magnesium Magnez",
+    "Omega6 Omega-6 Eemege Omega 6",
+    "Composition Composiciön Sammansättning Kompozycla/",
+    "NL Luzerne, Rijstevoermeel, Lijnzaad, Biergist, Monocalciumfosfaat, Magnesiumoxide",
+    "DE Luzerne, Reiskleie, Leinsaat, Bierhefe, Mon Magnesiumoxid",
+    "EN Altalfa, Rice bran, Linseed, Brewer's yeast, Monocalcium phosphate, Magnesium oxide",
+  ].join("\n");
+  const feedType = { id: "complementary_feed", nameDe: "Ergänzungsfuttermittel", keywordsDe: ["Ergänzungsfuttermittel"] };
+  const rule = { id: "art17_003_complementary", severity: "critical", patterns: [{
+    patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const result = Labeling.check(Ocr.germanView(raw), feedType, [rule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.equal(result.matchedText, "Komposition: Luzerne, Reiskleie, Leinsaat, Bierhefe, Mon Magnesiumoxid");
+  assert.ok(!/Kalium|Omega/.test(result.matchedText));
+});
+
+test("Eine Zeile „DE …“ ohne Zusammensetzungs-Überschrift davor ist kein Zutatenbeleg", () => {
+  const feedType = { id: "complementary_feed", nameDe: "Ergänzungsfuttermittel", keywordsDe: ["Ergänzungsfuttermittel"] };
+  const rule = { id: "art17_003_complementary", severity: "critical", patterns: [{
+    patternValue: "Zusammensetzung", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+  const result = Labeling.check("Ergänzungsfuttermittel.\nDE Musterstraße 1, 12345 Musterstadt, Deutschland", feedType, [rule]).ruleResults[0];
+  assert.notEqual(result.status, "found");
+});

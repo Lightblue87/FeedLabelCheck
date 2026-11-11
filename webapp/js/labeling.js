@@ -717,12 +717,29 @@ const Labeling = (() => {
   // nicht vorzeitig, und die fremde Überschrift bekommt nicht den deutschen Folgetext als Liste.
   const NEIGHBOUR_COMPOSITION_HEADING = /(?<=\S[ \t]+)(?:composition|ingredients|composizione|samenstelling|composici[oó]n)[ \t]*:[ \t]*(?=\n)/gi;
 
+  // Gestörte Mehrsprachen-Überschrift: Die Texterkennung hat die Überschrift verstümmelt oder Nährstoff-Fragmente
+  // davor gelesen, die deutsche Zeile „DE Luzerne, Reiskleie, …“ ist aber lesbar. Sie gilt als Beleg, wenn kurz
+  // davor eine Überschrift „Zusammensetzung/Komposition/Composition/Samenstelling“ steht. Eine Zeile „DE …“ ohne
+  // Überschrift davor (Länderkürzel, Adresse) zählt nicht.
+  function germanListAfterHeading(text) {
+    for (const m of text.matchAll(/^DE[ \t]+([^\n]+)$/gim)) {
+      const list = m[1].trim();
+      if ((list.match(/,/g) || []).length < 2 || !/,\s*\p{L}/u.test(list)) continue;
+      if (/\b(?:Samenstelling|Komposition|Composition|Zusammensetzung)\b/i.test(text.slice(Math.max(0, m.index - 800), m.index))) {
+        return `Komposition: ${list}`;
+      }
+    }
+    return null;
+  }
+
   function compositionEvidence(rawText) {
     const text = /\b[zt]usammensetzung\b/i.test(rawText) ? rawText.replace(NEIGHBOUR_COMPOSITION_HEADING, "") : rawText;
     const listed = text.match(MULTILINGUAL_COMPOSITION);
     if (listed && /,\s*\p{L}/u.test(listed[2])) return `${listed[1]}: ${listed[2]}`;
     const mixed = mixedColumnComposition(text);
     if (mixed) return mixed;
+    const taggedGerman = germanListAfterHeading(text);
+    if (taggedGerman) return taggedGerman;
     const heading = /\b(?:[zt]usammensetzung|composition|komposition)\b[^:\n]{0,65}:[\s=]*|^(?:(?:[zt]usammensetzung|composition|komposition)[ \t]*|ingredients[ \t]*:?[ \t]*)\n/gimu;
     const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition|ingredients)\b[^:\n]{0,65}:|\n[ \t]*(?:[zt]usammensetzung|composition|ingredients)[ \t]*\n|\n[ \t]*crude protein[ \t:]*[<>]?[ \t]*\d|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
