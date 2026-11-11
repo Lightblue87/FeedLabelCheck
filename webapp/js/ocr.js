@@ -1251,7 +1251,13 @@ const Ocr = (() => {
     return out.join("\n");
   }
 
-  return { textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
+  /** Fehlertext für Anzeige und Warnungen. Die OCR-Worker können mit null oder einem String abbrechen. */
+  function errorText(e) {
+    if (e == null) return "unbekannter Fehler (Texterkennung ohne Meldung abgebrochen)";
+    return String(e.message || e) || "unbekannter Fehler";
+  }
+
+  return { errorText, textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).

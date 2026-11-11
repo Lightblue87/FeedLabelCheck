@@ -111,7 +111,7 @@
       // 2. Im Hintergrund auf neue Daten prüfen
       backgroundUpdate();
     } catch (e) {
-      toast("Fehler beim Laden der Daten: " + e.message, "error");
+      toast("Fehler beim Laden der Daten: " + Ocr.errorText(e), "error");
     }
   }
 
@@ -474,7 +474,7 @@
     let queue = Promise.resolve();
     const enqueue = (fn) => { const p = queue.then(fn); queue = p.catch(() => {}); return p; };
 
-    const reportError = (what, e) => toast(`${what}: ${e?.message || e}`, "error", true);
+    const reportError = (what, e) => toast(`${what}: ${Ocr.errorText(e)}`, "error", true);
 
     const retentionText = (e) => {
       if (e.keep) return "dauerhaft behalten";
@@ -1335,7 +1335,7 @@
           rotated = await readRotatedLabel(worker, file, data, output);
           if (rotated) ({ input, data } = rotated);
         } catch (e) {
-          warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${e?.message || e})`);
+          warnings.push(`Ausrichtungsprüfung fehlgeschlagen (${Ocr.errorText(e)})`);
         }
       }
       // Zweite Lesung mit automatischer Seitenaufteilung (Tesseract trennt Spalten und Textblöcke selbst) und
@@ -1377,7 +1377,7 @@
           data = { ...data, blocks: [{ paragraphs: [{ lines: lines.map(words => ({ words })) }] }] };
         }
       } catch (e) {
-        warnings.push(`Zweite Lesung fehlgeschlagen (${e?.message || e})`);
+        warnings.push(`Zweite Lesung fehlgeschlagen (${Ocr.errorText(e)})`);
       }
       await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
       const primary = Ocr.textFromResult(data);
@@ -1408,7 +1408,7 @@
             }
           }
         } catch (e) {
-          warnings.push("Nachlesen kleiner Schrift fehlgeschlagen (" + (e?.message || e) + ")");
+          warnings.push("Nachlesen kleiner Schrift fehlgeschlagen (" + Ocr.errorText(e) + ")");
         }
       }
       // Vorhandene Lesungen nutzen, ohne weiteren Durchgang: eine sicher gelesene Mengenzeile an der Mengenüberschrift
@@ -1476,7 +1476,7 @@
           if (ingredients) text += `\n\n${ingredients}`;
         }
       } catch (e) {
-        warnings.push(`Zusatzprüfung fehlgeschlagen (${e?.message || e})`);
+        warnings.push(`Zusatzprüfung fehlgeschlagen (${Ocr.errorText(e)})`);
       } finally {
         try { await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK }); } catch { /* Worker beendet */ }
       }
@@ -1516,8 +1516,11 @@
         return applied;
       } catch (e) {
         status.className = "ocr-status error";
-        status.textContent = "OCR-Fehler: " + e.message
-          + (targetId ? " – die Fotos sind im Verlauf gespeichert, Text kann manuell ergänzt werden." : "");
+        status.textContent = "OCR-Fehler: " + Ocr.errorText(e)
+          + (replaceFrom !== undefined
+            ? " – der bisherige Text blieb unverändert, die Fotos sind im Verlauf gespeichert."
+            : targetId ? " – die Fotos sind im Verlauf gespeichert, Text kann manuell ergänzt werden." : "");
+        return false;
       } finally {
         try { await worker?.terminate(); } catch { /* bereits beendet */ }
       }
