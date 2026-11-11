@@ -1804,3 +1804,11 @@ test("Kennnummer ohne Klammer nach einer Menge: verlesener Buchstabe wird nur be
     Ocr.setAdditiveCodes([]);
   }
 });
+
+test("errorText: OCR-Worker, die mit null, String oder Error abbrechen, ergeben eine lesbare Meldung", () => {
+  assert.match(Ocr.errorText(null), /unbekannter Fehler/);
+  assert.match(Ocr.errorText(undefined), /unbekannter Fehler/);
+  assert.equal(Ocr.errorText("Worker beendet"), "Worker beendet");
+  assert.equal(Ocr.errorText(new Error("kaputt")), "kaputt");
+  assert.match(Ocr.errorText({}), /\[object Object\]|unbekannter Fehler/);
+});
