@@ -348,3 +348,39 @@ test("replaceText ersetzt den Text, verwirft das Ergebnis und lässt Fotos und M
   assert.equal(entry.keep, true);
   assert.equal(await a.replaceText("gibt-es-nicht", "x"), null);
 });
+
+test("Verbindungsverlust (null, InvalidStateError) wird einmal nach Neuverbindung wiederholt", async () => {
+  const LabelHistoryLib = (await import("node:module")).createRequire(import.meta.url)("../../webapp/js/history.js");
+  for (const err of [null, Object.assign(new Error("closing"), { name: "InvalidStateError" })]) {
+    let calls = 0, resets = 0;
+    const result = await LabelHistoryLib.retryOnConnectionLoss(async () => {
+      if (++calls === 1) throw err;
+      return "ok";
+    }, () => resets++);
+    assert.equal(result, "ok");
+    assert.equal(calls, 2);
+    assert.equal(resets, 1);
+  }
+});
+
+test("Kontingent- und Datenfehler werden nicht wiederholt", async () => {
+  const LabelHistoryLib = (await import("node:module")).createRequire(import.meta.url)("../../webapp/js/history.js");
+  for (const name of ["QuotaExceededError", "DataCloneError"]) {
+    let calls = 0;
+    await assert.rejects(LabelHistoryLib.retryOnConnectionLoss(async () => {
+      calls++;
+      throw Object.assign(new Error("x"), { name });
+    }, () => {}), { name });
+    assert.equal(calls, 1);
+  }
+});
+
+test("Ein zweiter Verbindungsfehler wird weitergereicht", async () => {
+  const LabelHistoryLib = (await import("node:module")).createRequire(import.meta.url)("../../webapp/js/history.js");
+  let calls = 0;
+  await assert.rejects(LabelHistoryLib.retryOnConnectionLoss(async () => {
+    calls++;
+    throw Object.assign(new Error("closing"), { name: "InvalidStateError" });
+  }, () => {}), { name: "InvalidStateError" });
+  assert.equal(calls, 2);
+});
