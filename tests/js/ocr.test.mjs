@@ -1812,3 +1812,34 @@ test("errorText: OCR-Worker, die mit null, String oder Error abbrechen, ergeben 
   assert.equal(Ocr.errorText(new Error("kaputt")), "kaputt");
   assert.match(Ocr.errorText({}), /\[object Object\]|unbekannter Fehler/);
 });
+
+// Fotos, die Tesseract nicht selbst dekodiert (iPhone-HEIC), führten zu „Error attempting to read image“.
+test("ocrInputPlan: HEIC, AVIF und unbekannte Typen werden umgewandelt, JPEG in normaler Größe nicht", () => {
+  const { ocrInputPlan } = Ocr;
+  assert.equal(ocrInputPlan("image/jpeg", 4032, 3024).convert, false);
+  assert.equal(ocrInputPlan("image/png", 1512, 2016).convert, false);
+  assert.equal(ocrInputPlan("image/heic", 4032, 3024).convert, true);
+  assert.equal(ocrInputPlan("image/heif", 4032, 3024).convert, true);
+  assert.equal(ocrInputPlan("image/avif", 1512, 2016).convert, true);
+  assert.equal(ocrInputPlan("", 1512, 2016).convert, true);
+  assert.equal(ocrInputPlan(undefined, 1512, 2016).convert, true);
+  const keep = ocrInputPlan("image/heic", 4032, 3024);
+  assert.deepEqual([keep.width, keep.height, keep.scale], [4032, 3024, 1]);
+});
+
+test("ocrInputPlan: 48-MP-Aufnahmen werden auf höchstens 4096 px und 16 Mio. Pixel verkleinert", () => {
+  const plan = Ocr.ocrInputPlan("image/jpeg", 6048, 8064);
+  assert.equal(plan.convert, true);
+  assert.ok(Math.max(plan.width, plan.height) <= 4096);
+  assert.ok(plan.width * plan.height <= 16e6);
+  assert.equal(plan.height, 4096);
+  assert.equal(plan.width, 3072);   // Seitenverhältnis bleibt erhalten
+  assert.deepEqual(Ocr.ocrInputPlan("image/jpeg", 0, NaN), { convert: false, scale: 1, width: 1, height: 1 });
+});
+
+test("isImageReadError erkennt nur den Dekodierfehler von Tesseract", () => {
+  assert.equal(Ocr.isImageReadError(new Error("Error attempting to read image.")), true);
+  assert.equal(Ocr.isImageReadError("Error: Error attempting to read image."), true);
+  assert.equal(Ocr.isImageReadError(new Error("RuntimeError: memory access out of bounds")), false);
+  assert.equal(Ocr.isImageReadError(null), false);
+});

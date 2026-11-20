@@ -1257,7 +1257,32 @@ const Ocr = (() => {
     return String(e.message || e) || "unbekannter Fehler";
   }
 
-  return { errorText, textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
+  // Formate, die Tesseract (Leptonica) selbst dekodiert. HEIC/HEIF vom iPhone, AVIF und unbekannte Typen gehören
+  // nicht dazu: Der Browser zeigt sie an, Tesseract bricht mit „Error attempting to read image“ ab.
+  const OCR_NATIVE_TYPES = new Set(["image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp", "image/bmp"]);
+  const OCR_MAX_SIDE = 4096;       // iOS-Safari begrenzt Canvas-Flächen auf rund 16,7 Mio. Pixel
+  const OCR_MAX_PIXELS = 16e6;
+
+  /**
+   * Entscheidet, ob ein Foto vor der Texterkennung umgewandelt werden muss: bei einem Format, das Tesseract nicht
+   * liest, oder bei einer Größe über der Grenze (z. B. 48-MP-Aufnahmen). Das Original im Verlauf bleibt unverändert.
+   * @returns {{convert: boolean, scale: number, width: number, height: number}}
+   */
+  function ocrInputPlan(type, width, height) {
+    const w = Math.max(1, Number(width) || 1);
+    const h = Math.max(1, Number(height) || 1);
+    const scale = Math.min(1, OCR_MAX_SIDE / Math.max(w, h), Math.sqrt(OCR_MAX_PIXELS / (w * h)));
+    const native = OCR_NATIVE_TYPES.has(String(type || "").toLowerCase());
+    return { convert: !native || scale < 1, scale,
+             width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) };
+  }
+
+  /** Tesseract konnte die Bilddatei nicht dekodieren (Format), im Unterschied zu einem Fehler bei der Erkennung. */
+  function isImageReadError(e) {
+    return /attempting to read image|read image/i.test(errorText(e));
+  }
+
+  return { errorText, ocrInputPlan, isImageReadError, textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).

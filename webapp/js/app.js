@@ -1483,6 +1483,35 @@
       return { text, warnings };
     }
 
+    /**
+     * Liefert eine für Tesseract lesbare Fassung des Fotos. JPEG/PNG/WebP in normaler Größe gehen unverändert durch.
+     * HEIC/HEIF (iPhone), AVIF, unbekannte Typen und sehr große Aufnahmen werden im Browser dekodiert, bei Bedarf
+     * verkleinert und als JPEG neu kodiert (force: auch sonst, als Rückfall nach einem Lesefehler). Die Ausrichtung
+     * folgt dabei den EXIF-Angaben wie in der Fotovorschau. Das Original im Verlauf bleibt unverändert.
+     */
+    async function ocrInput(file, force = false) {
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file);
+      } catch (e) {
+        throw new Error(`Foto lässt sich in diesem Browser nicht öffnen (${file.type || "unbekanntes Format"}): ${Ocr.errorText(e)}`);
+      }
+      try {
+        const plan = Ocr.ocrInputPlan(file.type, bitmap.width, bitmap.height);
+        if (!plan.convert && !force) return file;
+        const canvas = document.createElement("canvas");
+        canvas.width = plan.width;
+        canvas.height = plan.height;
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, plan.width, plan.height);
+        const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.95));
+        canvas.width = canvas.height = 0;   // Canvas-Speicher auf iOS sofort freigeben
+        if (!blob) throw new Error("Foto konnte für die Texterkennung nicht umgewandelt werden");
+        return blob;
+      } finally {
+        bitmap.close();
+      }
+    }
+
     async function doOcr(files, targetId, epoch, replaceFrom) {
       const status = $("#l-ocr-status");
       status.className = "ocr-status busy";
@@ -1495,15 +1524,35 @@
         await worker.setParameters({ user_defined_dpi: "300" });
         let allText = "";
         const warnings = [];
+        let failed = 0;
+        let lastError = null;
         for (let i = 0; i < files.length; i++) {
           const label = `Bild ${i + 1}/${files.length}`;
           status.textContent = `OCR läuft … ${label}`;
-          const photo = await readLabelPhoto(worker, files[i], (what) => {
-            status.textContent = `OCR läuft … ${label} – ${what}`;
-          });
+          const step = (what) => { status.textContent = `OCR läuft … ${label} – ${what}`; };
+          let photo;
+          try {
+            const source = await ocrInput(files[i]);
+            if (source !== files[i]) step("Foto wurde für die Texterkennung umgewandelt");
+            try {
+              photo = await readLabelPhoto(worker, source, step);
+            } catch (e) {
+              // Rückfall: Tesseract kennt das Format trotz passender Typangabe nicht – im Browser neu kodieren.
+              if (source !== files[i] || !Ocr.isImageReadError(e)) throw e;
+              step("Foto wird für die Texterkennung umgewandelt");
+              photo = await readLabelPhoto(worker, await ocrInput(files[i], true), step);
+            }
+          } catch (e) {
+            // Ein unlesbares Foto bricht die übrigen nicht ab.
+            failed++;
+            lastError = e;
+            warnings.push(`${label}: nicht lesbar (${Ocr.errorText(e)})`);
+            continue;
+          }
           allText += (allText ? "\n\n" : "") + photo.text;
           for (const w of photo.warnings) warnings.push(`${label}: ${w}`);
         }
+        if (failed === files.length) throw lastError;
         const applied = await appendOcrText(targetId, allText, epoch, replaceFrom);
         status.className = "ocr-status";
         status.textContent = applied
