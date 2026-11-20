@@ -1257,6 +1257,203 @@ const Ocr = (() => {
     return String(e.message || e) || "unbekannter Fehler";
   }
 
+  // ── Deutscher Deklarationsblock auf mehrsprachigen Packungen ──
+  // Viele Heimtierfutter drucken je Sprache einen eng gesetzten Absatz über die ganze Breite („DE Alleinfuttermittel für
+  // Katzen / Zusammensetzung 40 % Brühe, … Analytische Bestandteile Rohprotein …“), gefolgt von den übrigen Sprachen.
+  // Im Vollbild ist die Schrift zu klein, und die Kacheln zerschneiden die Zeilen. Der Absatz wird über die Wortpositionen
+  // der ersten Lesung gefunden und vergrößert in zwei Hälften neu gelesen (Pets Deli Silky Cream, Nutzerfoto 20.11.2026).
+  // Wörter der deutschen Pflichtangaben, auch in zerlesenen Zeilen meist erhalten („nalytische Bestandteile! Rohprotein“).
+  const GERMAN_DECLARATION_WORDS = /futtermittel|Zusammensetzung|Bestandteile|Roh(?:protein|fett|faser|asche)|Zusatzstoffe|Ern[äa]hrungsphy|Glycin|Kaliumjodid|Monohydrat|Feuchtigkeit|Mineralstoffe/iu;
+  const GERMAN_BLOCK_WORDS = /Lagerung|Kühlschrank|Trinkwasser|lagern|Richtwerte|Rohstoffe|Futtermenge/iu;
+  const FOREIGN_BLOCK_START = /\b(?:complete|complementary|dietetic)\s+(?:pet\s*)?(?:feed|food)|\baliments?\s+compl|\b(?:volledig|aanvullend)\s+diervoeder|\bmangime\s+compl|\bpienso\s+compl|\bkarma\s+(?:pe[lł]no|uzupe)|\bfeed\s+for\s+(?:cats|dogs)|\bfoder\s+(?:til|f[öo]r)/iu;
+  const GERMAN_BLOCK_TARGET_HEIGHT = 90;   // angestrebte Worthöhe (Rahmen inkl. Ober-/Unterlängen) beim Nachlesen in Bildpunkten
+  const GERMAN_BLOCK_MAX_ROWS = 30;
+
+  /**
+   * Rechteck des deutschen Deklarationsabsatzes in Bildkoordinaten oder null. Gesucht wird der zusammenhängende Zeilenlauf
+   * ohne fremdsprachige Zeile mit den meisten deutschen Deklarationswörtern (mindestens zwei Zeilen damit). Er endet vor der
+   * ersten Zeile einer anderen Sprache („Complete feed for cats“) oder an einer großen Lücke. Etiketten, deren Zeilen
+   * Sprachen mischen („Zusammensetzung / Samenstelling“), haben eigene Spaltenpfade und starten keinen Block.
+   * @returns {{x:number,y:number,right:number,bottom:number,lineHeight:number,rows:number}|null}
+   */
+  function germanBlockRegion(lines, width, height) {
+    if (!(width > 0 && height > 0)) return null;
+    const rows = lineSummaries(lines).sort((a, b) => a.bbox.y0 - b.bbox.y0);
+    if (!rows.length) return null;
+    const mixed = text => OTHER_LANGUAGE_WORDS.test(text);
+    const foreign = text => FOREIGN_BLOCK_START.test(text) || (mixed(text) && germanScore(text) < 1);
+    const germanish = text => !mixed(text) && (GERMAN_DECLARATION_WORDS.test(text) || GERMAN_BLOCK_WORDS.test(text) || germanScore(text) >= 1);
+    const heights = rows.map(r => r.bbox.y1 - r.bbox.y0).sort((a, b) => a - b);
+    const typical = heights[Math.floor(heights.length / 2)] || 1;
+    // Zeilenläufe zwischen fremdsprachigen Zeilen und großen Lücken
+    const runs = [];
+    let run = null;
+    rows.forEach((r, i) => {
+      if (foreign(r.text)) { run = null; return; }
+      if (!run || r.bbox.y0 - rows[run.last].bbox.y1 > typical * 3) runs.push(run = { first: i, last: i, items: [] });
+      run.last = i;
+      run.items.push(i);
+    });
+    let best = null;
+    for (const candidate of runs) {
+      const items = candidate.items.filter(i => germanish(rows[i].text));
+      const declarations = items.filter(i => GERMAN_DECLARATION_WORDS.test(rows[i].text)).length;
+      const mixedRows = candidate.items.filter(i => mixed(rows[i].text)).length;
+      if (declarations < 2 || mixedRows > candidate.items.length * 0.2) continue;
+      if (!best || declarations > best.declarations) best = { items, declarations };
+    }
+    if (!best || best.items.length < 2 || best.items.length > GERMAN_BLOCK_MAX_ROWS) return null;
+    const block = best.items.map(i => rows[i]);
+    const blockHeights = block.map(r => r.height).sort((a, b) => a - b);
+    const lineH = blockHeights[Math.floor(blockHeights.length / 2)] || typical;
+    const top = Math.max(0, Math.floor(Math.min(...block.map(r => r.bbox.y0)) - lineH * 0.6));
+    const bottom = Math.min(height, Math.ceil(Math.max(...block.map(r => r.bbox.y1)) + lineH * 0.6));
+    // Waagerechte Ausdehnung über alle gelesenen Wörter auf Höhe des Absatzes: Die erste Lesung hat oft nur Zeilenanfänge
+    // und einzelne Bruchstücke am rechten Rand.
+    const within = rows.filter(r => (r.bbox.y0 + r.bbox.y1) / 2 >= top && (r.bbox.y0 + r.bbox.y1) / 2 <= bottom);
+    const x = Math.max(0, Math.floor(Math.min(...within.map(r => r.bbox.x0)) - lineH * 1.5));
+    const right = Math.min(width, Math.ceil(Math.max(...within.map(r => r.bbox.x1)) + lineH * 1.5));
+    if (right - x < width * 0.3 || bottom - top > height * 0.6) return null;
+    return { x, y: top, right, bottom, lineHeight: lineH, rows: block.length };
+  }
+
+  /**
+   * Senkrechte Streifen für das Nachlesen eines Absatzes. Gewölbte Beutel biegen die Zeilen: In schmalen Streifen ist jede
+   * Zeile fast gerade und bekommt ihren eigenen Winkel. Benachbarte Streifen überlappen, damit die Naht Zeilen zuordnen kann.
+   */
+  function regionTiles(region) {
+    const width = region.right - region.x;
+    const height = region.bottom - region.y;
+    const cols = Math.min(4, Math.max(1, Math.ceil(width / (height * 1.5))));
+    const step = width / cols;
+    const scale0 = Math.min(3, Math.max(1, GERMAN_BLOCK_TARGET_HEIGHT / Math.max(1, region.lineHeight)));
+    const tiles = [];
+    for (let col = 0; col < cols; col++) {
+      const x = Math.max(region.x, Math.floor(region.x + col * step - (col > 0 ? step * 0.2 : 0)));
+      const right = Math.min(region.right, Math.ceil(region.x + (col + 1) * step + (col < cols - 1 ? step * 0.2 : 0)));
+      const scale = Math.min(scale0, Math.sqrt(MAX_CROP_PIXELS / ((right - x) * height)));
+      tiles.push({ col, row: 0, cols, rows: 1, x, y: region.y, right, bottom: region.bottom, scale });
+    }
+    return tiles;
+  }
+
+  /**
+   * Setzt die Zeilen nebeneinanderliegender Streifen zu Bildzeilen zusammen. Eine Zeile des rechten Streifens setzt die
+   * Zeile des linken fort, die an der Naht auf derselben Höhe liegt (gemessen an den Wörtern im Überlappungsbereich, sonst an
+   * den Zeilenenden). So bleiben auch gebogene Zeilen zusammen, deren Neigung je Streifen verschieden ist. Links der
+   * Nahtmitte gilt der linke Streifen, rechts davon der rechte; an einer Innenkante abgeschnittene Wörter entfallen.
+   */
+  // Wörter zweier Lesungen an derselben Stelle (Rahmen überlappen waagerecht um mehr als 30 % des schmaleren).
+  function overlapsX(a, b) {
+    const overlap = Math.min(a.bbox.x1, b.bbox.x1) - Math.max(a.bbox.x0, b.bbox.x0);
+    return overlap > Math.min(a.bbox.x1 - a.bbox.x0, b.bbox.x1 - b.bbox.x0) * 0.3;
+  }
+
+  /**
+   * Setzt die Zeilen nebeneinanderliegender Streifen zu Bildzeilen zusammen. Eine Zeile des rechten Streifens setzt die
+   * Zeile des linken fort, die an der Naht auf derselben Höhe liegt. Die Höhe an der Naht wird aus den Wörtern der Zeile
+   * fortgeschrieben (Steigung der nahen Wörter), so bleiben auch gebogene Zeilen zusammen, deren Neigung je Streifen
+   * verschieden ist. Dasselbe Wort aus beiden Streifen zählt einmal: bevorzugt die nicht am Streifenrand angeschnittene
+   * Lesung, dann die deutlich sicherere, sonst die des Streifens, auf dessen Seite der Naht es liegt; sind beide
+   * angeschnitten, die längere.
+   */
+  function stitchStrips(tiles) {
+    const cx = w => (w.bbox.x0 + w.bbox.x1) / 2;
+    const cy = w => (w.bbox.y0 + w.bbox.y1) / 2;
+    const toImage = (tile, k) => (tile.lines || []).map(raw => withSaneBoxes(raw.filter(w => w.bbox).map(w => ({
+      text: w.text, confidence: w.confidence,
+      bbox: { x0: tile.x + w.bbox.x0 / tile.scale, x1: tile.x + w.bbox.x1 / tile.scale,
+              y0: tile.y + w.bbox.y0 / tile.scale, y1: tile.y + w.bbox.y1 / tile.scale },
+    }))).map(w => ({ ...w, strip: k,
+      cut: (tile.col > 0 && w.bbox.x0 <= tile.x + 2) || (tile.col < tile.cols - 1 && w.bbox.x1 >= tile.right - 2) })))
+      .filter(words => words.length);
+    // Höhe einer Zeile an der Stelle x: Gerade durch die nächstgelegenen (bis zu vier) Wörter.
+    const heightAt = (words, x) => {
+      const near = [...words].sort((a, b) => Math.abs(cx(a) - x) - Math.abs(cx(b) - x)).slice(0, 4);
+      if (near.length < 2) return near.length ? cy(near[0]) : NaN;
+      const mx = near.reduce((a, w) => a + cx(w), 0) / near.length, my = near.reduce((a, w) => a + cy(w), 0) / near.length;
+      const sxx = near.reduce((a, w) => a + (cx(w) - mx) ** 2, 0);
+      const slope = sxx > 0 ? near.reduce((a, w) => a + (cx(w) - mx) * (cy(w) - my), 0) / sxx : 0;
+      return my + Math.max(-0.3, Math.min(0.3, slope)) * (x - mx);
+    };
+    const sorted = [...tiles].sort((a, b) => a.x - b.x);
+    let rows = sorted.length ? toImage(sorted[0], 0) : [];
+    for (let k = 1; k < sorted.length; k++) {
+      const prev = sorted[k - 1], tile = sorted[k];
+      const seam = (tile.x + prev.right) / 2;
+      const used = new Set();
+      const next = [];
+      for (const words of toImage(tile, k)) {
+        words.sort((a, b) => a.bbox.x0 - b.bbox.x0);
+        const h = lineHeight(words);
+        const y = heightAt(words, seam);
+        let best = -1, bestDy = Infinity;
+        rows.forEach((row, i) => {
+          if (used.has(i) || !row.length) return;
+          // Nur Zeilen, die bis in die Nähe der Naht reichen, können fortgesetzt werden.
+          if (Math.max(...row.map(w => w.bbox.x1)) < tile.x - h * 12) return;
+          const dy = Math.abs(heightAt(row, seam) - y);
+          if (dy < bestDy) { bestDy = dy; best = i; }
+        });
+        if (best >= 0 && bestDy <= h * 0.6) {
+          used.add(best);
+          rows[best] = joinAtSeam(rows[best], words, seam, k);
+        } else {
+          next.push(words);
+        }
+      }
+      rows = [...rows, ...next];
+    }
+    return rows.filter(r => r.length)
+      .map(r => r.sort((a, b) => a.bbox.x0 - b.bbox.x0).map(({ strip, cut, ...w }) => w))
+      .sort((a, b) => cy(a[0]) - cy(b[0]));
+  }
+
+  function joinAtSeam(left, right, seam, k) {
+    const cx = w => (w.bbox.x0 + w.bbox.x1) / 2;
+    const all = [...left, ...right].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    const out = [];
+    for (const word of all) {
+      const last = out[out.length - 1];
+      if (last && last.strip !== word.strip && overlapsX(last, word)) {
+        const lastOwnSide = last.strip === k ? (cx(last) + cx(word)) / 2 >= seam : (cx(last) + cx(word)) / 2 < seam;
+        const keepWord = last.cut !== word.cut ? last.cut
+          : last.cut ? countAlnum(word.text) > countAlnum(last.text)
+          : Math.abs(last.confidence - word.confidence) > 25 ? word.confidence > last.confidence
+          : !lastOwnSide;
+        if (keepWord) out[out.length - 1] = word;
+        continue;
+      }
+      out.push(word);
+    }
+    return out;
+  }
+
+  /**
+   * Ersetzt die Zeilen im Absatz durch die Nachlesung, wenn diese deutlich mehr sicher gelesenen Text enthält; sonst null.
+   * Beide Lesungen stammen aus denselben Bildpunkten, es wird nichts ergänzt, was nicht im Foto steht.
+   */
+  function replaceRegionLines(lines, reread, region) {
+    const center = words => {
+      const xs = words.map(w => (w.bbox.x0 + w.bbox.x1) / 2), ys = words.map(w => (w.bbox.y0 + w.bbox.y1) / 2);
+      return { x: xs.reduce((a, b) => a + b, 0) / xs.length, y: ys.reduce((a, b) => a + b, 0) / ys.length };
+    };
+    const inside = words => {
+      if (!words.length || !words.every(w => w.bbox)) return false;
+      const c = center(words);
+      return c.x >= region.x && c.x <= region.right && c.y >= region.y && c.y <= region.bottom;
+    };
+    const before = lines.filter(inside);
+    const after = reread.filter(inside);
+    const oldQ = linesQuality(before), newQ = linesQuality(after);
+    if (!before.length || !(newQ >= oldQ * 1.15 + 20)) return null;
+    // An die Stelle der ersten alten Absatzzeile; die Reihenfolge der übrigen Zeilen bleibt unverändert.
+    const at = lines.findIndex(inside);
+    const rest = lines.filter(l => !inside(l));
+    const insertAt = lines.slice(0, at).filter(l => !inside(l)).length;
+    return [...rest.slice(0, insertAt), ...after, ...rest.slice(insertAt)];
+  }
+
   // Formate, die Tesseract (Leptonica) selbst dekodiert. HEIC/HEIF vom iPhone, AVIF und unbekannte Typen gehören
   // nicht dazu: Der Browser zeigt sie an, Tesseract bricht mit „Error attempting to read image“ ab.
   const OCR_NATIVE_TYPES = new Set(["image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp", "image/bmp"]);
@@ -1282,7 +1479,7 @@ const Ocr = (() => {
     return /attempting to read image|read image/i.test(errorText(e));
   }
 
-  return { errorText, ocrInputPlan, isImageReadError, textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
+  return { errorText, ocrInputPlan, isImageReadError, germanBlockRegion, regionTiles, stitchStrips, replaceRegionLines, textFromResult, textFromLines, tileGrid, mergeTiles, uprightLines, lineSummaries, bodyHeight, linesQuality, flattenIllumination, estimateSkew, unrotateBox, cleanText, setAdditiveCodes, flattenLines, reorderColumns, filterLine, findTextRegion, orientationScore, needsOrientationCheck, isBetterOrientation, shouldRecoverText, needsFeedingRecovery, recoveryPending, germanView, recoveryRegions, recoveredEvidence };
 })();
 
 // Für Unit-Tests unter Node (im Browser ohne Wirkung).

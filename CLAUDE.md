@@ -106,6 +106,7 @@ python3 -m http.server 8080 --bind 127.0.0.1 --directory webapp
 | Purina Katzenfutter | Die sichtbare Packungsformel ergibt `114 g`. Die französische Futtermittelbezeichnung gehört nicht in die deutsche Zutatenliste. Bei `63,0 %` im Erstlauf und `83,0 %` in der Nachprüfung bleibt die Feuchte unklar. |
 | MultiFit Wildvogelfutter | Die deutsche Zutatenliste bleibt bis zur nächsten Überschrift vollständig. `PO 157921` bleibt ein zu bestätigender Chargenhinweis. |
 | Kattovit Renal und Urinary | Prüfe Ernährungszweck, Belegtext und Zusatzfelder getrennt. Beim Renal-Beutel ergibt die Rechnung aus den lesbaren Angaben `5,28 g/kg` Phosphor bei 12 % Feuchte. Beim Urinary-Beutel ergibt sie `0,88 g/kg` Magnesium. Feuchte und Gehalt müssen demselben Analyseabschnitt zugeordnet sein. Die Rechnung erscheint als Hinweis. |
+| Pets Deli Silky Cream (Katze, 70-g-Beutel, iPhone-HEIC) | Siehe „Abnahmefall Pets Deli“. Der deutsche Absatz der Rückseite wird vergrößert in Streifen nachgelesen; Futtermittelart, Analyse, Feuchte und Zusatzstoffe belegt der deutsche Text, nicht der englische oder französische. |
 
 Prüfe pro Foto nur Angaben, die darauf sichtbar sind. Nutze zulässige öffentliche Beispiele oder lokal bereitgestellte Originalfotos. Die Nutzerfotos und ihre Rohtexte bleiben außerhalb des Git-Repositorys. Wenn ein Referenzfoto fehlt, dokumentiere den fehlenden Foto-Test getrennt vom Text- oder Unit-Test. [Referenzbilder und Prüfbefunde in PR #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
 
@@ -194,6 +195,28 @@ Mit denselben Fotos zeigt der Teststand den Diabeteszweck sowie Zweck und Fütte
 - Referenz für getrennte Felder ist AGROBS Seniormineral mit `3 kg`, Charge `120300` und MHD `03/2027`. Bei AlpenGrün Mash gehören `01102000040327`, `04.09.2026` und `5 kg` zu getrennten Feldern. Bewahre führende Nullen und prüfe beim Mash, ob die Überschrift „Zusammensetzung“ ohne Doppelpunkt gelesen wird.
 - Auf dem gedrehten Purina-Etikett steht `2 × 57 g = 114 g`. Prüfe die ausdrücklich gedruckte Gesamtmenge. Ein undeutlicher Aufdruck mit mehreren Nummerngruppen bleibt offen, bis die Partie eindeutig zugeordnet ist. Widersprüchliche Feuchtewerte aus mehreren Ansichten erfordern den Abgleich mit dem Originalfoto.
 - Im Entwurf #41 liefert der normale Upload der Pavo-Fotos die deutsche Zutatenliste mit allen sechs Bestandteilen. Beim Purina-Etikett liest er die gedruckten `114 g`. Die Feuchte-Nachprüfung liefert `83,0 %`. Der Widerspruch zur ersten Lesung bleibt sichtbar. Offene Bildfälle sind die kleinen Aufdrucke auf Galopp, AlpenGrün Mash und Vitakraft sowie die genaue Zuordnung des Purina-Stempels. Die Testfotos bleiben lokal. [Browser- und Regressionstests in Entwurf #41](https://github.com/Lightblue87/FeedLabelCheck/pull/41)
+
+## Abnahmefall Pets Deli Silky Cream (20.11.2026)
+
+Zwei Nutzerfotos (Vorder- und Rückseite, iPhone, HEIC). Die Rückseite trägt je Sprache einen eng gesetzten Absatz über die ganze Breite (DE, EN, FR, IT, NL, PL, ES); der Beutel ist gewölbt, die Zeilen biegen sich nach rechts. Fotos und Rohtexte bleiben lokal, die Tests in [`tests/js/german-block.test.mjs`](tests/js/german-block.test.mjs) bilden Aufbau und Fehlerbild konstruiert nach.
+
+**Sollwerte (deutscher Absatz und Vorderseite):** Alleinfuttermittel für Katzen · Zusammensetzung 40 % Brühe, 31,3 % Thunfisch, 18,8 % Makrele, 3,6 % getrocknetes Ei, 3 % Sonnenblumenöl, 1,2 % Kartoffelstärke, Mineralstoffe · Analytische Bestandteile Rohprotein 12,5 %, Rohfett 4 %, Rohfaser 0,5 %, Rohasche 3 %, Feuchtigkeit 80 % · Ernährungsphysiologische Zusatzstoffe/kg Taurin 1.200 mg, Eisen(II)-sulfat-Monohydrat 18 mg, Jod als Kaliumjodid 0,9 mg, Zinkchelat von Glycinhydrat 17,5 mg, Manganchelat von Glycinhydrat 3 mg, Kupferchelat von Glycinhydrat 1,4 mg · Lagerhinweis · Pets Deli Tonius GmbH, Winsstraße 62, D-10405 Berlin · MHD/Chargen-Nr.: siehe Aufdruck · Nettomenge ℮ 70 g (Vorderseite).
+
+**Ursache:** Im Vollbild und in den 3×3-Kacheln ist die Schrift zu klein, die Kachelgrenzen zerschneiden die Zeilen. Die erste Lesung enthielt vom deutschen Absatz nur Zeilenanfänge („CB für Katzen /“, „Getrocknetes Ei, 3%“) und Bruchstücke. Die bestehende Nachlesung (`recoveredEvidence`) übernimmt nur „Zusammensetzung:“ mit Doppelpunkt oder „DE …“-Zeilen und Analysewerte je Zeile; Pets Deli druckt beides fortlaufend.
+
+**Umsetzung (PR „OCR: deutschen Deklarationsabsatz vergrößert nachlesen“):**
+- `Ocr.germanBlockRegion` findet den Absatz über die Wortpositionen der ersten Lesung: zusammenhängender Zeilenlauf ohne fremdsprachige Zeile mit mindestens zwei Zeilen deutscher Deklarationswörter, Ende vor „Complete feed for cats“ o. Ä. Zeilen mit mehreren Sprachen („Zusammensetzung / Samenstelling“) starten keinen Absatz.
+- `Ocr.regionTiles` teilt ihn in bis zu vier senkrechte Streifen (hier drei, 20 % Überlappung) und vergrößert auf rund 90 px Worthöhe (höchstens 3-fach, Canvas-Grenze 12 Mio. Pixel). Gelesen wird das Farbbild mit Schräglagenausgleich je Streifen; der Helligkeitsausgleich der Kacheln verschluckt dunkelblaue Schrift auf hellblauem Grund.
+- `Ocr.stitchStrips` setzt die Streifen an der Naht nach der dort fortgeschriebenen Zeilenhöhe zusammen (gebogene Zeilen, je Streifen anderer Winkel). Doppelte Wörter in der Überlappung zählen einmal: nicht angeschnitten vor angeschnitten, dann die deutlich sicherere Lesung, sonst die Seite der Naht.
+- `Ocr.replaceRegionLines` ersetzt die alten Absatzzeilen nur, wenn die Nachlesung mindestens 15 % plus 20 Buchstaben mehr sicher gelesenen Text enthält. Es wird nichts ergänzt, was nicht im Foto steht. Hinweis an den Nutzer: „Deutscher Textblock vergrößert nachgelesen: Angaben am Originalfoto bestätigen“.
+- `labeling.js`: „Zusammensetzung 40% Brühe, …“ ohne Doppelpunkt gilt als Überschrift, wenn direkt ein Prozentanteil folgt.
+
+**Messung (lokales Chromium, Rückseite):** 28 deutsche Sollangaben. Auf das Originalformat 3024 × 4032 hochgerechnetes Chatfoto: vorher 5, nachher 17. Chatfoto 1512 × 2016: vorher 6, nachher 13. Laufzeit +3 bis 4 s am Desktop. Gegenprobe mit acht deutschen Tierfutteretiketten von Open Pet Food Facts: unverändert; bei einem Fressnapf-Etikett wurde der Absatz gefunden, die Nachlesung war schlechter und wurde verworfen. Die Abnahme mit den Originalfotos in der iPhone-PWA steht aus.
+
+**Offen:**
+- Die Überschrift wird nur als „Zusam“ gelesen; die Zusammensetzungskarte belegt deshalb weiter die französische Liste. Fremdsprachige Listen sollten die deutsche Zusammensetzung nicht belegen.
+- Die Partiekarte zeigt „Gefunden“ mit „LOS v6ase“ aus dem spanischen „N.º LOS véase …“ (= „siehe“). Falsch-positiv, schon vor dieser Änderung vorhanden.
+- Die Nettomenge `℮ 70 g` steht weiß auf dunkelblauem Kreis und wird nicht gelesen (invertierte Schrift).
 
 ## Abnahme bei Diätfutter
 

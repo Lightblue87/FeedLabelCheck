@@ -1264,10 +1264,52 @@
       try {
         const grid = Ocr.tileGrid(image.width, image.height);
         if (!grid.length) return null;
-        const tiles = [];
         await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+        return await readPreparedTiles(worker, image, grid, output, "tiles",
+          index => step(`Ausschnitt ${index + 1} von ${grid.length} wird gelesen`));
+      } finally {
+        image.close();
+      }
+    }
+
+    /**
+     * Liest den deutschen Deklarationsabsatz vergrößert in senkrechten Streifen nach (Block-Modus) und ersetzt dessen Zeilen, wenn die
+     * Nachlesung deutlich mehr sicher gelesenen Text liefert. Rückgabe: neue Zeilen oder null.
+     */
+    async function rereadGermanBlock(worker, input, lines, size, output, step) {
+      const region = Ocr.germanBlockRegion(lines, size.width, size.height);
+      if (!region) return null;
+      step("Deutscher Text wird vergrößert nachgelesen");
+      const image = await createImageBitmap(input);
+      try {
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+        const parts = await readPreparedTiles(worker, image, Ocr.regionTiles(region), output, "german-block", () => {}, false);
+        return Ocr.replaceRegionLines(lines, Ocr.stitchStrips(parts), region);
+      } finally {
+        image.close();
+        await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.AUTO });
+      }
+    }
+
+    /** Mittlere Farbe der vier Ecken eines Ausschnitts (Hintergrund) als CSS-Farbe. */
+    function cornerColor(pixels, width, height) {
+      const sum = [0, 0, 0];
+      for (const [x, y] of [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]]) {
+        const p = (y * width + x) * 4;
+        for (let c = 0; c < 3; c++) sum[c] += pixels.data[p + c];
+      }
+      return `rgb(${sum.map(v => Math.round(v / 4)).join(",")})`;
+    }
+
+    /**
+     * Liest Ausschnitte mit Schräglagenkorrektur; Zeilen in Ausschnittkoordinaten. flatten: gelesen wird das Graubild mit
+     * Helligkeitsausgleich (ungleichmäßige Beleuchtung), sonst das Farbbild (der Ausgleich dient dann nur der Winkelmessung;
+     * farbige Schrift auf farbigem Grund, z. B. dunkelblau auf hellblau, verliert im Ausgleich Striche).
+     */
+    async function readPreparedTiles(worker, image, grid, output, sourceName, onTile, flatten = true) {
+        const tiles = [];
         for (const [index, tile] of grid.entries()) {
-          step(`Ausschnitt ${index + 1} von ${grid.length} wird gelesen`);
+          onTile(index);
           const width = Math.round((tile.right - tile.x) * tile.scale);
           const height = Math.round((tile.bottom - tile.y) * tile.scale);
           const canvas = document.createElement("canvas");
@@ -1283,11 +1325,13 @@
           }
           const { flat } = Ocr.flattenIllumination(gray, width, height);
           const angle = Ocr.estimateSkew(flat, width, height);
-          for (let i = 0, p = 0; i < flat.length; i++, p += 4) {
-            pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flat[i];
-            pixels.data[p + 3] = 255;
+          if (flatten) {
+            for (let i = 0, p = 0; i < flat.length; i++, p += 4) {
+              pixels.data[p] = pixels.data[p + 1] = pixels.data[p + 2] = flat[i];
+              pixels.data[p + 3] = 255;
+            }
+            ctx.putImageData(pixels, 0, 0);
           }
-          ctx.putImageData(pixels, 0, 0);
           let source = canvas;
           if (angle) {
             // Zeilen fallen um `angle` Grad nach rechts ab: gegen den Uhrzeigersinn zurückdrehen.
@@ -1295,7 +1339,8 @@
             source.width = width;
             source.height = height;
             const turned = source.getContext("2d");
-            turned.fillStyle = "rgb(128,128,128)";
+            // Ränder in der Grundfarbe des Ausschnitts füllen (Farbbild) bzw. neutral grau (ausgeglichenes Graubild).
+            turned.fillStyle = flatten ? "rgb(128,128,128)" : cornerColor(pixels, width, height);
             turned.fillRect(0, 0, width, height);
             turned.translate(width / 2, height / 2);
             turned.rotate(-angle * Math.PI / 180);
@@ -1304,14 +1349,11 @@
           const result = await worker.recognize(source, {}, output);
           const lines = Ocr.flattenLines(result.data.blocks)
             .map(words => words.map(word => ({ ...word, bbox: Ocr.unrotateBox(word.bbox, angle, width, height) })));
-          tiles.push({ ...tile, source: "tiles", angle, lines });
+          tiles.push({ ...tile, source: sourceName, angle, lines });
           canvas.width = canvas.height = 0;
           if (source !== canvas) source.width = source.height = 0;
         }
         return tiles;
-      } finally {
-        image.close();
-      }
     }
 
     /**
@@ -1371,6 +1413,17 @@
             lines = Ocr.linesQuality(tiled) >= Ocr.linesQuality(lines) * 1.2 + 30
               ? tiled
               : Ocr.mergeTiles([...(autoLeads ? [auto, single] : [single, auto]), ...tiles]);
+          }
+        }
+        if (page.data.confidence < 80 || Ocr.shouldRecoverText(Ocr.textFromLines(lines))) {
+          try {
+            const reread = await rereadGermanBlock(worker, input, lines, size, output, step);
+            if (reread) {
+              lines = reread;
+              warnings.push("Deutscher Textblock vergrößert nachgelesen: Angaben am Originalfoto bestätigen");
+            }
+          } catch (e) {
+            warnings.push(`Nachlesen des deutschen Textblocks fehlgeschlagen (${Ocr.errorText(e)})`);
           }
         }
         if (lines.length) {
