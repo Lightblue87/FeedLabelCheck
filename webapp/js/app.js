@@ -1552,11 +1552,13 @@
           allText += (allText ? "\n\n" : "") + photo.text;
           for (const w of photo.warnings) warnings.push(`${label}: ${w}`);
         }
-        if (failed === files.length) throw lastError;
+        // Beim Neu-Einlesen ersetzt der Text den bisherigen: dann lieber nichts ändern als Text eines Fotos verlieren.
+        if (failed === files.length || (failed && replaceFrom !== undefined)) throw lastError;
+        const read = files.length - failed;
         const applied = await appendOcrText(targetId, allText, epoch, replaceFrom);
         status.className = "ocr-status";
         status.textContent = applied
-          ? `OCR abgeschlossen (${files.length} Bild${files.length > 1 ? "er" : ""}) – Text bitte kurz prüfen.`
+          ? `OCR abgeschlossen (${failed ? `${read} von ${files.length} Bildern gelesen` : `${files.length} Bild${files.length > 1 ? "er" : ""}`}) – Text bitte kurz prüfen.`
             + (replaceFrom !== undefined && !allText.trim() ? " Es wurde kein Text erkannt; bitte Text manuell ergänzen oder nachfotografieren." : "")
             + (warnings.length ? ` Hinweis: ${warnings.join("; ")}. Der übrige Text wurde übernommen.` : "")
           : replaceFrom !== undefined
