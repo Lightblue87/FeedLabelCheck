@@ -728,7 +728,7 @@ const Labeling = (() => {
   const LANGUAGE_TAGGED_LINE = /^(?:NL|EN|FR|IT|ES|DA|SE|PL|PT|CZ|DE)[ \t]/;
 
   function germanListAfterHeading(text) {
-    for (const m of text.matchAll(/^DE[ \t]+([^\n]+)$/gim)) {
+    for (const m of text.matchAll(/^DE[ \t]+([^\n]+)$/gm)) {
       let list = m[1].trim();
       if ((list.match(/,/g) || []).length < 2 || !/,\s*\p{L}/u.test(list) || POSTAL_CODE.test(list)) continue;
       const before = text.slice(Math.max(0, m.index - 800), m.index);
@@ -746,15 +746,36 @@ const Labeling = (() => {
     return null;
   }
 
+  // Beleg der Zusammensetzung. Deutsche Belege: Überschrift „Zusammensetzung“/„Komposition“ (auch in einer
+  // Mehrsprachen-Überschrift) oder eine „DE …“-Zeile. Eine Liste nur unter „Composition“/„Ingredients“ gehört zur englischen
+  // oder französischen Fassung (Pets Deli: „Composition 40% bouillon, 31,3% thon, …“); sie belegt die deutsche
+  // Zusammensetzung nicht und wird getrennt als fremdsprachiger Hinweis geliefert.
   function compositionEvidence(rawText) {
+    return compositionCandidates(rawText).german;
+  }
+
+  // Deutsche Deklaration vorhanden (mehrsprachige Packung): Dann ersetzt eine fremdsprachige Liste die deutsche nicht.
+  const GERMAN_COMPOSITION_KEYWORD = /zusammensetzung|zutaten|inhaltsstoffe|komposition/i;
+  const GERMAN_DECLARATION = /(?:Allein|Ergänzungs|Einzel|Mineral)futtermittel|Analytische\s+Bestandteile|Zusatzstoffe|Rohprotein|Rohasche/i;
+
+  function foreignCompositionEvidence(rawText) {
+    const { german, foreign } = compositionCandidates(rawText);
+    return german ? null : foreign;
+  }
+
+  function compositionCandidates(rawText) {
+    const found = german => ({ german, foreign: null });
     const text = /\b[zt]usammensetzung\b/i.test(rawText) ? rawText.replace(NEIGHBOUR_COMPOSITION_HEADING, "") : rawText;
     const listed = text.match(MULTILINGUAL_COMPOSITION);
-    if (listed && /,\s*\p{L}/u.test(listed[2])) return `${listed[1]}: ${listed[2]}`;
+    if (listed && /,\s*\p{L}/u.test(listed[2])) return found(`${listed[1]}: ${listed[2]}`);
     const mixed = mixedColumnComposition(text);
-    if (mixed) return mixed;
+    if (mixed) return found(mixed);
     const taggedGerman = germanListAfterHeading(text);
-    if (taggedGerman) return taggedGerman;
-    const heading = /\b(?:[zt]usammensetzung|composition|komposition)\b[^:\n]{0,65}:[\s=]*|^(?:(?:[zt]usammensetzung|composition|komposition)[ \t]*|ingredients[ \t]*:?[ \t]*)\n/gimu;
+    if (taggedGerman) return found(taggedGerman);
+    let foreign = null;
+    // Überschrift ohne Doppelpunkt mit direkt folgendem Anteil („Zusammensetzung 40% Brühe, 31,3% Thunfisch, …“, Pets Deli):
+    // nur mit Prozentangabe dahinter, damit Mehrsprachen-Überschriften („Zusammensetzung / Composition“) nicht zählen.
+    const heading = /\b(?:[zt]usammensetzung|composition|komposition)\b[^:\n]{0,65}:[\s=]*|^(?:(?:[zt]usammensetzung|composition|komposition)[ \t]*|ingredients[ \t]*:?[ \t]*)\n|\b[zt]usammensetzung[ \t]+(?=\d{1,3}(?:[.,]\d+)?[ \t]*%)/gimu;
     const nextSection = /\n[ \t]*(?:\n|\[(?:DE|EN|FR|IT|NL|PL)\])|\b(?:[zt]usammensetzung|composition|ingredients)\b[^:\n]{0,65}:|\n[ \t]*(?:[zt]usammensetzung|composition|ingredients)[ \t]*\n|\n[ \t]*crude protein[ \t:]*[<>]?[ \t]*\d|\b(?:Hersteller|Vertrieb|Verantwortlich\w*|Importeur|Hergestellt\s+von|Nettomasse|Nettogewicht|Nettomenge|Inhalt|Chargen?(?:-?Nr\.?|nummer)?|Losnummer|Dosierung|Anwendung)[ \t]*:|\n(?=[^\n]{2,75}\bGmbH\b)|\b(?:Inhaltsstoffe|Hinweise)[ \t]*:|\b(?:Gehalt an Zusatzstoffen|Einsatzempfehlung|Fütterungsempfehlung|Fütterungshinweise?|Fütterungsanleitung|Fütterung|Futtermenge|Tagesration|Feeding(?: guide| instructions?)?|Analytische Bestandteile|Zusatzstoffe|Feuchtegehalt|Lagerungshinweise?|Mindestens haltbar bis|MHD|Feeding recommendation|Analytical constituents|Additives|Best before|Conseils d[’']utilisation|Constituants analytiques|Additifs|Istruzioni per l[’']uso)\b/i;
     for (const match of text.matchAll(heading)) {
       const start = match.index + match[0].length;
@@ -767,15 +788,18 @@ const Labeling = (() => {
       if (/^(?:siehe|keine|see)\b|^s\./i.test(body) || !/\p{L}{2,}/u.test(body)) continue;
       // Eine Zutat je Zeile ohne Trennzeichen („Weizengrießkleie⏎Calciumcarbonat⏎…“): die Zeilen bleiben erhalten.
       const items = body.split("\n").map(line => line.trim()).filter(Boolean);
+      let evidence = null;
       if (items.length >= 3 && items.every(line => /^\p{L}[\p{L}\p{N} .,()\/&%-]{2,70}$/u.test(line))
           && items.filter(line => /[,;]/.test(line)).length <= Math.floor(items.length / 3)) {
-        return `${match[0].trim()}\n${items.join("\n")}`;
+        evidence = `${match[0].trim()}\n${items.join("\n")}`;
+      } else if (/\p{L}[^:;,/\n]{0,40}(?:[,;]|[ \t]\/)\s*\p{L}|\d[ \t]*%/u.test(body)) {
+        evidence = `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
       }
-      if (/\p{L}[^:;,/\n]{0,40}(?:[,;]|[ \t]\/)\s*\p{L}|\d[ \t]*%/u.test(body)) {
-        return `${match[0].trim()} ${body}`.replace(/\s+/g, " ");
-      }
+      if (!evidence) continue;
+      if (/[zt]usammensetzung|komposition/i.test(match[0]) || !GERMAN_DECLARATION.test(text)) return found(evidence);
+      foreign ??= evidence;
     }
-    return null;
+    return { german: null, foreign };
   }
 
   function needsCompositionCrop(text) {
@@ -1277,6 +1301,15 @@ const Labeling = (() => {
     return QUANTITY_CODE.test(code) || (/^\d[\d.,]*$/.test(code) && QUANTITY_UNIT_AT_START.test(following));
   }
 
+  // Verweis statt Wert hinter dem Feldnamen („N.º LOS véase …“, „Lot: voir …“, „partijnr.: zie …“). Die Texterkennung liest
+  // Buchstaben gelegentlich als Ziffern („v6ase“); solche Wörter zählen nicht als Losnummer.
+  const REFERENCE_WORD = /^(?:siehe|see|voir|zie|vedi|v[eé]ase|veja|patrz|viz|vt)$/i;
+  function isReferenceWord(code) {
+    const letters = code.toLowerCase().replace(/0/g, "o").replace(/1/g, "l").replace(/3/g, "e").replace(/4/g, "a")
+      .replace(/5/g, "s").replace(/6/g, "e").replace(/8/g, "b");
+    return REFERENCE_WORD.test(letters);
+  }
+
   function declaredLots(text) {
     const codes = new Map();
     const keyFor = code => code.replace(/[ \t]+/g, " ");
@@ -1284,6 +1317,7 @@ const Labeling = (() => {
       const rest = text.slice(label.index + label[0].length);
       const code = rest.match(LOT_VALUE)?.[0];
       if (!code || /^\d$/.test(code) || NEIGHBOR_FIELD.test(code) || looksLikeQuantity(code, rest.slice(code.length, code.length + 12))) continue;
+      if (code.split(/[ \t]+/).some(isReferenceWord)) continue;
       const key = keyFor(code);
       if (!codes.has(key)) codes.set(key, `${label[0].trim()} ${code}`);
     }
@@ -1387,6 +1421,12 @@ const Labeling = (() => {
         || text.match(PACK_COUNT)?.[0] || standaloneAmountHint(text)
       : null;
     let best = evidence ? { text: evidence, language: "de", weight: 1, languagePriority: 0 } : null;
+    // Mehrsprachige Packung mit deutscher Deklaration, aber ohne deutschen Zusammensetzungsbeleg: Fremdsprachige Listen und
+    // Stichwörter belegen die deutsche Zusammensetzung nicht.
+    const germanLabelWithoutComposition = !evidence && rule.id.startsWith("art17_003_") && GERMAN_DECLARATION.test(text);
+    const foreignComposition = germanLabelWithoutComposition ? foreignCompositionEvidence(text) : null;
+    // Nur ein deutsches Muster darf den fremdsprachigen Hinweis ersetzen (Sprachrang 0 vor 0,5).
+    if (foreignComposition) best = { text: foreignComposition, language: "xx", weight: 0.7, languagePriority: 0.5 };
     const hint = po || packageHint || (!evidence ? reference?.evidence : null);
     if (hint) best = { text: hint, language: "de", weight: 0.7, languagePriority: 0 };
     for (const p of positive) {
@@ -1399,6 +1439,9 @@ const Labeling = (() => {
       const barePostalCode = operatorRule && p.patternValue === String.raw`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b`;
       if (p.patternType === "regex" && (hasNumericEvidence || barePostalCode
           || (lotRule && p.confidenceWeight >= 0.85))) continue;
+      // Dort zählen nur deutsche Stichwörter. In den Regeldaten ist „ingredients“ auch als deutsch markiert; es würde sonst
+      // „Analytical ingredients“ als Beleg wählen.
+      if (germanLabelWithoutComposition && !GERMAN_COMPOSITION_KEYWORD.test(p.patternValue)) continue;
       const weight = netQuantity ? Math.min(p.confidenceWeight, 0.7) : p.confidenceWeight;
       const m = matchPattern(p, text, normText);
       if (m !== null) {
@@ -1427,7 +1470,9 @@ const Labeling = (() => {
     const status = best.weight >= 0.85 ? "found" : "probablyFound";
     const notes = [];
     if (best.language !== "de") notes.push(`Hinweis wurde in ${languageName(best.language)} gefunden.`);
-    if (status === "probablyFound") {
+    if (foreignComposition && best.text === foreignComposition) {
+      notes.push("Nur eine fremdsprachige Zusammensetzung erkannt. Bitte die deutsche Zusammensetzung am Originaletikett prüfen.");
+    } else if (status === "probablyFound") {
       const imprint = reference || ((lotRule || expiryRule) && IMPRINT_REFERENCE.test(text));
       if (imprint && !po) {
         const location = reference?.place ?? "Aufdruck";
