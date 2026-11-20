@@ -184,3 +184,55 @@ test("Mehrsprachige Überschrift ohne Prozentanteil zählt nicht als Zusammenset
   const result = Labeling.check(text, completeFeed, [compositionRule]).ruleResults[0];
   assert.notEqual(result.status, "found");
 });
+
+// Pets Deli: Die deutsche Überschrift wurde nur als „Zusam“ gelesen. Die Liste unter „Composition“ gehört zur französischen
+// bzw. englischen Fassung und darf die deutsche Zusammensetzung nicht als „gefunden“ belegen.
+const multilingualBack = [
+  "Alleinfuttermittel für Katzen / Zusam Brühe, 31,3% Thunfisch, 18,8% Makrele, 3,6%",
+  "protein 12,5%, Rohfett 4%, Rohfaser 0,5% Rohasche 3%, Feuchtigkeit 80% Zusatzstoffe:",
+  "drinking water, Aliments complet pour chats",
+  "Composition THT/partijnr.: zie onderzijde.",
+  "40% bouillon, 31,3% thon, 18,8% maquereau, 3,6% oeuf deshydrate,",
+  "de tournesol, 1,2% fecule de pomme de terre, substances minerales",
+  "Analytical ingredients Crude protein 12,5%, crude fat 4%",
+].join("\n");
+// Muster wie in labeling.sqlite (dort ist „ingredients“ auch als deutsch markiert)
+const dbCompositionRule = { id: "art17_003_complete", severity: "critical", patterns: [
+  ["Zusammensetzung", "de"], ["Zutaten:", "de"], ["Inhaltsstoffe", "de"], ["ingredients", "de"],
+  ["composition", "en"], ["ingredients", "en"], ["composizione", "other"], ["samenstelling", "other"],
+].map(([patternValue, patternLanguage]) => ({ patternValue, patternType: "keyword", patternLanguage, confidenceWeight: 0.7 })) };
+
+test("Zusammensetzung: fremdsprachige Liste neben deutscher Deklaration ist nur ein Hinweis", () => {
+  const result = Labeling.check(multilingualBack, completeFeed, [dbCompositionRule]).ruleResults[0];
+  assert.equal(result.status, "probablyFound");
+  assert.match(result.matchedText, /^Composition .*bouillon/);
+  assert.match(result.note, /Nur eine fremdsprachige Zusammensetzung erkannt/);
+});
+
+test("Zusammensetzung: französisches „de tournesol“ am Zeilenanfang ist keine DE-Sprachzeile", () => {
+  const result = Labeling.check(multilingualBack, completeFeed, [dbCompositionRule]).ruleResults[0];
+  assert.doesNotMatch(result.matchedText, /^Komposition: tournesol/);
+});
+
+test("Zusammensetzung: deutsche Überschrift gewinnt auch auf mehrsprachigen Packungen", () => {
+  const text = multilingualBack.replace("Zusam Brühe", "Zusammensetzung 40% Brühe");
+  const result = Labeling.check(text, completeFeed, [dbCompositionRule]).ruleResults[0];
+  assert.equal(result.status, "found");
+  assert.match(result.matchedText, /^Zusammensetzung 40% Brühe, 31,3% Thunfisch/);
+});
+
+// Pets Deli, spanische Fassung: „CAD/N.º LOS véase la parte inferior“ (= „siehe Unterseite“), gelesen als „LOS v6ase“.
+const lotRule = { id: "art15_004", severity: "critical", patterns: [
+  { patternValue: "Charge", patternType: "keyword", patternLanguage: "de", confidenceWeight: 0.7 }] };
+test("Partie: ein Verweiswort hinter „LOS“ ist keine Losnummer, auch wenn die OCR eine Ziffer liest", () => {
+  for (const line of ["CAD/N.º LOS v6ase la parte inferior", "Lot: v0ir dessous", "partijnr.: zie onderzijde", "N.º LOS véase"]) {
+    const text = `Alleinfuttermittel für Katzen\n${line}\nMHD/Chargen-Nr.: siehe Aufdruck`;
+    const result = Labeling.check(text, completeFeed, [lotRule]).ruleResults[0];
+    assert.notEqual(result.status, "found", line);
+    assert.doesNotMatch(result.matchedText ?? "", /v6ase|v0ir|véase/, line);
+  }
+  // Echte Losnummern bleiben erhalten
+  const real = Labeling.check("Alleinfuttermittel für Katzen\nLOS 120300", completeFeed, [lotRule]).ruleResults[0];
+  assert.equal(real.status, "found");
+  assert.match(real.matchedText, /120300/);
+});

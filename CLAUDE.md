@@ -213,10 +213,17 @@ Zwei Nutzerfotos (Vorder- und Rückseite, iPhone, HEIC). Die Rückseite trägt j
 
 **Messung (lokales Chromium, Rückseite):** 28 deutsche Sollangaben. Auf das Originalformat 3024 × 4032 hochgerechnetes Chatfoto: vorher 5, nachher 17. Chatfoto 1512 × 2016: vorher 6, nachher 13. Laufzeit +3 bis 4 s am Desktop. Gegenprobe mit acht deutschen Tierfutteretiketten von Open Pet Food Facts: unverändert; bei einem Fressnapf-Etikett wurde der Absatz gefunden, die Nachlesung war schlechter und wurde verworfen. Die Abnahme mit den Originalfotos in der iPhone-PWA steht aus.
 
+**Nachbesserung im selben PR (20.11.2026):**
+- **Zusammensetzung:** Eine Zeile mit dem französischen „de tournesol, …“ galt wegen Groß-/Kleinschreibung als Sprachzeile „DE …“ und belegte die deutsche Zusammensetzung („Komposition: toumesol, …“). Das Sprachkürzel `DE` muss jetzt großgeschrieben sein. Enthält der Text eine deutsche Deklaration (Futtermittelart, „Analytische Bestandteile“, „Zusatzstoffe“, Rohnährstoffe), belegt eine Liste nur unter „Composition“/„Ingredients“ die Zusammensetzung nicht mehr: Die Karte zeigt „Wahrscheinlich“ mit dem Hinweis „Nur eine fremdsprachige Zusammensetzung erkannt“, und nur deutsche Stichwörter (Zusammensetzung, Zutaten, Inhaltsstoffe, Komposition) zählen. Rein fremdsprachige Etiketten bleiben unverändert.
+- **Partie:** Ein Verweiswort hinter dem Feldnamen (siehe, see, voir, zie, vedi, véase, patrz …) ist keine Losnummer, auch wenn die Texterkennung Buchstaben als Ziffern liest („LOS v6ase“). Die Karte zeigt dann den deutschen Verweis „siehe Aufdruck“ als „Wahrscheinlich“ oder „Kein OCR-Treffer“.
+- **Nettomenge ℮ 70 g:** nicht umgesetzt. Auch invertiert und als enger Ausschnitt liest Tesseract das Zeichen „℮“ als Ziffer („270g“, „670g“); eine falsche Nettomenge wäre schlimmer als keine. Die Angabe bleibt „Kein OCR-Treffer“; Nachfotografieren oder manuelle Ergänzung, später ggf. die externe Erkennung.
+- Gegenprobe: Die Karten der acht Open-Pet-Food-Facts-Etiketten sind vor und nach der Änderung identisch; geändert haben sich nur die Pets-Deli-Texte.
+
 **Offen:**
-- Die Überschrift wird nur als „Zusam“ gelesen; die Zusammensetzungskarte belegt deshalb weiter die französische Liste. Fremdsprachige Listen sollten die deutsche Zusammensetzung nicht belegen.
-- Die Partiekarte zeigt „Gefunden“ mit „LOS v6ase“ aus dem spanischen „N.º LOS véase …“ (= „siehe“). Falsch-positiv, schon vor dieser Änderung vorhanden.
-- Die Nettomenge `℮ 70 g` steht weiß auf dunkelblauem Kreis und wird nicht gelesen (invertierte Schrift).
+- Die Überschrift wird nur als „Zusam“ gelesen; ohne deutsche Überschrift bleibt die Zusammensetzungskarte bei „Wahrscheinlich“ bzw. „Kein OCR-Treffer“.
+- Regeldaten: In `labeling_rule_patterns` ist das Stichwort `ingredients` für `art17_003_*` auch mit Sprache `de` hinterlegt. Über die Pipeline korrigieren (Code umgeht es derzeit nur bei deutschsprachiger Deklaration).
+- Analyse und Feuchte können bei schwacher erster Lesung weiter aus der französischen bzw. englischen Fassung belegt werden („Constituants analytiques“, „moisture 80%“). Dieselbe Sprachregel wie bei der Zusammensetzung ist dort noch nicht umgesetzt.
+- Nettomenge `℮ 70 g` in weißer Schrift auf dunklem Kreis (siehe oben).
 
 ## Abnahme bei Diätfutter
 
